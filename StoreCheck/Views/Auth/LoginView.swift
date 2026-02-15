@@ -1,63 +1,7 @@
-import AuthenticationServices
 import SwiftUI
 
-struct LoginView: View {
-    @StateObject private var viewModel = AuthViewModel(authService: AppContainer.shared.authService as! AuthService)
-    @State private var showError = false
-
+struct LegacyLoginScreen: View {
     var body: some View {
-        VStack(spacing: 24) {
-            Spacer()
-
-            Image(systemName: "building.2.crop.circle")
-                .resizable()
-                .scaledToFit()
-                .frame(width: 84, height: 84)
-                .foregroundStyle(.blue)
-
-            VStack(spacing: 8) {
-                Text("StoreCheck")
-                    .font(.largeTitle.bold())
-                Text("Sign in to continue")
-                    .foregroundStyle(.secondary)
-            }
-
-            VStack(spacing: 12) {
-                Button {
-                    Task { await viewModel.signInWithGoogle() }
-                } label: {
-                    Label("Continue with Google", systemImage: "globe")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(viewModel.isLoading)
-
-                SignInWithAppleButton(.signIn) { request in
-                    viewModel.prepareAppleSignInRequest(request)
-                } onCompletion: { result in
-                    viewModel.handleAppleSignInResult(result)
-                }
-                .signInWithAppleButtonStyle(.black)
-                .frame(height: 50)
-                .disabled(viewModel.isLoading)
-            }
-            .padding(.top, 8)
-
-            if viewModel.isLoading {
-                ProgressView("Signing in...")
-                    .padding(.top, 8)
-            }
-
-            Spacer()
-        }
-        .padding(24)
-        .alert("Sign-In Error", isPresented: $showError, actions: {
-            Button("OK", role: .cancel) { viewModel.errorMessage = nil }
-        }, message: {
-            Text(viewModel.errorMessage ?? "Unknown error")
-        })
-        .onChange(of: viewModel.errorMessage) { _, newValue in
-            showError = newValue != nil
-        }
+        LoginView()
     }
 }

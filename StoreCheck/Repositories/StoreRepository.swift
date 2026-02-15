@@ -1,5 +1,4 @@
 import FirebaseFirestore
-import FirebaseFirestore
 import Foundation
 
 protocol StoreRepositoryProtocol {
@@ -12,19 +11,41 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
     private let db = Firestore.firestore()
 
     func fetchStores(ids: [String]? = nil) async throws -> [Store] {
+        let snapshot: QuerySnapshot
         if let ids, !ids.isEmpty {
-            let snap = try await db.collection("stores").whereField(FieldPath.documentID(), in: ids).getDocuments()
-            return try snap.documents.map { try $0.data(as: Store.self) }
+            snapshot = try await db.collection("stores").whereField(FieldPath.documentID(), in: ids).getDocuments()
+        } else {
+            snapshot = try await db.collection("stores").order(by: "name").getDocuments()
         }
-        let snap = try await db.collection("stores").getDocuments()
-        return try snap.documents.map { try $0.data(as: Store.self) }
+        return snapshot.documents.compactMap(decodeStore)
     }
 
     func upsertStore(_ store: Store) async throws {
-        try db.collection("stores").document(store.id).setData(from: store)
+        let data: [String: Any] = [
+            "name": store.name,
+            "address": store.address,
+            "lat": store.lat,
+            "lng": store.lng,
+            "radiusMeters": store.radiusMeters,
+            "isActive": store.isActive
+        ]
+        try await db.collection("stores").document(store.id).setData(data, merge: true)
     }
 
     func deleteStore(id: String) async throws {
         try await db.collection("stores").document(id).delete()
+    }
+
+    private func decodeStore(document: QueryDocumentSnapshot) -> Store? {
+        let data = document.data()
+        return Store(
+            id: document.documentID,
+            name: data["name"] as? String ?? "Unnamed Store",
+            address: data["address"] as? String ?? "",
+            lat: data["lat"] as? Double ?? 0,
+            lng: data["lng"] as? Double ?? 0,
+            radiusMeters: data["radiusMeters"] as? Int ?? 150,
+            isActive: data["isActive"] as? Bool ?? true
+        )
     }
 }

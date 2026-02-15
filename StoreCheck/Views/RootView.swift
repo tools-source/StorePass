@@ -4,7 +4,7 @@ struct RootView: View {
     @EnvironmentObject private var container: AppContainer
 
     var body: some View {
-        AuthGateView(authService: container.authService as! AuthService)
+        AuthGateView(authService: container.authService)
     }
 }
 
@@ -15,7 +15,8 @@ private struct AuthGateView: View {
     var body: some View {
         Group {
             if isBooting {
-                ProgressView("Loading...")
+                ProgressView("Loading")
+                    .tint(.white)
             } else if let user = authService.currentUser {
                 if user.role == .manager {
                     ManagerTabView()
@@ -26,6 +27,7 @@ private struct AuthGateView: View {
                 LoginView()
             }
         }
+        .background(DS.Colors.background.ignoresSafeArea())
         .task {
             guard isBooting else { return }
             await authService.restoreSession()

@@ -3,74 +3,98 @@ import UIKit
 
 struct EmployeeDashboardView: View {
     @StateObject private var vm = EmployeeDashboardViewModel(
-        authService: AppContainer.shared.authService as! AuthService,
+        authService: AppContainer.shared.authService,
         storeRepository: AppContainer.shared.storeRepository,
-        checkInRepository: AppContainer.shared.checkInRepository,
         checkInService: AppContainer.shared.checkInService,
         locationService: AppContainer.shared.locationService
     )
 
     var body: some View {
+        EmployeeHomeView(viewModel: vm)
+    }
+}
+
+struct EmployeeHomeView: View {
+    @ObservedObject var viewModel: EmployeeDashboardViewModel
+
+    var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: DS.Spacing.m) {
-                    Picker("Assigned Store", selection: Binding(get: {
-                        vm.selectedStore?.id ?? ""
-                    }, set: { id in
-                        vm.selectedStore = vm.stores.first { $0.id == id }
-                        vm.refreshLocationStatus()
-                    })) {
-                        ForEach(vm.stores, id: \.id) { Text($0.name).tag($0.id) }
-                    }
-                    .pickerStyle(.menu)
-                    .cardStyle()
-
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Today: \(vm.todayStatus)").font(.headline)
-                        Text(locationDescription(vm.locationStatus))
-                            .foregroundStyle(locationColor(vm.locationStatus))
-                        Button("Refresh Location") { vm.requestLocation() }
-                            .buttonStyle(.bordered)
-                    }
-                    .cardStyle()
-
-                    Button("Check In") {
-                        Task {
-                            let success = await vm.checkIn()
-                            if success {
-                                UINotificationFeedbackGenerator().notificationOccurred(.success)
+                    if viewModel.stores.isEmpty {
+                        Text("No assigned stores yet. Contact your manager.")
+                            .cardStyle()
+                    } else {
+                        Picker("Assigned store", selection: Binding(get: {
+                            viewModel.selectedStore?.id ?? ""
+                        }, set: { id in
+                            viewModel.selectedStore = viewModel.stores.first(where: { $0.id == id })
+                            viewModel.refreshLocation()
+                        })) {
+                            ForEach(viewModel.stores) { store in
+                                Text(store.name).tag(store.id)
                             }
                         }
+                        .pickerStyle(.menu)
+                        .cardStyle()
+
+                        statusCard
+
+                        Button("Check In") {
+                            Task {
+                                await viewModel.checkIn()
+                                if viewModel.checkInSuccessBanner {
+                                    UINotificationFeedbackGenerator().notificationOccurred(.success)
+                                }
+                            }
+                        }
+                        .buttonStyle(PrimaryButtonStyle())
+                        .disabled(viewModel.blockedReason != nil)
+
+                        if let reason = viewModel.blockedReason {
+                            Text(reason).font(.caption).foregroundStyle(.orange)
+                        }
                     }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(!canCheckIn(vm.locationStatus))
                 }
-                .padding()
+                .padding(DS.Spacing.l)
             }
             .navigationTitle("Employee")
-            .task { await vm.load() }
+            .task { await viewModel.load() }
+            .refreshable { viewModel.refreshLocation() }
+            .alert("Check-in", isPresented: $viewModel.checkInSuccessBanner) {
+                Button("Done", role: .cancel) { }
+            } message: {
+                Text("Check-in submitted successfully.")
+            }
         }
     }
 
-    private func canCheckIn(_ state: LocationCheckState) -> Bool {
-        if case .inRange = state { return true }
-        return false
-    }
+    private var statusCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Location status").font(.headline)
+            switch viewModel.locationStatus {
+            case .inRange(let distance):
+                Text("In range • \(Int(distance))m")
+                Text("Accuracy good")
+            case .outOfRange(let distance):
+                Text("Out of range • \(Int(distance))m")
+            case .lowAccuracy(let accuracy):
+                Text("Accuracy ±\(Int(accuracy))m")
+            case .permissionDenied:
+                Text("Permission denied")
+            case .locationUnavailable:
+                Text("Location unavailable")
+            case .preciseLocationRequired:
+                Text("Precise location required")
+            case .unknown:
+                Text("Resolving location")
+            }
 
-    private func locationDescription(_ state: LocationCheckState) -> String {
-        switch state {
-        case .inRange(let d): return "In range ✅ • \(Int(d))m away"
-        case .outOfRange(let d): return "Out of range ❌ • \(Int(d))m away"
-        case .permissionDenied: return "Location denied. Enable it in Settings."
-        case .locationUnavailable: return "Location unavailable."
-        case .preciseLocationRequired: return "Precise Location required."
-        case .lowAccuracy(let a): return "Poor accuracy (\(Int(a))m). Move and retry."
-        case .unknown: return "Location unknown"
+            Button("Refresh location") {
+                viewModel.refreshLocation()
+            }
+            .buttonStyle(.bordered)
         }
-    }
-
-    private func locationColor(_ state: LocationCheckState) -> Color {
-        if case .inRange = state { return .green }
-        return .orange
+        .cardStyle()
     }
 }

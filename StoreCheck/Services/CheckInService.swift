@@ -1,9 +1,9 @@
 import CoreLocation
 import Foundation
-import UIKit
 
 protocol CheckInServiceProtocol {
-    func evaluateLocation(for store: Store) -> LocationCheckState
+    func evaluateLocation(for store: Store, user: UserProfile?) -> LocationCheckState
+    func blockedReason(for state: LocationCheckState, user: UserProfile?, store: Store?) -> String?
     func submitCheckIn(user: UserProfile, store: Store) async throws -> CheckIn
 }
 
@@ -13,7 +13,7 @@ final class CheckInService: CheckInServiceProtocol {
     private let checkInRepository: CheckInRepositoryProtocol
     private let locationService: LocationServiceProtocol
     private let offlineQueue: OfflineCheckInQueueProtocol
-    private let maxAccuracyMeters: Double = 50
+    private let maxAccuracyMeters: Double = 100
 
     init(
         userRepository: UserRepositoryProtocol,
@@ -29,49 +29,73 @@ final class CheckInService: CheckInServiceProtocol {
         self.offlineQueue = offlineQueue
     }
 
-    func evaluateLocation(for store: Store) -> LocationCheckState {
+    func evaluateLocation(for store: Store, user: UserProfile?) -> LocationCheckState {
+        guard let user else { return .unknown }
+        guard user.isActive else { return .permissionDenied }
+        guard !user.assignedStoreIds.isEmpty else { return .locationUnavailable }
+
         let auth = locationService.authorizationStatus
         guard auth == .authorizedWhenInUse || auth == .authorizedAlways else { return .permissionDenied }
         guard locationService.isPreciseLocationEnabled else { return .preciseLocationRequired }
-        guard let loc = locationService.currentLocation else { return .locationUnavailable }
-        guard loc.horizontalAccuracy > 0 && loc.horizontalAccuracy <= maxAccuracyMeters else {
-            return .lowAccuracy(loc.horizontalAccuracy)
+        guard let location = locationService.currentLocation else { return .locationUnavailable }
+        guard location.horizontalAccuracy > 0 && location.horizontalAccuracy <= maxAccuracyMeters else {
+            return .lowAccuracy(location.horizontalAccuracy)
         }
-        let distance = locationService.distance(from: loc.coordinate, to: store.coordinate)
-        return distance <= store.radiusMeters ? .inRange(distance: distance) : .outOfRange(distance: distance)
+
+        let distance = locationService.distance(from: location.coordinate, to: store.coordinate)
+        return distance <= Double(store.radiusMeters) ? .inRange(distance: distance) : .outOfRange(distance: distance)
+    }
+
+    func blockedReason(for state: LocationCheckState, user: UserProfile?, store: Store?) -> String? {
+        guard let user else { return "Sign in required." }
+        guard user.isActive else { return "Your account is disabled. Contact your manager." }
+        guard let store else { return "No assigned store available." }
+        switch state {
+        case .inRange:
+            return nil
+        case .outOfRange:
+            return "You must be inside \(store.radiusMeters)m of \(store.name)."
+        case .permissionDenied:
+            return "Enable Location permission in Settings."
+        case .locationUnavailable:
+            return "Location unavailable. Move outdoors and refresh."
+        case .preciseLocationRequired:
+            return "Turn on Precise Location in iOS Settings."
+        case .lowAccuracy(let accuracy):
+            return "Current GPS accuracy is ±\(Int(accuracy))m; need ≤100m."
+        case .unknown:
+            return "Getting your position..."
+        }
     }
 
     func submitCheckIn(user: UserProfile, store: Store) async throws -> CheckIn {
-        guard let loc = locationService.currentLocation else {
-            throw NSError(domain: "StoreCheck", code: 3001, userInfo: [NSLocalizedDescriptionKey: "Location unavailable"])
+        guard let location = locationService.currentLocation else {
+            throw NSError(domain: "StorePass", code: 3001, userInfo: [NSLocalizedDescriptionKey: "Location unavailable."])
         }
 
-        let distance = locationService.distance(from: loc.coordinate, to: store.coordinate)
-        let inRange = distance <= store.radiusMeters
+        let distance = locationService.distance(from: location.coordinate, to: store.coordinate)
+        let approved = distance <= Double(store.radiusMeters)
         let checkIn = CheckIn(
             id: UUID().uuidString,
             employeeId: user.id,
             storeId: store.id,
-            storeName: store.name,
-            employeeName: user.name,
             checkInTime: Date(),
-            clientLat: loc.coordinate.latitude,
-            clientLng: loc.coordinate.longitude,
-            serverValidated: false,
+            clientLat: location.coordinate.latitude,
+            clientLng: location.coordinate.longitude,
             distanceMeters: distance,
-            accuracyMeters: loc.horizontalAccuracy,
-            deviceInfo: DeviceInfo(model: UIDevice.current.model, osVersion: UIDevice.current.systemVersion),
-            status: inRange ? .approved : .rejected,
-            rejectReason: inRange ? nil : "Out of range"
+            accuracyMeters: location.horizontalAccuracy,
+            status: approved ? .approved : .rejected,
+            rejectReason: approved ? nil : "Out of range",
+            employeeName: user.name,
+            storeName: store.name
         )
 
         do {
             try await checkInRepository.createCheckIn(checkIn)
+            return checkIn
         } catch {
             try offlineQueue.enqueue(checkIn)
-            throw NSError(domain: "StoreCheck", code: 3002, userInfo: [NSLocalizedDescriptionKey: "Offline: check-in queued until network is available"])
+            throw NSError(domain: "StorePass", code: 3002, userInfo: [NSLocalizedDescriptionKey: "No network. Check-in queued and will sync later."])
         }
-
-        return checkIn
     }
 }
