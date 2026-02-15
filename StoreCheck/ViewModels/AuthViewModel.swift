@@ -1,6 +1,8 @@
 import AuthenticationServices
+import FirebaseAuth
 import FirebaseFirestore
 import Foundation
+import SwiftUI
 
 @MainActor
 final class AuthViewModel: ObservableObject {
@@ -10,49 +12,51 @@ final class AuthViewModel: ObservableObject {
     }
 
     @Published var authState: AuthState = .signedOut
+    @Published var requestedRole: UserRole?
     @Published var resolvedRole: UserRole?
     @Published var isLoading = false
     @Published var errorMessage: String?
+    @Published var showManagerAccessRequired = false
+    @Published var showEmployeeSetupRequired = false
     @Published private(set) var currentUser: AppUser?
 
+    @AppStorage("lastRequestedRole") private var lastRequestedRoleRaw: String = ""
+
     private let authService: AuthService
+    private let roleProfileRepository: RoleProfileRepositoryProtocol
     private(set) var currentNonce: String?
 
-    init(authService: AuthService) {
+    init(authService: AuthService, roleProfileRepository: RoleProfileRepositoryProtocol) {
         self.authService = authService
+        self.roleProfileRepository = roleProfileRepository
+        self.requestedRole = UserRole(rawValue: lastRequestedRoleRaw)
     }
 
     func restoreSession(forceSignOutOnLaunch: Bool = false) async {
-        #if DEBUG
-        print("[AuthViewModel] restoreSession start")
-        #endif
         isLoading = true
         defer { isLoading = false }
 
         await authService.restoreSession(forceSignOutOnLaunch: forceSignOutOnLaunch)
 
-        guard authService.currentUser != nil else {
-            #if DEBUG
-            print("[AuthViewModel] restoreSession complete: no active session")
-            #endif
+        guard authService.authUser() != nil else {
             clearState()
             return
         }
 
         do {
-            try await resolveRoleAfterSignIn(preferredRole: nil)
+            try await resolveProfileAndRoute(requestedRole: UserRole(rawValue: lastRequestedRoleRaw), isSessionRestore: true)
         } catch {
             errorMessage = userFacingMessage(for: error)
         }
     }
 
-    func signInWithGoogle(preferredRole: UserRole? = nil) async {
+    func signInWithGoogle(requestedRole: UserRole) async {
         isLoading = true
         defer { isLoading = false }
 
         do {
             try await authService.signInWithGoogle()
-            try await resolveRoleAfterSignIn(preferredRole: preferredRole)
+            try await resolveProfileAndRoute(requestedRole: requestedRole, isSessionRestore: false)
         } catch {
             errorMessage = userFacingMessage(for: error)
         }
@@ -65,7 +69,7 @@ final class AuthViewModel: ObservableObject {
         request.nonce = authService.sha256(nonce)
     }
 
-    func handleAppleSignInResult(_ result: Result<ASAuthorization, Error>, preferredRole: UserRole? = nil) {
+    func handleAppleSignInResult(_ result: Result<ASAuthorization, Error>, requestedRole: UserRole) {
         Task {
             isLoading = true
             defer { isLoading = false }
@@ -80,7 +84,7 @@ final class AuthViewModel: ObservableObject {
                 }
 
                 try await authService.signInWithApple(idToken: idToken, rawNonce: nonce, fullName: credential.fullName, email: credential.email)
-                try await resolveRoleAfterSignIn(preferredRole: preferredRole)
+                try await resolveProfileAndRoute(requestedRole: requestedRole, isSessionRestore: false)
             } catch {
                 errorMessage = userFacingMessage(for: error)
             }
@@ -99,47 +103,86 @@ final class AuthViewModel: ObservableObject {
         }
     }
 
-    private func resolveRoleAfterSignIn(preferredRole: UserRole?) async throws {
-        let user = try await authService.refreshCurrentUserProfile()
+    func resolveProfileAndRoute(requestedRole: UserRole, isSessionRestore: Bool) async throws {
+        guard let firebaseUser = authService.authUser() else { throw NSError(domain: "StorePass", code: 1004, userInfo: [NSLocalizedDescriptionKey: "Not authenticated."]) }
 
-        #if DEBUG
-        print("[AuthViewModel] resolved role=\(user.role.rawValue) for uid=\(user.id)")
-        #endif
+        self.requestedRole = requestedRole
+        lastRequestedRoleRaw = requestedRole.rawValue
 
-        guard user.isActive else {
-            #if DEBUG
-            print("[AuthViewModel] Manager access denied: account inactive for uid \(user.id)")
-            #endif
-            errorMessage = "This account is inactive. Contact your administrator."
+        let managerProfile = try await roleProfileRepository.fetchManagerProfile(uid: firebaseUser.uid)
+        var employeeProfile = try await roleProfileRepository.fetchEmployeeProfile(uid: firebaseUser.uid)
+
+        showManagerAccessRequired = false
+        showEmployeeSetupRequired = false
+
+        switch requestedRole {
+        case .manager:
+            guard let managerProfile else {
+                showManagerAccessRequired = true
+                resolvedRole = nil
+                currentUser = nil
+                authState = .signedOut
+                return
+            }
+            syncState(with: appUser(from: managerProfile, fallbackEmail: firebaseUser.email), role: .manager)
+
+        case .employee:
+            if employeeProfile == nil {
+                try await roleProfileRepository.upsertEmployeeProfile(
+                    uid: firebaseUser.uid,
+                    name: firebaseUser.displayName ?? "StorePass User",
+                    email: firebaseUser.email
+                )
+                employeeProfile = try await roleProfileRepository.fetchEmployeeProfile(uid: firebaseUser.uid)
+            }
+
+            guard let employeeProfile else {
+                showEmployeeSetupRequired = true
+                return
+            }
+            syncState(with: appUser(from: employeeProfile, fallbackEmail: firebaseUser.email), role: .employee)
+        }
+
+        if isSessionRestore {
+            return
+        }
+    }
+
+    func resolveProfileAndRoute(requestedRole: UserRole?, isSessionRestore: Bool) async throws {
+        guard let firebaseUser = authService.authUser() else {
+            clearState()
+            return
+        }
+
+        let managerProfile = try await roleProfileRepository.fetchManagerProfile(uid: firebaseUser.uid)
+        let employeeProfile = try await roleProfileRepository.fetchEmployeeProfile(uid: firebaseUser.uid)
+
+        let resolvedRequest: UserRole?
+        if let requestedRole {
+            resolvedRequest = requestedRole
+        } else if managerProfile != nil, employeeProfile != nil {
+            resolvedRequest = UserRole(rawValue: lastRequestedRoleRaw)
+        } else if managerProfile != nil {
+            resolvedRequest = .manager
+        } else if employeeProfile != nil {
+            resolvedRequest = .employee
+        } else {
+            resolvedRequest = nil
+        }
+
+        guard let resolvedRequest else {
             try await authService.signOut()
             clearState()
             return
         }
 
-        syncState(with: user)
-
-        guard let preferredRole else { return }
-        guard preferredRole != user.role else { return }
-
-        if preferredRole == .manager && user.role == .employee {
-            #if DEBUG
-            print("[AuthViewModel] Manager access denied: role mismatch for uid \(user.id), role=\(user.role.rawValue)")
-            #endif
-            errorMessage = "This account is not a manager."
-            try await authService.signOut()
-            clearState()
-        } else if preferredRole == .employee && user.role == .manager {
-            errorMessage = "Manager account detected. Routing you to Manager tools."
-        }
+        try await resolveProfileAndRoute(requestedRole: resolvedRequest, isSessionRestore: isSessionRestore)
     }
 
-
-    private func syncState(with user: AppUser) {
-        #if DEBUG
-        print("[AuthViewModel] syncState uid=\(user.id) role=\(user.role.rawValue)")
-        #endif
+    private func syncState(with user: AppUser, role: UserRole) {
         currentUser = user
-        resolvedRole = user.role
+        authService.setCurrentUser(user)
+        resolvedRole = role
         authState = .signedIn(userId: user.id)
     }
 
@@ -147,13 +190,49 @@ final class AuthViewModel: ObservableObject {
         authState = .signedOut
         resolvedRole = nil
         currentUser = nil
+        authService.setCurrentUser(nil)
+        showManagerAccessRequired = false
+        showEmployeeSetupRequired = false
+    }
+
+    private func appUser(from manager: ManagerProfile, fallbackEmail: String?) -> AppUser {
+        AppUser(
+            id: manager.id,
+            name: manager.name,
+            email: manager.email ?? fallbackEmail,
+            role: .manager,
+            createdAt: manager.createdAt,
+            lastLoginAt: manager.lastLoginAt,
+            provider: "federated",
+            assignedStoreIds: [],
+            isActive: manager.isActive
+        )
+    }
+
+    private func appUser(from employee: EmployeeProfile, fallbackEmail: String?) -> AppUser {
+        AppUser(
+            id: employee.id,
+            name: employee.name,
+            email: employee.email ?? fallbackEmail,
+            role: .employee,
+            createdAt: employee.createdAt,
+            lastLoginAt: employee.lastLoginAt,
+            provider: "federated",
+            assignedStoreIds: employee.assignedStoreIds,
+            isActive: employee.isActive
+        )
     }
 
     private func userFacingMessage(for error: Error) -> String {
         let nsError = error as NSError
         if nsError.domain == FirestoreErrorDomain,
            nsError.code == FirestoreErrorCode.permissionDenied.rawValue {
-            return "You don't have permission for this action. If this is your first manager login, ask an admin to set users/{uid}.role to manager in Firestore."
+            return "You don't have permission for this action."
+        }
+
+        if nsError.domain == AuthErrorDomain,
+           nsError.code == AuthErrorCode.requiresRecentLogin.rawValue {
+            return "For security, sign in again and retry this action."
         }
 
         return error.localizedDescription

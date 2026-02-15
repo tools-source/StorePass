@@ -4,7 +4,6 @@ import SwiftUI
 struct LoginView: View {
     @EnvironmentObject private var viewModel: AuthViewModel
     @State private var showError = false
-    @State private var requestedRole: UserRole = .employee
 
     var body: some View {
         VStack(spacing: 20) {
@@ -21,7 +20,11 @@ struct LoginView: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 
-            Picker("Mode", selection: $requestedRole) {
+            Picker("Mode", selection: Binding(get: {
+                viewModel.requestedRole ?? .employee
+            }, set: { newRole in
+                viewModel.requestedRole = newRole
+            })) {
                 Text("Employee").tag(UserRole.employee)
                 Text("Manager").tag(UserRole.manager)
             }
@@ -30,7 +33,7 @@ struct LoginView: View {
 
             VStack(spacing: 12) {
                 Button("Continue with Google") {
-                    Task { await viewModel.signInWithGoogle(preferredRole: requestedRole) }
+                    Task { await viewModel.signInWithGoogle(requestedRole: viewModel.requestedRole ?? .employee) }
                 }
                 .buttonStyle(PrimaryButtonStyle())
                 .disabled(viewModel.isLoading)
@@ -38,7 +41,7 @@ struct LoginView: View {
                 SignInWithAppleButton(.signIn) { request in
                     viewModel.prepareAppleSignInRequest(request)
                 } onCompletion: { result in
-                    viewModel.handleAppleSignInResult(result, preferredRole: requestedRole)
+                    viewModel.handleAppleSignInResult(result, requestedRole: viewModel.requestedRole ?? .employee)
                 }
                 .signInWithAppleButtonStyle(.white)
                 .frame(maxWidth: 375)
@@ -56,6 +59,11 @@ struct LoginView: View {
             Button("OK", role: .cancel) { viewModel.errorMessage = nil }
         } message: {
             Text(viewModel.errorMessage ?? "Unknown error")
+        }
+        .onAppear {
+            if viewModel.requestedRole == nil {
+                viewModel.requestedRole = .employee
+            }
         }
         .onChange(of: viewModel.errorMessage) { _, newValue in
             showError = newValue != nil

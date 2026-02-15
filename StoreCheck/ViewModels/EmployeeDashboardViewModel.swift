@@ -73,8 +73,13 @@ final class EmployeeDashboardViewModel: ObservableObject {
     func joinStoreByCode() async {
         do {
             let result = try await storeRepository.joinStoreByCode(code: joinCodeInput)
-            _ = try await authService.refreshCurrentUserProfile()
-            await load()
+            let joinedStore = try await storeRepository.fetchStores(ids: [result.storeId]).first
+            if let joinedStore, stores.contains(where: { $0.id == joinedStore.id }) == false {
+                stores.append(joinedStore)
+                stores.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+            }
+            selectedStore = selectedStore ?? joinedStore
+            refreshLocation()
             joinStatusMessage = result.alreadyJoined
                 ? "You're already linked to \(result.storeName)."
                 : "Joined \(result.storeName) successfully."

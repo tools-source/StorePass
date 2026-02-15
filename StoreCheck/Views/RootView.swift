@@ -4,7 +4,7 @@ struct RootView: View {
     @EnvironmentObject private var appContainer: AppContainer
 
     var body: some View {
-        RootContentView(authService: appContainer.authService)
+        RootContentView(authService: appContainer.authService, roleProfileRepository: appContainer.roleProfileRepository)
     }
 }
 
@@ -12,7 +12,6 @@ private struct RootContentView: View {
     enum BootState {
         case launching
         case needsLogin
-        case resolvingRole
         case authenticated(user: AppUser)
     }
 
@@ -20,22 +19,27 @@ private struct RootContentView: View {
     @State private var bootState: BootState = .launching
     @EnvironmentObject private var appContainer: AppContainer
 
-    init(authService: AuthService) {
-        _authViewModel = StateObject(wrappedValue: AuthViewModel(authService: authService))
+    init(authService: AuthService, roleProfileRepository: RoleProfileRepositoryProtocol) {
+        _authViewModel = StateObject(wrappedValue: AuthViewModel(authService: authService, roleProfileRepository: roleProfileRepository))
     }
 
     var body: some View {
         Group {
             switch bootState {
-            case .launching, .resolvingRole:
+            case .launching:
                 ProgressView("Loading account")
                     .tint(.white)
             case .needsLogin:
-                LoginView()
+                if authViewModel.showManagerAccessRequired {
+                    ManagerAccessRequiredView()
+                } else if authViewModel.showEmployeeSetupRequired {
+                    EmployeeSetupRequiredView()
+                } else {
+                    LoginView()
+                }
             case .authenticated(let user):
-                if authViewModel.resolvedRole == nil {
-                    ProgressView("Resolving role")
-                        .tint(.white)
+                if authViewModel.requestedRole == .manager && user.role == .employee {
+                    ManagerAccessRequiredView()
                 } else {
                     switch user.role {
                     case .manager:
@@ -60,16 +64,7 @@ private struct RootContentView: View {
                 return
             }
 
-            if authViewModel.resolvedRole == nil {
-                bootState = .resolvingRole
-            } else {
-                bootState = .authenticated(user: newUser)
-            }
-        }
-        .onChange(of: authViewModel.resolvedRole) { _, role in
-            if role != nil, let user = authViewModel.currentUser {
-                bootState = .authenticated(user: user)
-            }
+            bootState = .authenticated(user: newUser)
         }
     }
 
@@ -83,6 +78,6 @@ private struct RootContentView: View {
             return
         }
 
-        bootState = authViewModel.resolvedRole == nil ? .resolvingRole : .authenticated(user: user)
+        bootState = .authenticated(user: user)
     }
 }

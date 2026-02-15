@@ -87,10 +87,13 @@ final class AccountSettingsViewModel: ObservableObject {
         }
 
         do {
-            try await db.collection("users").document(currentUser.uid).delete()
+            if role == .manager {
+                try await db.collection("managers").document(currentUser.uid).delete()
+            } else {
+                try await db.collection("employees").document(currentUser.uid).delete()
+            }
 
-            let mode = role == .manager ? "manager_delete_all" : "employee"
-            _ = try? await callable(name: "deleteMyAccount", payload: ["mode": mode])
+            _ = try? await callable(name: "deleteMyAccount", payload: ["mode": "cleanup_memberships"])
 
             if auth.currentUser != nil {
                 do {
