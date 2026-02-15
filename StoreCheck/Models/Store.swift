@@ -5,15 +5,25 @@ struct Store: Codable, Identifiable, Hashable {
     let id: String
     var name: String
     var address: String
-    var lat: Double
-    var lng: Double
+    var latitude: Double
+    var longitude: Double
     var radiusMeters: Int
     var isActive: Bool
     var managerId: String?
     var createdAt: Date?
+    var updatedAt: Date?
     var joinCodeLast4: String?
 
     var coordinate: CLLocationCoordinate2D {
-        CLLocationCoordinate2D(latitude: lat, longitude: lng)
+        CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
     }
+}
+
+struct StoreMember: Codable, Identifiable, Hashable {
+    let id: String
+    let userId: String
+    let role: UserRole
+    let joinedAt: Date
+    let isActive: Bool
+    let addedBy: String
 }

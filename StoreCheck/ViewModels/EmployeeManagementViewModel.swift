@@ -2,9 +2,10 @@ import Foundation
 
 @MainActor
 final class EmployeeManagementViewModel: ObservableObject {
+    @Published var stores: [Store] = []
     @Published var employees: [EmployeeSummary] = []
+    @Published var selectedStoreId: String = "all"
     @Published var errorMessage: String?
-    @Published var filterStoreId: String = ""
     @Published var isLoading = false
 
     private let employeeRepository: EmployeeManagementRepositoryProtocol
@@ -16,14 +17,8 @@ final class EmployeeManagementViewModel: ObservableObject {
     }
 
     var filteredEmployees: [EmployeeSummary] {
-        guard !filterStoreId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return employees
-        }
-
-        let storeId = filterStoreId.trimmingCharacters(in: .whitespacesAndNewlines)
-        return employees.filter {
-            $0.assignedStoreIds.contains(storeId) || $0.linkedStoreIds.contains(storeId)
-        }
+        guard selectedStoreId != "all" else { return employees }
+        return employees.filter { $0.storeIds.contains(selectedStoreId) }
     }
 
     func load() async {
@@ -31,11 +26,11 @@ final class EmployeeManagementViewModel: ObservableObject {
             errorMessage = "Unable to resolve current manager session."
             return
         }
-
         isLoading = true
         defer { isLoading = false }
 
         do {
+            stores = try await employeeRepository.fetchManagerStores(managerId: managerId)
             employees = try await employeeRepository.fetchEmployeesForManager(managerId: managerId)
             errorMessage = nil
         } catch {
@@ -43,20 +38,19 @@ final class EmployeeManagementViewModel: ObservableObject {
         }
     }
 
-    func createEmployee(name: String, email: String, password: String, assignedStores: [String]) async {
-        guard let managerId = authRepository.currentUserId else {
-            errorMessage = "Unable to resolve current manager session."
-            return
-        }
-
+    func removeFromStore(employeeId: String, storeId: String) async {
         do {
-            try await employeeRepository.createEmployeeUnderManager(
-                managerId: managerId,
-                name: name,
-                email: email,
-                tempPassword: password,
-                storeIds: assignedStores
-            )
+            try await employeeRepository.removeEmployeeFromStore(storeId: storeId, employeeId: employeeId)
+            await load()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func removeFromAll(employeeId: String) async {
+        guard let managerId = authRepository.currentUserId else { return }
+        do {
+            try await employeeRepository.removeEmployeeFromAllManagerStores(employeeId: employeeId, managerId: managerId)
             await load()
         } catch {
             errorMessage = error.localizedDescription
@@ -64,13 +58,8 @@ final class EmployeeManagementViewModel: ObservableObject {
     }
 
     func updateStores(employeeId: String, storeIds: [String]) async {
-        guard let managerId = authRepository.currentUserId else {
-            errorMessage = "Unable to resolve current manager session."
-            return
-        }
-
         do {
-            try await employeeRepository.updateEmployeeStores(managerId: managerId, employeeId: employeeId, storeIds: storeIds)
+            try await employeeRepository.setEmployeeStoresForManager(employeeId: employeeId, storeIds: storeIds)
             await load()
         } catch {
             errorMessage = error.localizedDescription
@@ -78,27 +67,8 @@ final class EmployeeManagementViewModel: ObservableObject {
     }
 
     func setActive(employeeId: String, isActive: Bool) async {
-        guard let managerId = authRepository.currentUserId else {
-            errorMessage = "Unable to resolve current manager session."
-            return
-        }
-
         do {
-            try await employeeRepository.setEmployeeActive(managerId: managerId, employeeId: employeeId, isActive: isActive)
-            await load()
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-    }
-
-    func unlink(employeeId: String) async {
-        guard let managerId = authRepository.currentUserId else {
-            errorMessage = "Unable to resolve current manager session."
-            return
-        }
-
-        do {
-            try await employeeRepository.unlinkEmployee(managerId: managerId, employeeId: employeeId)
+            try await employeeRepository.setEmployeeActive(employeeId: employeeId, isActive: isActive)
             await load()
         } catch {
             errorMessage = error.localizedDescription

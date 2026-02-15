@@ -10,8 +10,8 @@ StorePass is a SwiftUI + MVVM employee attendance app with Firebase Auth, Firest
   - Check-in button gated by geo + permission + account status
   - Last 30 check-ins with pull-to-refresh
 - Manager role
-  - Create stores (coordinates + radius)
-  - Create/disable employees
+  - Create/edit/delete stores with address search + code tools
+  - Manage joined employees by store assignments
   - View today check-ins
   - Export check-ins to CSV
 
@@ -36,8 +36,11 @@ StorePass is a SwiftUI + MVVM employee attendance app with Firebase Auth, Firest
 {
   "name": "String",
   "address": "String",
-  "lat": 0.0,
-  "lng": 0.0,
+  "latitude": 0.0,
+  "longitude": 0.0,
+  "managerId": "uid",
+  "joinCodeHash": "sha256",
+  "joinCodeLast4": "ABCD",
   "radiusMeters": 150,
   "isActive": true
 }
@@ -132,3 +135,10 @@ All other users should keep `role = "employee"`.
   - Grant When In Use permission, enable Precise Location, retry outdoors.
 - **Firestore index required error**
   - Deploy `firebase/firestore.indexes.json`.
+
+
+## Migration Notes
+1. Deploy updated Cloud Functions and Firestore rules before shipping the new client.
+2. Backfill existing `stores` docs: copy `lat -> latitude`, `lng -> longitude`, set `managerId`, `joinCodeHash`, `joinCodeLast4`, `isActive`, `updatedAt`.
+3. For existing manager-created employee links, create `storeMembers/{storeId}/members/{employeeUid}` docs and update each `users/{uid}.assignedStoreIds`.
+4. Optionally run a one-time Admin script to disable legacy `managers/{managerId}/employees/*` documents after migration.

@@ -129,8 +129,7 @@ final class AuthService: ObservableObject, AuthServiceProtocol {
             lastLoginAt: now,
             provider: provider,
             assignedStoreIds: [],
-            isActive: true,
-            createdByManagerId: nil
+            isActive: true
         )
 
         var updates: [String: Any] = [
@@ -181,8 +180,7 @@ final class AuthService: ObservableObject, AuthServiceProtocol {
             lastLoginAt: updates["lastLoginAt"] as? Date ?? fallbackNow,
             provider: updates["provider"] as? String ?? user.provider,
             assignedStoreIds: updates["assignedStoreIds"] as? [String] ?? user.assignedStoreIds,
-            isActive: updates["isActive"] as? Bool ?? user.isActive,
-            createdByManagerId: updates["createdByManagerId"] as? String ?? user.createdByManagerId
+            isActive: updates["isActive"] as? Bool ?? user.isActive
         )
     }
 

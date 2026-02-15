@@ -19,6 +19,9 @@ struct ManagerTabView: View {
                 authRepository: container.authRepository
             )
             .tabItem { Label("Employees", systemImage: "person.3") }
+
+            EmployeeSettingsView()
+                .tabItem { Label("Settings", systemImage: "gearshape") }
         }
     }
 }

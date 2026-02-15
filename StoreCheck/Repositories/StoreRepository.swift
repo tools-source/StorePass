@@ -1,4 +1,3 @@
-import CryptoKit
 import FirebaseAuth
 import FirebaseCore
 import FirebaseFirestore
@@ -17,118 +16,101 @@ struct JoinStoreResult {
 
 protocol StoreRepositoryProtocol {
     func fetchStores(ids: [String]?) async throws -> [Store]
+    func fetchManagerStores(managerId: String) async throws -> [Store]
     func upsertStore(_ store: Store) async throws
     func deleteStore(id: String) async throws
-    func createStore(name: String, address: String, lat: Double, lng: Double, radiusMeters: Int) async throws -> StoreCreationResult
-    func rotateJoinCode(storeId: String) async throws -> String
+    func createStore(name: String, address: String, latitude: Double, longitude: Double, radiusMeters: Int) async throws -> StoreCreationResult
+    func rotateStoreCode(storeId: String) async throws -> String
+    func getStoreJoinCode(storeId: String) async throws -> String
     func joinStoreByCode(code: String) async throws -> JoinStoreResult
 }
 
 final class FirestoreStoreRepository: StoreRepositoryProtocol {
-    private var db: Firestore {
-        FirebaseBootstrap.assertConfigured(context: "FirestoreStoreRepository.db")
-        return Firestore.firestore()
-    }
+    private let db = Firestore.firestore()
 
     func fetchStores(ids: [String]? = nil) async throws -> [Store] {
-        do {
-            let snapshot: QuerySnapshot
-            if let ids, !ids.isEmpty {
-                snapshot = try await db.collection("stores").whereField(FieldPath.documentID(), in: ids).getDocuments()
-            } else {
-                snapshot = try await db.collection("stores").order(by: "name").getDocuments()
-            }
-            return snapshot.documents.compactMap(decodeStore)
-        } catch {
-            throw mapFirestoreError(error)
+        let snapshot: QuerySnapshot
+        if let ids {
+            if ids.isEmpty { return [] }
+            snapshot = try await db.collection("stores").whereField(FieldPath.documentID(), in: ids).getDocuments()
+        } else {
+            snapshot = try await db.collection("stores").order(by: "name").getDocuments()
         }
+        return snapshot.documents.map(decodeStore)
+    }
+
+    func fetchManagerStores(managerId: String) async throws -> [Store] {
+        let snapshot = try await db.collection("stores")
+            .whereField("managerId", isEqualTo: managerId)
+            .order(by: "name")
+            .getDocuments()
+        return snapshot.documents.map(decodeStore)
     }
 
     func upsertStore(_ store: Store) async throws {
-        var data: [String: Any] = [
+        try await db.collection("stores").document(store.id).setData([
             "name": store.name,
             "address": store.address,
-            "lat": store.lat,
-            "lng": store.lng,
+            "latitude": store.latitude,
+            "longitude": store.longitude,
             "radiusMeters": store.radiusMeters,
-            "isActive": store.isActive
-        ]
-        if let joinCodeLast4 = store.joinCodeLast4 {
-            data["joinCodeLast4"] = joinCodeLast4
-        }
-
-        do {
-            try await db.collection("stores").document(store.id).setData(data, merge: true)
-        } catch {
-            throw mapFirestoreError(error)
-        }
+            "isActive": store.isActive,
+            "updatedAt": FieldValue.serverTimestamp()
+        ], merge: true)
     }
 
     func deleteStore(id: String) async throws {
-        do {
-            try await db.collection("stores").document(id).delete()
-        } catch {
-            throw mapFirestoreError(error)
-        }
+        try await db.collection("stores").document(id).delete()
     }
 
-    func createStore(name: String, address: String, lat: Double, lng: Double, radiusMeters: Int) async throws -> StoreCreationResult {
-        guard let managerId = Auth.auth().currentUser?.uid else {
-            throw NSError(domain: "StorePass", code: 5001, userInfo: [NSLocalizedDescriptionKey: "You must be signed in to create stores."])
+    func createStore(name: String, address: String, latitude: Double, longitude: Double, radiusMeters: Int) async throws -> StoreCreationResult {
+        let response = try await callable(name: "createStore", payload: [
+            "name": name,
+            "address": address,
+            "latitude": latitude,
+            "longitude": longitude,
+            "radiusMeters": radiusMeters
+        ])
+
+        guard let storeId = response["storeId"] as? String,
+              let joinCode = response["joinCode"] as? String else {
+            throw NSError(domain: "StorePass", code: 5001, userInfo: [NSLocalizedDescriptionKey: "Unable to create store."])
         }
 
-        let code = Self.generateJoinCode()
-        let normalizedCode = Self.normalizeCode(code)
-        let storeRef = db.collection("stores").document()
-
-        do {
-            try await storeRef.setData([
-                "name": name,
-                "address": address,
-                "lat": lat,
-                "lng": lng,
-                "radiusMeters": radiusMeters,
-                "managerId": managerId,
-                "createdAt": FieldValue.serverTimestamp(),
-                "joinCodeHash": Self.sha256(normalizedCode),
-                "joinCodeLast4": String(code.suffix(4)),
-                "isActive": true
-            ], merge: false)
-
-            let created = Store(
-                id: storeRef.documentID,
-                name: name,
-                address: address,
-                lat: lat,
-                lng: lng,
-                radiusMeters: radiusMeters,
-                isActive: true,
-                managerId: managerId,
-                createdAt: Date(),
-                joinCodeLast4: String(code.suffix(4))
-            )
-            return StoreCreationResult(store: created, joinCode: code)
-        } catch {
-            throw mapFirestoreError(error)
-        }
+        let store = Store(
+            id: storeId,
+            name: name,
+            address: address,
+            latitude: latitude,
+            longitude: longitude,
+            radiusMeters: radiusMeters,
+            isActive: true,
+            managerId: Auth.auth().currentUser?.uid,
+            createdAt: Date(),
+            updatedAt: Date(),
+            joinCodeLast4: String(joinCode.suffix(4))
+        )
+        return StoreCreationResult(store: store, joinCode: joinCode)
     }
 
-    func rotateJoinCode(storeId: String) async throws -> String {
-        let response = try await callFirebaseFunction(name: "rotateJoinCode", payload: ["storeId": storeId])
+    func rotateStoreCode(storeId: String) async throws -> String {
+        let response = try await callable(name: "rotateStoreCode", payload: ["storeId": storeId])
         guard let joinCode = response["joinCode"] as? String else {
-            throw NSError(domain: "StorePass", code: 5002, userInfo: [NSLocalizedDescriptionKey: "Unable to rotate join code. Try again."])
+            throw NSError(domain: "StorePass", code: 5002, userInfo: [NSLocalizedDescriptionKey: "Unable to rotate code."])
+        }
+        return joinCode
+    }
+
+    func getStoreJoinCode(storeId: String) async throws -> String {
+        let response = try await callable(name: "getStoreJoinCode", payload: ["storeId": storeId])
+        guard let joinCode = response["joinCode"] as? String else {
+            throw NSError(domain: "StorePass", code: 5003, userInfo: [NSLocalizedDescriptionKey: "Unable to reveal code."])
         }
         return joinCode
     }
 
     func joinStoreByCode(code: String) async throws -> JoinStoreResult {
-        let normalizedCode = Self.normalizeCode(code)
-        guard !normalizedCode.isEmpty else {
-            throw NSError(domain: "StorePass", code: 5003, userInfo: [NSLocalizedDescriptionKey: "Please enter a join code."])
-        }
-
-        let response = try await callFirebaseFunction(name: "joinStoreByCode", payload: ["code": normalizedCode])
-
+        let response = try await callable(name: "joinStoreByCode", payload: ["code": code])
         guard let storeId = response["storeId"] as? String,
               let storeName = response["storeName"] as? String else {
             throw NSError(domain: "StorePass", code: 5004, userInfo: [NSLocalizedDescriptionKey: "Unexpected response while joining store."])
@@ -141,23 +123,24 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
         )
     }
 
-    private func decodeStore(document: QueryDocumentSnapshot) -> Store? {
+    private func decodeStore(_ document: QueryDocumentSnapshot) -> Store {
         let data = document.data()
         return Store(
             id: document.documentID,
             name: data["name"] as? String ?? "Unnamed Store",
             address: data["address"] as? String ?? "",
-            lat: data["lat"] as? Double ?? 0,
-            lng: data["lng"] as? Double ?? 0,
+            latitude: data["latitude"] as? Double ?? data["lat"] as? Double ?? 0,
+            longitude: data["longitude"] as? Double ?? data["lng"] as? Double ?? 0,
             radiusMeters: data["radiusMeters"] as? Int ?? 150,
             isActive: data["isActive"] as? Bool ?? true,
             managerId: data["managerId"] as? String,
             createdAt: (data["createdAt"] as? Timestamp)?.dateValue(),
+            updatedAt: (data["updatedAt"] as? Timestamp)?.dateValue(),
             joinCodeLast4: data["joinCodeLast4"] as? String
         )
     }
 
-    private func callFirebaseFunction(name: String, payload: [String: Any]) async throws -> [String: Any] {
+    private func callable(name: String, payload: [String: Any]) async throws -> [String: Any] {
         guard let user = Auth.auth().currentUser else {
             throw NSError(domain: "StorePass", code: 4001, userInfo: [NSLocalizedDescriptionKey: "You must be signed in."])
         }
@@ -193,32 +176,5 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
         }
 
         return object["result"] as? [String: Any] ?? object
-    }
-
-    private static func normalizeCode(_ code: String) -> String {
-        code.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
-    }
-
-    private static func sha256(_ input: String) -> String {
-        SHA256.hash(data: Data(input.utf8)).map { String(format: "%02x", $0) }.joined()
-    }
-
-    private static func generateJoinCode(length: Int = 8) -> String {
-        let charset = Array("ABCDEFGHJKLMNPQRSTUVWXYZ23456789")
-        return String((0..<length).compactMap { _ in charset.randomElement() })
-    }
-
-    private func mapFirestoreError(_ error: Error) -> Error {
-        let nsError = error as NSError
-        guard nsError.domain == FirestoreErrorDomain,
-              nsError.code == FirestoreErrorCode.permissionDenied.rawValue else {
-            return error
-        }
-
-        return NSError(
-            domain: "StorePass",
-            code: nsError.code,
-            userInfo: [NSLocalizedDescriptionKey: "You don't have permission for this action."]
-        )
     }
 }

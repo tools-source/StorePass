@@ -6,15 +6,15 @@ import Foundation
 protocol UserRepositoryProtocol {
     func fetchUser(id: String) async throws -> UserProfile?
     func upsertUser(_ user: UserProfile) async throws
-    func fetchEmployees() async throws -> [UserProfile]
 }
 
 protocol EmployeeManagementRepositoryProtocol {
-    func createEmployeeUnderManager(managerId: String, name: String, email: String, tempPassword: String, storeIds: [String]) async throws
+    func fetchManagerStores(managerId: String) async throws -> [Store]
     func fetchEmployeesForManager(managerId: String) async throws -> [EmployeeSummary]
-    func updateEmployeeStores(managerId: String, employeeId: String, storeIds: [String]) async throws
-    func setEmployeeActive(managerId: String, employeeId: String, isActive: Bool) async throws
-    func unlinkEmployee(managerId: String, employeeId: String) async throws
+    func removeEmployeeFromStore(storeId: String, employeeId: String) async throws
+    func removeEmployeeFromAllManagerStores(employeeId: String, managerId: String) async throws
+    func setEmployeeStoresForManager(employeeId: String, storeIds: [String]) async throws
+    func setEmployeeActive(employeeId: String, isActive: Bool) async throws
 }
 
 final class FirestoreUserRepository: UserRepositoryProtocol {
@@ -24,36 +24,16 @@ final class FirestoreUserRepository: UserRepositoryProtocol {
     }
 
     func fetchUser(id: String) async throws -> UserProfile? {
-        do {
-            let doc = try await db.collection("users").document(id).getDocument()
-            guard let data = doc.data() else { return nil }
-            return try decodeUser(id: doc.documentID, data: data)
-        } catch {
-            throw mapFirestoreError(error)
-        }
+        let doc = try await db.collection("users").document(id).getDocument()
+        guard let data = doc.data() else { return nil }
+        return decodeUser(id: doc.documentID, data: data)
     }
 
     func upsertUser(_ user: UserProfile) async throws {
-        do {
-            try await db.collection("users").document(user.id).setData(encode(user: user), merge: true)
-        } catch {
-            throw mapFirestoreError(error)
-        }
+        try await db.collection("users").document(user.id).setData(encode(user: user), merge: true)
     }
 
-    func fetchEmployees() async throws -> [UserProfile] {
-        do {
-            let snap = try await db.collection("users")
-                .whereField("role", isEqualTo: UserRole.employee.rawValue)
-                .order(by: "name")
-                .getDocuments()
-            return try snap.documents.compactMap { try decodeUser(id: $0.documentID, data: $0.data()) }
-        } catch {
-            throw mapFirestoreError(error)
-        }
-    }
-
-    fileprivate func decodeUser(id: String, data: [String: Any]) throws -> UserProfile {
+    fileprivate func decodeUser(id: String, data: [String: Any]) -> UserProfile {
         UserProfile(
             id: id,
             name: data["name"] as? String ?? "StorePass User",
@@ -63,8 +43,7 @@ final class FirestoreUserRepository: UserRepositoryProtocol {
             lastLoginAt: (data["lastLoginAt"] as? Timestamp)?.dateValue() ?? Date(),
             provider: data["provider"] as? String ?? "unknown",
             assignedStoreIds: data["assignedStoreIds"] as? [String] ?? [],
-            isActive: data["isActive"] as? Bool ?? true,
-            createdByManagerId: data["createdByManagerId"] as? String
+            isActive: data["isActive"] as? Bool ?? true
         )
     }
 
@@ -77,122 +56,110 @@ final class FirestoreUserRepository: UserRepositoryProtocol {
             "lastLoginAt": Timestamp(date: user.lastLoginAt),
             "provider": user.provider,
             "assignedStoreIds": user.assignedStoreIds,
-            "isActive": user.isActive,
-            "createdByManagerId": user.createdByManagerId as Any
+            "isActive": user.isActive
         ]
-    }
-
-    fileprivate func mapFirestoreError(_ error: Error) -> Error {
-        let nsError = error as NSError
-        guard nsError.domain == FirestoreErrorDomain,
-              nsError.code == FirestoreErrorCode.permissionDenied.rawValue else {
-            return error
-        }
-
-        return NSError(
-            domain: "StorePass",
-            code: nsError.code,
-            userInfo: [NSLocalizedDescriptionKey: "You don't have permission for this action."]
-        )
     }
 }
 
 final class FirestoreEmployeeManagementRepository: EmployeeManagementRepositoryProtocol {
-    private let userRepository = FirestoreUserRepository()
+    private let db = Firestore.firestore()
 
-    private var db: Firestore {
-        FirebaseBootstrap.assertConfigured(context: "FirestoreEmployeeManagementRepository.db")
-        return Firestore.firestore()
-    }
-
-    func createEmployeeUnderManager(managerId: String, name: String, email: String, tempPassword: String, storeIds: [String]) async throws {
-        let payload: [String: Any] = [
-            "managerId": managerId,
-            "name": name,
-            "email": email,
-            "tempPassword": tempPassword,
-            "storeIds": storeIds
-        ]
-
-        _ = try await callFirebaseFunction(name: "createEmployeeUnderManager", payload: payload)
+    func fetchManagerStores(managerId: String) async throws -> [Store] {
+        let snapshot = try await db.collection("stores")
+            .whereField("managerId", isEqualTo: managerId)
+            .order(by: "name")
+            .getDocuments()
+        return snapshot.documents.map(decodeStore)
     }
 
     func fetchEmployeesForManager(managerId: String) async throws -> [EmployeeSummary] {
-        let linkCollection = db.collection("managers").document(managerId).collection("employees")
-        let linkSnapshot = try await linkCollection.order(by: "createdAt", descending: true).getDocuments()
+        let stores = try await fetchManagerStores(managerId: managerId)
+        if stores.isEmpty { return [] }
 
-        let links: [EmployeeLink] = linkSnapshot.documents.map { doc in
-            let data = doc.data()
-            return EmployeeLink(
-                id: doc.documentID,
-                employeeUserId: data["employeeUserId"] as? String ?? doc.documentID,
-                stores: data["stores"] as? [String] ?? [],
-                isActive: data["isActive"] as? Bool ?? true,
-                createdAt: (data["createdAt"] as? Timestamp)?.dateValue() ?? Date.distantPast
-            )
+        var storeIdsByEmployee: [String: Set<String>] = [:]
+        var inactiveMemberByEmployee: [String: Bool] = [:]
+
+        for store in stores {
+            let members = try await db.collection("storeMembers").document(store.id)
+                .collection("members")
+                .whereField("role", isEqualTo: UserRole.employee.rawValue)
+                .getDocuments()
+            for member in members.documents {
+                let employeeId = member.documentID
+                storeIdsByEmployee[employeeId, default: []].insert(store.id)
+                if let memberActive = member.data()["isActive"] as? Bool, memberActive == false {
+                    inactiveMemberByEmployee[employeeId] = true
+                }
+            }
         }
 
-        return try await withThrowingTaskGroup(of: EmployeeSummary?.self) { group in
-            for link in links {
-                group.addTask {
-                    guard let profile = try await self.userRepository.fetchUser(id: link.employeeUserId) else {
-                        return nil
-                    }
+        if storeIdsByEmployee.isEmpty { return [] }
+        let storesById = Dictionary(uniqueKeysWithValues: stores.map { ($0.id, $0) })
 
+        return try await withThrowingTaskGroup(of: EmployeeSummary?.self) { group in
+            for employeeId in storeIdsByEmployee.keys {
+                group.addTask {
+                    let userSnap = try await self.db.collection("users").document(employeeId).getDocument()
+                    guard let data = userSnap.data() else { return nil }
+                    let storeIds = Array(storeIdsByEmployee[employeeId] ?? []).sorted()
+                    let names = storeIds.compactMap { storesById[$0]?.name }
                     return EmployeeSummary(
-                        id: link.id,
-                        name: profile.name,
-                        email: profile.email,
-                        assignedStoreIds: profile.assignedStoreIds,
-                        linkedStoreIds: link.stores,
-                        isActive: profile.isActive,
-                        createdAt: link.createdAt,
-                        employeeUserId: link.employeeUserId
+                        id: employeeId,
+                        name: data["name"] as? String ?? "Employee",
+                        email: data["email"] as? String,
+                        storeIds: storeIds,
+                        storeNames: names,
+                        userIsActive: data["isActive"] as? Bool ?? true,
+                        hasInactiveMembership: inactiveMemberByEmployee[employeeId] ?? false
                     )
                 }
             }
 
-            var summaries: [EmployeeSummary] = []
-            for try await summary in group {
-                if let summary {
-                    summaries.append(summary)
-                }
+            var rows: [EmployeeSummary] = []
+            for try await item in group {
+                if let item { rows.append(item) }
             }
-            return summaries.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+            return rows.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
         }
     }
 
-    func updateEmployeeStores(managerId: String, employeeId: String, storeIds: [String]) async throws {
-        let batch = db.batch()
-        let userRef = db.collection("users").document(employeeId)
-        let linkRef = db.collection("managers").document(managerId).collection("employees").document(employeeId)
-
-        batch.updateData(["assignedStoreIds": storeIds], forDocument: userRef)
-        batch.updateData(["stores": storeIds], forDocument: linkRef)
-
-        try await batch.commit()
+    func removeEmployeeFromStore(storeId: String, employeeId: String) async throws {
+        _ = try await callable(name: "removeEmployeeFromStore", payload: ["storeId": storeId, "employeeId": employeeId])
     }
 
-    func setEmployeeActive(managerId: String, employeeId: String, isActive: Bool) async throws {
-        let batch = db.batch()
-        let userRef = db.collection("users").document(employeeId)
-        let linkRef = db.collection("managers").document(managerId).collection("employees").document(employeeId)
-
-        batch.updateData(["isActive": isActive], forDocument: userRef)
-        batch.updateData(["isActive": isActive], forDocument: linkRef)
-
-        try await batch.commit()
+    func removeEmployeeFromAllManagerStores(employeeId: String, managerId: String) async throws {
+        _ = try await callable(name: "removeEmployeeFromAllManagerStores", payload: ["employeeId": employeeId, "managerId": managerId])
     }
 
-    func unlinkEmployee(managerId: String, employeeId: String) async throws {
-        try await db.collection("managers").document(managerId).collection("employees").document(employeeId).delete()
+    func setEmployeeStoresForManager(employeeId: String, storeIds: [String]) async throws {
+        _ = try await callable(name: "setEmployeeStoresForManager", payload: ["employeeId": employeeId, "storeIds": storeIds])
     }
 
-    private func callFirebaseFunction(name: String, payload: [String: Any]) async throws -> [String: Any] {
+    func setEmployeeActive(employeeId: String, isActive: Bool) async throws {
+        _ = try await callable(name: "setEmployeeActive", payload: ["employeeId": employeeId, "isActive": isActive])
+    }
+
+    private func decodeStore(_ document: QueryDocumentSnapshot) -> Store {
+        let data = document.data()
+        return Store(
+            id: document.documentID,
+            name: data["name"] as? String ?? "Store",
+            address: data["address"] as? String ?? "",
+            latitude: data["latitude"] as? Double ?? data["lat"] as? Double ?? 0,
+            longitude: data["longitude"] as? Double ?? data["lng"] as? Double ?? 0,
+            radiusMeters: data["radiusMeters"] as? Int ?? 150,
+            isActive: data["isActive"] as? Bool ?? true,
+            managerId: data["managerId"] as? String,
+            createdAt: (data["createdAt"] as? Timestamp)?.dateValue(),
+            updatedAt: (data["updatedAt"] as? Timestamp)?.dateValue(),
+            joinCodeLast4: data["joinCodeLast4"] as? String
+        )
+    }
+
+    private func callable(name: String, payload: [String: Any]) async throws -> [String: Any] {
         guard let user = Auth.auth().currentUser else {
-            throw NSError(domain: "StorePass", code: 4001, userInfo: [NSLocalizedDescriptionKey: "You must be signed in as a manager."])
+            throw NSError(domain: "StorePass", code: 4001, userInfo: [NSLocalizedDescriptionKey: "You must be signed in."])
         }
-
         guard let projectID = FirebaseApp.app()?.options.projectID else {
             throw NSError(domain: "StorePass", code: 4002, userInfo: [NSLocalizedDescriptionKey: "Firebase project is not configured correctly."])
         }
@@ -218,11 +185,9 @@ final class FirestoreEmployeeManagementRepository: EmployeeManagementRepositoryP
             let message = errorObj["message"] as? String ?? "Backend error"
             throw NSError(domain: "StorePass", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: message])
         }
-
         guard (200...299).contains(httpResponse.statusCode) else {
             throw NSError(domain: "StorePass", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: "Backend request failed."])
         }
-
         return object["result"] as? [String: Any] ?? object
     }
 }
