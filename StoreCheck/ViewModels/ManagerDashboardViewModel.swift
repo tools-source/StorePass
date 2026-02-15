@@ -12,6 +12,7 @@ final class ManagerDashboardViewModel: ObservableObject {
     private var listenerToken: CheckInListenerToken?
     private var isDashboardActive = false
 
+
     init(checkInRepository: CheckInRepositoryProtocol) {
         self.checkInRepository = checkInRepository
     }
@@ -21,9 +22,11 @@ final class ManagerDashboardViewModel: ObservableObject {
         isDashboardActive = isActive
 
         if isActive {
+            checkinError = nil
             startListeningIfNeeded()
         } else {
             stopListening()
+            checkinError = nil
         }
     }
 

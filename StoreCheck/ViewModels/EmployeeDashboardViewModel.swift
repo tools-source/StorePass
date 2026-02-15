@@ -31,6 +31,14 @@ final class EmployeeDashboardViewModel: ObservableObject {
         checkInService.blockedReason(for: locationStatus, user: authService.currentUser, store: selectedStore)
     }
 
+
+    func selectStore(withId storeId: String) {
+        Task { @MainActor in
+            selectedStore = stores.first(where: { $0.id == storeId })
+            refreshLocation()
+        }
+    }
+
     func load() async {
         guard let user = authService.currentUser else { return }
         do {
