@@ -255,7 +255,7 @@
 		BEEFABCD123400000000005C /* Views */ = {
 			isa = PBXGroup;
 			children = (
-				BEEFABCD123400000000007A /* Employee */,
+				BEEFABCD1234000000000080 /* Employee */,
 				BEEFABCD123400000000001C /* EmployeeDashboardView.swift */,
 				BEEFABCD123400000000001D /* EmployeeHistoryView.swift */,
 				BEEFABCD123400000000001E /* EmployeeTabView.swift */,
@@ -268,7 +268,7 @@
 			path = Views;
 			sourceTree = "<group>";
 		};
-		BEEFABCD123400000000007A /* Employee */ = {
+		BEEFABCD1234000000000080 /* Employee */ = {
 			isa = PBXGroup;
 			children = (
 				BEEFABCD1234000000000077 /* EmployeeSettingsView.swift */,
