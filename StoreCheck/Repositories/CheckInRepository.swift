@@ -14,7 +14,10 @@ protocol CheckInRepositoryProtocol {
 }
 
 final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
-    private var db: Firestore { Firestore.firestore() }
+    private var db: Firestore {
+        FirebaseBootstrap.assertConfigured(context: "FirestoreCheckInRepository.db")
+        return Firestore.firestore()
+    }
 
     func createCheckIn(_ checkIn: CheckIn) async throws {
         do {

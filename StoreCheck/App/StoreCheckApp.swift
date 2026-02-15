@@ -1,4 +1,3 @@
-import FirebaseCore
 import GoogleSignIn
 import SwiftUI
 
@@ -8,10 +7,8 @@ struct StoreCheckApp: App {
     @StateObject private var appContainer: AppContainer
 
     init() {
-        if FirebaseApp.app() == nil {
-            FirebaseApp.configure()
-        }
-        _appContainer = StateObject(wrappedValue: AppContainer.shared)
+        FirebaseBootstrap.configureIfNeeded(source: "StoreCheckApp.init")
+        _appContainer = StateObject(wrappedValue: AppContainer())
     }
 
     var body: some Scene {

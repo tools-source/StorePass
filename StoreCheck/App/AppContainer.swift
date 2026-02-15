@@ -2,8 +2,6 @@ import Foundation
 
 @MainActor
 final class AppContainer: ObservableObject {
-    static let shared = AppContainer()
-
     private let authRepositoryFactory: () -> AuthRepositoryProtocol
     private let userRepositoryFactory: () -> UserRepositoryProtocol
     private let storeRepositoryFactory: () -> StoreRepositoryProtocol

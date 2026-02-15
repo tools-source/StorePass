@@ -1,11 +1,15 @@
 import SwiftUI
 
 struct ManageEmployeesView: View {
-    @StateObject private var vm = EmployeeManagementViewModel(userRepository: AppContainer.shared.userRepository, authRepository: AppContainer.shared.authRepository)
+    @StateObject private var vm: EmployeeManagementViewModel
     @State private var name = ""
     @State private var email = ""
     @State private var password = ""
     @State private var assignedStores = ""
+
+    init(userRepository: UserRepositoryProtocol, authRepository: AuthRepositoryProtocol) {
+        _vm = StateObject(wrappedValue: EmployeeManagementViewModel(userRepository: userRepository, authRepository: authRepository))
+    }
 
     var body: some View {
         EmployeesView(viewModel: vm, name: $name, email: $email, password: $password, assignedStores: $assignedStores)

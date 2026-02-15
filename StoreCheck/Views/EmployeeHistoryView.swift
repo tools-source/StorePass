@@ -1,10 +1,14 @@
 import SwiftUI
 
 struct EmployeeHistoryView: View {
-    @StateObject private var vm = EmployeeHistoryViewModel(
-        authService: AppContainer.shared.authService,
-        checkInRepository: AppContainer.shared.checkInRepository
-    )
+    @StateObject private var vm: EmployeeHistoryViewModel
+
+    init(authService: AuthService, checkInRepository: CheckInRepositoryProtocol) {
+        _vm = StateObject(wrappedValue: EmployeeHistoryViewModel(
+            authService: authService,
+            checkInRepository: checkInRepository
+        ))
+    }
 
     var body: some View {
         CheckInHistoryView(viewModel: vm)

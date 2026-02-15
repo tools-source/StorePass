@@ -9,19 +9,24 @@ protocol AuthRepositoryProtocol {
 }
 
 final class FirebaseAuthRepository: AuthRepositoryProtocol {
-    var currentUserId: String? { Auth.auth().currentUser?.uid }
+    private var auth: Auth {
+        FirebaseBootstrap.assertConfigured(context: "FirebaseAuthRepository.auth")
+        return Auth.auth()
+    }
+
+    var currentUserId: String? { auth.currentUser?.uid }
 
     func signIn(email: String, password: String) async throws -> String {
-        let result = try await Auth.auth().signIn(withEmail: email, password: password)
+        let result = try await auth.signIn(withEmail: email, password: password)
         return result.user.uid
     }
 
     func createUser(email: String, password: String) async throws -> String {
-        let result = try await Auth.auth().createUser(withEmail: email, password: password)
+        let result = try await auth.createUser(withEmail: email, password: password)
         return result.user.uid
     }
 
     func signOut() throws {
-        try Auth.auth().signOut()
+        try auth.signOut()
     }
 }

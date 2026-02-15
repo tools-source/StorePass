@@ -27,7 +27,11 @@ final class AuthService: ObservableObject, AuthServiceProtocol {
     private let authFactory: () -> Auth
     private let userRepository: UserRepositoryProtocol
 
-    init(authFactory: @escaping () -> Auth = { Auth.auth() }, userRepository: UserRepositoryProtocol) {
+    init(authFactory: @escaping () -> Auth = {
+        FirebaseBootstrap.assertConfigured(context: "AuthService.authFactory")
+        return Auth.auth()
+    }, userRepository: UserRepositoryProtocol) {
+        FirebaseBootstrap.assertConfigured(context: "AuthService.init")
         self.authFactory = authFactory
         self.userRepository = userRepository
     }
