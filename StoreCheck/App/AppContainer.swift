@@ -40,8 +40,6 @@ final class AppContainer: ObservableObject {
         csvExporterFactory: @escaping () -> CSVExportServiceProtocol = { CSVExportService() },
         offlineQueueFactory: @escaping () -> OfflineCheckInQueueProtocol = { OfflineCheckInQueue() }
     ) {
-        FirebaseBootstrap.assertConfigured(context: "AppContainer.init")
-
         self.authRepositoryFactory = authRepositoryFactory
         self.userRepositoryFactory = userRepositoryFactory
         self.employeeManagementRepositoryFactory = employeeManagementRepositoryFactory

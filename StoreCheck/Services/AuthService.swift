@@ -27,11 +27,18 @@ final class AuthService: ObservableObject, AuthServiceProtocol {
     private let authFactory: () -> Auth
     private let userRepository: UserRepositoryProtocol
 
+    private var firebaseApp: FirebaseApp {
+        FirebaseBootstrap.assertConfigured(context: "AuthService.firebaseApp")
+        guard let app = FirebaseApp.app() else {
+            fatalError("Firebase app is unexpectedly unavailable.")
+        }
+        return app
+    }
+
     init(authFactory: @escaping () -> Auth = {
         FirebaseBootstrap.assertConfigured(context: "AuthService.authFactory")
         return Auth.auth()
     }, userRepository: UserRepositoryProtocol) {
-        FirebaseBootstrap.assertConfigured(context: "AuthService.init")
         self.authFactory = authFactory
         self.userRepository = userRepository
     }
@@ -50,7 +57,9 @@ final class AuthService: ObservableObject, AuthServiceProtocol {
     }
 
     func signInWithGoogle() async throws {
-        guard let clientID = FirebaseApp.app()?.options.clientID else {
+        FirebaseBootstrap.assertConfigured(context: "AuthService.signInWithGoogle")
+
+        guard let clientID = firebaseApp.options.clientID else {
             throw NSError(domain: "StorePass", code: 1001, userInfo: [NSLocalizedDescriptionKey: "Firebase is not configured. Verify GoogleService-Info.plist is included in the app target."])
         }
 

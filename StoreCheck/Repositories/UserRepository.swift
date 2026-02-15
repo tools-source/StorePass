@@ -79,6 +79,19 @@ final class FirestoreEmployeeManagementRepository: EmployeeManagementRepositoryP
         return Firestore.firestore()
     }
 
+    private var auth: Auth {
+        FirebaseBootstrap.assertConfigured(context: "FirestoreEmployeeManagementRepository.auth")
+        return Auth.auth()
+    }
+
+    private var firebaseApp: FirebaseApp {
+        FirebaseBootstrap.assertConfigured(context: "FirestoreEmployeeManagementRepository.firebaseApp")
+        guard let app = FirebaseApp.app() else {
+            fatalError("Firebase app is unexpectedly unavailable.")
+        }
+        return app
+    }
+
     func fetchManagerStores(managerId: String) async throws -> [Store] {
         // ✅ FIX: remove orderBy(name) to avoid composite index requirement
         let snapshot = try await db.collection("stores")
@@ -231,10 +244,11 @@ final class FirestoreEmployeeManagementRepository: EmployeeManagementRepositoryP
     private func callable(name: String, payload: [String: Any]) async throws -> [String: Any] {
         FirebaseBootstrap.assertConfigured(context: "FirestoreEmployeeManagementRepository.callable")
 
-        guard let user = Auth.auth().currentUser else {
+        guard let user = auth.currentUser else {
             throw NSError(domain: "StorePass", code: 4001, userInfo: [NSLocalizedDescriptionKey: "You must be signed in."])
         }
-        guard let projectID = FirebaseApp.app()?.options.projectID else {
+        let projectID = firebaseApp.options.projectID ?? ""
+        guard !projectID.isEmpty else {
             throw NSError(domain: "StorePass", code: 4002, userInfo: [NSLocalizedDescriptionKey: "Firebase project is not configured correctly."])
         }
 

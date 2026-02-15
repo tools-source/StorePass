@@ -65,6 +65,19 @@ struct EmployeeSettingsView: View {
 final class SettingsViewModel: ObservableObject {
     @Published var errorMessage: String?
 
+    private var auth: Auth {
+        FirebaseBootstrap.assertConfigured(context: "SettingsViewModel.auth")
+        return Auth.auth()
+    }
+
+    private var firebaseApp: FirebaseApp {
+        FirebaseBootstrap.assertConfigured(context: "SettingsViewModel.firebaseApp")
+        guard let app = FirebaseApp.app() else {
+            fatalError("Firebase app is unexpectedly unavailable.")
+        }
+        return app
+    }
+
     func deleteAccount(mode: String) async {
         do {
             _ = try await callable(name: "deleteMyAccount", payload: ["mode": mode])
@@ -74,11 +87,12 @@ final class SettingsViewModel: ObservableObject {
     }
 
     private func callable(name: String, payload: [String: Any]) async throws -> [String: Any] {
-        guard let user = Auth.auth().currentUser else {
+        guard let user = auth.currentUser else {
             throw NSError(domain: "StorePass", code: 4001, userInfo: [NSLocalizedDescriptionKey: "You must be signed in."])
         }
 
-        guard let projectID = FirebaseApp.app()?.options.projectID else {
+        let projectID = firebaseApp.options.projectID ?? ""
+        guard !projectID.isEmpty else {
             throw NSError(domain: "StorePass", code: 4002, userInfo: [NSLocalizedDescriptionKey: "Firebase project is not configured correctly."])
         }
 

@@ -36,6 +36,14 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
         return Auth.auth()
     }
 
+    private var firebaseApp: FirebaseApp {
+        FirebaseBootstrap.assertConfigured(context: "FirestoreStoreRepository.firebaseApp")
+        guard let app = FirebaseApp.app() else {
+            fatalError("Firebase app is unexpectedly unavailable.")
+        }
+        return app
+    }
+
     func fetchStores(ids: [String]? = nil) async throws -> [Store] {
         let snapshot: QuerySnapshot
         if let ids {
@@ -145,7 +153,8 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
             throw NSError(domain: "StorePass", code: 4001, userInfo: [NSLocalizedDescriptionKey: "You must be signed in."])
         }
 
-        guard let projectID = FirebaseApp.app()?.options.projectID else {
+        let projectID = firebaseApp.options.projectID ?? ""
+        guard !projectID.isEmpty else {
             throw NSError(domain: "StorePass", code: 4002, userInfo: [NSLocalizedDescriptionKey: "Firebase project is not configured correctly."])
         }
 
