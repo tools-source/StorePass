@@ -49,6 +49,8 @@
 		BEEFABCD123400000000004C /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000024 /* Assets.xcassets */; };
 		BEEFABCD123400000000004D /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000025 /* LaunchScreen.storyboard */; };
 		BEEFABCD123400000000004E /* InfoPlist.strings in Resources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000026 /* InfoPlist.strings */; };
+		BEEFABCD1234000000000074 /* UserRole.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000072 /* UserRole.swift */; };
+		BEEFABCD1234000000000075 /* AuthViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000073 /* AuthViewModel.swift */; };
 		BEEFABCD123400000000006F /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = BEEFABCD1234000000000071 /* GoogleSignIn */; };
 /* End PBXBuildFile section */
 
@@ -94,6 +96,8 @@
 		BEEFABCD1234000000000026 /* InfoPlist.strings */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; path = InfoPlist.strings; sourceTree = "<group>"; };
 		BEEFABCD1234000000000027 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		BEEFABCD1234000000000028 /* StoreCheck.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = StoreCheck.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		BEEFABCD1234000000000072 /* UserRole.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserRole.swift; sourceTree = "<group>"; };
+		BEEFABCD1234000000000073 /* AuthViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthViewModel.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -196,6 +200,7 @@
 				BEEFABCD1234000000000008 /* LocationStatus.swift */,
 				BEEFABCD1234000000000009 /* Store.swift */,
 				BEEFABCD123400000000000A /* UserProfile.swift */,
+				BEEFABCD1234000000000072 /* UserRole.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -227,6 +232,7 @@
 		BEEFABCD123400000000005B /* ViewModels */ = {
 			isa = PBXGroup;
 			children = (
+				BEEFABCD1234000000000073 /* AuthViewModel.swift */,
 				BEEFABCD1234000000000015 /* EmployeeDashboardViewModel.swift */,
 				BEEFABCD1234000000000016 /* EmployeeHistoryViewModel.swift */,
 				BEEFABCD1234000000000017 /* EmployeeManagementViewModel.swift */,
@@ -345,6 +351,7 @@
 				BEEFABCD1234000000000030 /* LocationStatus.swift in Sources */,
 				BEEFABCD1234000000000031 /* Store.swift in Sources */,
 				BEEFABCD1234000000000032 /* UserProfile.swift in Sources */,
+				BEEFABCD1234000000000074 /* UserRole.swift in Sources */,
 				BEEFABCD1234000000000033 /* AuthRepository.swift in Sources */,
 				BEEFABCD1234000000000034 /* CheckInRepository.swift in Sources */,
 				BEEFABCD1234000000000035 /* StoreRepository.swift in Sources */,
@@ -362,6 +369,7 @@
 				BEEFABCD1234000000000041 /* ManagerDashboardViewModel.swift in Sources */,
 				BEEFABCD1234000000000042 /* RootViewModel.swift in Sources */,
 				BEEFABCD1234000000000043 /* StoreManagementViewModel.swift in Sources */,
+				BEEFABCD1234000000000075 /* AuthViewModel.swift in Sources */,
 				BEEFABCD1234000000000044 /* EmployeeDashboardView.swift in Sources */,
 				BEEFABCD1234000000000045 /* EmployeeHistoryView.swift in Sources */,
 				BEEFABCD1234000000000046 /* EmployeeTabView.swift in Sources */,
@@ -396,7 +404,7 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_VERSION = 5.0;
+				SWIFT_VERSION = 5.10;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Debug;
@@ -421,7 +429,7 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_VERSION = 5.0;
+				SWIFT_VERSION = 5.10;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Release;
@@ -432,9 +440,9 @@
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_ENABLE_MODULES = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
-				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.6;
 				SDKROOT = iphoneos;
-				SWIFT_VERSION = 5.0;
+				SWIFT_VERSION = 5.10;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Debug;
@@ -445,9 +453,9 @@
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_ENABLE_MODULES = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
-				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.6;
 				SDKROOT = iphoneos;
-				SWIFT_VERSION = 5.0;
+				SWIFT_VERSION = 5.10;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Release;
