@@ -74,7 +74,10 @@ final class FirestoreUserRepository: UserRepositoryProtocol {
 // MARK: - Employee Management Repo
 
 final class FirestoreEmployeeManagementRepository: EmployeeManagementRepositoryProtocol {
-    private let db = Firestore.firestore()
+    private var db: Firestore {
+        FirebaseBootstrap.assertConfigured(context: "FirestoreEmployeeManagementRepository.db")
+        return Firestore.firestore()
+    }
 
     func fetchManagerStores(managerId: String) async throws -> [Store] {
         // ✅ FIX: remove orderBy(name) to avoid composite index requirement
@@ -207,6 +210,8 @@ final class FirestoreEmployeeManagementRepository: EmployeeManagementRepositoryP
     }
 
     private func callable(name: String, payload: [String: Any]) async throws -> [String: Any] {
+        FirebaseBootstrap.assertConfigured(context: "FirestoreEmployeeManagementRepository.callable")
+
         guard let user = Auth.auth().currentUser else {
             throw NSError(domain: "StorePass", code: 4001, userInfo: [NSLocalizedDescriptionKey: "You must be signed in."])
         }

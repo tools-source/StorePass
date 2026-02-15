@@ -26,7 +26,10 @@ protocol StoreRepositoryProtocol {
 }
 
 final class FirestoreStoreRepository: StoreRepositoryProtocol {
-    private let db = Firestore.firestore()
+    private var db: Firestore {
+        FirebaseBootstrap.assertConfigured(context: "FirestoreStoreRepository.db")
+        return Firestore.firestore()
+    }
 
     func fetchStores(ids: [String]? = nil) async throws -> [Store] {
         let snapshot: QuerySnapshot
@@ -149,6 +152,8 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
     }
 
     private func callable(name: String, payload: [String: Any]) async throws -> [String: Any] {
+        FirebaseBootstrap.assertConfigured(context: "FirestoreStoreRepository.callable")
+
         guard let user = Auth.auth().currentUser else {
             throw NSError(domain: "StorePass", code: 4001, userInfo: [NSLocalizedDescriptionKey: "You must be signed in."])
         }

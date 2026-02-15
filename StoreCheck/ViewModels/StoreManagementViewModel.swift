@@ -4,7 +4,7 @@ import Foundation
 final class StoreManagementViewModel: ObservableObject {
     @Published var stores: [Store] = []
     @Published var latestJoinCodesByStoreId: [String: String] = [:]
-    @Published var errorMessage: String?
+    @Published var storeError: String?
     @Published var toastMessage: String?
 
     private let repository: StoreRepositoryProtocol
@@ -20,8 +20,10 @@ final class StoreManagementViewModel: ObservableObject {
             } else {
                 stores = try await repository.fetchStores(ids: nil)
             }
+            storeError = nil
         } catch {
-            errorMessage = error.localizedDescription
+            storeError = error.localizedDescription
+            print("[Stores] Load error: \(error.localizedDescription)")
         }
     }
 
@@ -30,8 +32,10 @@ final class StoreManagementViewModel: ObservableObject {
             let result = try await repository.createStore(name: name, address: address, latitude: latitude, longitude: longitude, radiusMeters: radiusMeters)
             latestJoinCodesByStoreId[result.store.id] = result.joinCode
             toastMessage = "Store created. Code: \(result.joinCode)"
+            storeError = nil
         } catch {
-            errorMessage = error.localizedDescription
+            storeError = error.localizedDescription
+            print("[Stores] Create error: \(error.localizedDescription)")
         }
     }
 
@@ -39,8 +43,10 @@ final class StoreManagementViewModel: ObservableObject {
         do {
             try await repository.upsertStore(store)
             toastMessage = "Store updated"
+            storeError = nil
         } catch {
-            errorMessage = error.localizedDescription
+            storeError = error.localizedDescription
+            print("[Stores] Save error: \(error.localizedDescription)")
         }
     }
 
@@ -48,8 +54,10 @@ final class StoreManagementViewModel: ObservableObject {
         do {
             try await repository.deleteStore(id: id)
             toastMessage = "Store deleted"
+            storeError = nil
         } catch {
-            errorMessage = error.localizedDescription
+            storeError = error.localizedDescription
+            print("[Stores] Delete error: \(error.localizedDescription)")
         }
     }
 
@@ -58,8 +66,10 @@ final class StoreManagementViewModel: ObservableObject {
             let code = try await repository.rotateStoreCode(storeId: storeId)
             latestJoinCodesByStoreId[storeId] = code
             toastMessage = "Code rotated"
+            storeError = nil
         } catch {
-            errorMessage = error.localizedDescription
+            storeError = error.localizedDescription
+            print("[Stores] Rotate-code error: \(error.localizedDescription)")
         }
     }
 
@@ -67,9 +77,11 @@ final class StoreManagementViewModel: ObservableObject {
         do {
             let code = try await repository.getStoreJoinCode(storeId: storeId)
             latestJoinCodesByStoreId[storeId] = code
+            storeError = nil
             return code
         } catch {
-            errorMessage = error.localizedDescription
+            storeError = error.localizedDescription
+            print("[Stores] Fetch-code error: \(error.localizedDescription)")
             return nil
         }
     }
