@@ -8,32 +8,44 @@ service cloud.firestore {
     function isManager() {
       return signedIn() &&
         exists(myUserPath()) &&
-        myUser().data.role == "manager";
+        myUser().data.role == "manager" &&
+        myUser().data.isActive == true;
+    }
+    function managerEmployeePath(managerId, employeeId) {
+      return /databases/$(database)/documents/managers/$(managerId)/employees/$(employeeId);
+    }
+    function isLinkedEmployee(employeeId) {
+      return signedIn() && isManager() && exists(managerEmployeePath(myUid(), employeeId));
     }
 
     match /users/{uid} {
-      allow get: if signedIn() && (uid == myUid() || isManager());
-      allow list: if isManager();
+      allow get: if signedIn() && (uid == myUid() || isLinkedEmployee(uid));
+      allow list: if false;
 
-      allow create: if signedIn() && (
-        isManager() ||
-        (
-          uid == myUid() &&
-          request.resource.data.role == "employee" &&
-          request.resource.data.isActive == true
-        )
-      );
+      allow create: if signedIn() && uid == myUid() &&
+        request.resource.data.role == "employee" &&
+        request.resource.data.isActive == true;
 
       allow update: if signedIn() && (
-        isManager() ||
-        (
-          uid == myUid() &&
+        (uid == myUid() &&
           request.resource.data.role == resource.data.role &&
-          request.resource.data.isActive == resource.data.isActive
+          request.resource.data.createdByManagerId == resource.data.createdByManagerId
+        ) ||
+        (isLinkedEmployee(uid) &&
+          request.resource.data.role == resource.data.role &&
+          request.resource.data.createdAt == resource.data.createdAt &&
+          request.resource.data.createdByManagerId == resource.data.createdByManagerId
         )
       );
 
-      allow delete: if isManager();
+      allow delete: if false;
+    }
+
+    match /managers/{managerId}/employees/{employeeId} {
+      allow get, list: if signedIn() && managerId == myUid() && isManager();
+      allow create, update: if signedIn() && managerId == myUid() && isManager() &&
+        request.resource.data.employeeUserId == employeeId;
+      allow delete: if signedIn() && managerId == myUid() && isManager();
     }
 
     match /stores/{storeId} {

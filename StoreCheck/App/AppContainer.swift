@@ -4,6 +4,7 @@ import Foundation
 final class AppContainer: ObservableObject {
     private let authRepositoryFactory: () -> AuthRepositoryProtocol
     private let userRepositoryFactory: () -> UserRepositoryProtocol
+    private let employeeManagementRepositoryFactory: () -> EmployeeManagementRepositoryProtocol
     private let storeRepositoryFactory: () -> StoreRepositoryProtocol
     private let checkInRepositoryFactory: () -> CheckInRepositoryProtocol
     private let locationServiceFactory: () -> LocationService
@@ -12,6 +13,7 @@ final class AppContainer: ObservableObject {
 
     lazy var authRepository: AuthRepositoryProtocol = authRepositoryFactory()
     lazy var userRepository: UserRepositoryProtocol = userRepositoryFactory()
+    lazy var employeeManagementRepository: EmployeeManagementRepositoryProtocol = employeeManagementRepositoryFactory()
     lazy var storeRepository: StoreRepositoryProtocol = storeRepositoryFactory()
     lazy var checkInRepository: CheckInRepositoryProtocol = checkInRepositoryFactory()
     lazy var locationService: LocationService = locationServiceFactory()
@@ -31,6 +33,7 @@ final class AppContainer: ObservableObject {
     init(
         authRepositoryFactory: @escaping () -> AuthRepositoryProtocol = { FirebaseAuthRepository() },
         userRepositoryFactory: @escaping () -> UserRepositoryProtocol = { FirestoreUserRepository() },
+        employeeManagementRepositoryFactory: @escaping () -> EmployeeManagementRepositoryProtocol = { FirestoreEmployeeManagementRepository() },
         storeRepositoryFactory: @escaping () -> StoreRepositoryProtocol = { FirestoreStoreRepository() },
         checkInRepositoryFactory: @escaping () -> CheckInRepositoryProtocol = { FirestoreCheckInRepository() },
         locationServiceFactory: @escaping () -> LocationService = { LocationService() },
@@ -39,6 +42,7 @@ final class AppContainer: ObservableObject {
     ) {
         self.authRepositoryFactory = authRepositoryFactory
         self.userRepositoryFactory = userRepositoryFactory
+        self.employeeManagementRepositoryFactory = employeeManagementRepositoryFactory
         self.storeRepositoryFactory = storeRepositoryFactory
         self.checkInRepositoryFactory = checkInRepositoryFactory
         self.locationServiceFactory = locationServiceFactory
