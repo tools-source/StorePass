@@ -1,0 +1,2 @@
+"NSLocationWhenInUseUsageDescription" = "StoreCheck uses your precise location to validate store check-ins.";
+"NSLocationTemporaryUsageDescriptionDictionary" = "Precise location is required for geofence check-in validation.";

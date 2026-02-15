@@ -1,0 +1,32 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() { return request.auth != null; }
+    function userDoc() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+    function isManager() {
+      return isSignedIn() && userDoc().data.role == "manager";
+    }
+    function isEmployee() {
+      return isSignedIn() && userDoc().data.role == "employee";
+    }
+
+    match /users/{uid} {
+      allow read: if isManager() || (isSignedIn() && request.auth.uid == uid);
+      allow create, update: if isManager() || (isSignedIn() && request.auth.uid == uid && request.resource.data.role == resource.data.role);
+      allow delete: if isManager();
+    }
+
+    match /stores/{storeId} {
+      allow read: if isSignedIn();
+      allow write: if isManager();
+    }
+
+    match /checkins/{checkinId} {
+      allow read: if isManager() || (isEmployee() && resource.data.employeeId == request.auth.uid);
+      allow create: if isEmployee() && request.resource.data.employeeId == request.auth.uid;
+      allow update, delete: if isManager();
+    }
+  }
+}
