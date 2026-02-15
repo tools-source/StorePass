@@ -1,5 +1,5 @@
 import FirebaseFirestore
-import FirebaseFirestoreSwift
+import FirebaseFirestore
 import Foundation
 
 protocol CheckInRepositoryProtocol {

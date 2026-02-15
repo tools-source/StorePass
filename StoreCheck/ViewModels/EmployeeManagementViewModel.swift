@@ -19,7 +19,17 @@ final class EmployeeManagementViewModel: ObservableObject {
     func createEmployee(name: String, email: String, password: String, assignedStores: [String]) async {
         do {
             let uid = try await authRepository.createUser(email: email, password: password)
-            let profile = UserProfile(id: uid, name: name, email: email, role: .employee, assignedStoreIds: assignedStores, isActive: true, createdAt: Date())
+            let profile = UserProfile(
+                id: uid,
+                name: name,
+                email: email,
+                role: .employee,
+                createdAt: Date(),
+                lastLoginAt: Date(),
+                provider: "password",
+                assignedStoreIds: assignedStores,
+                isActive: true
+            )
             try await userRepository.upsertUser(profile)
             await load()
         } catch {

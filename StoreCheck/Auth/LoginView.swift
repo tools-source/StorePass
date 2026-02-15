@@ -33,6 +33,7 @@ struct LoginView: View {
                     viewModel.handleAppleSignInResult(result)
                 }
                 .signInWithAppleButtonStyle(.black)
+                .frame(maxWidth: 375)   // <= important
                 .frame(height: 50)
                 .disabled(viewModel.isLoading)
             }
@@ -48,7 +49,7 @@ struct LoginView: View {
         }, message: {
             Text(viewModel.errorMessage ?? "Unknown error")
         })
-        .onChange(of: viewModel.errorMessage) { _, newValue in
+        .onChange(of: viewModel.errorMessage) { newValue in
             showError = newValue != nil
         }
     }

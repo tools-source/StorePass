@@ -3,7 +3,7 @@ import CryptoKit
 import FirebaseAuth
 import FirebaseCore
 import FirebaseFirestore
-import FirebaseFirestoreSwift
+import FirebaseFirestore
 import Foundation
 import GoogleSignIn
 import UIKit
