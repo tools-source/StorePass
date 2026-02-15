@@ -2,13 +2,9 @@ import AuthenticationServices
 import SwiftUI
 
 struct LoginView: View {
-    @EnvironmentObject private var container: AppContainer
-    @StateObject private var viewModel: AuthViewModel
+    @EnvironmentObject private var viewModel: AuthViewModel
     @State private var showError = false
-
-    init() {
-        _viewModel = StateObject(wrappedValue: AuthViewModel(authService: AppContainer.shared.authService))
-    }
+    @State private var requestedRole: UserRole = .employee
 
     var body: some View {
         VStack(spacing: 20) {
@@ -25,9 +21,16 @@ struct LoginView: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 
+            Picker("Mode", selection: $requestedRole) {
+                Text("Employee").tag(UserRole.employee)
+                Text("Manager").tag(UserRole.manager)
+            }
+            .pickerStyle(.segmented)
+            .frame(maxWidth: 420)
+
             VStack(spacing: 12) {
                 Button("Continue with Google") {
-                    Task { await viewModel.signInWithGoogle() }
+                    Task { await viewModel.signInWithGoogle(preferredRole: requestedRole) }
                 }
                 .buttonStyle(PrimaryButtonStyle())
                 .disabled(viewModel.isLoading)
@@ -35,7 +38,7 @@ struct LoginView: View {
                 SignInWithAppleButton(.signIn) { request in
                     viewModel.prepareAppleSignInRequest(request)
                 } onCompletion: { result in
-                    viewModel.handleAppleSignInResult(result)
+                    viewModel.handleAppleSignInResult(result, preferredRole: requestedRole)
                 }
                 .signInWithAppleButtonStyle(.white)
                 .frame(maxWidth: .infinity)
@@ -49,7 +52,7 @@ struct LoginView: View {
         }
         .padding(24)
         .background(DS.Colors.background.ignoresSafeArea())
-        .alert("Sign in failed", isPresented: $showError) {
+        .alert("Sign in", isPresented: $showError) {
             Button("OK", role: .cancel) { viewModel.errorMessage = nil }
         } message: {
             Text(viewModel.errorMessage ?? "Unknown error")

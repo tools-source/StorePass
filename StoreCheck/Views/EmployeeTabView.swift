@@ -7,6 +7,8 @@ struct EmployeeTabView: View {
                 .tabItem { Label("Home", systemImage: "house") }
             EmployeeHistoryView()
                 .tabItem { Label("History", systemImage: "clock") }
+            EmployeeSettingsView()
+                .tabItem { Label("Settings", systemImage: "gearshape") }
         }
     }
 }

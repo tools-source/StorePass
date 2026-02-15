@@ -51,6 +51,8 @@
 		BEEFABCD123400000000004E /* InfoPlist.strings in Resources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000026 /* InfoPlist.strings */; };
 		BEEFABCD1234000000000074 /* UserRole.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000072 /* UserRole.swift */; };
 		BEEFABCD1234000000000075 /* AuthViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000073 /* AuthViewModel.swift */; };
+		BEEFABCD1234000000000078 /* LocationPermissionStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000076 /* LocationPermissionStatus.swift */; };
+		BEEFABCD1234000000000079 /* EmployeeSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000077 /* EmployeeSettingsView.swift */; };
 		BEEFABCD123400000000006F /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = BEEFABCD1234000000000071 /* GoogleSignIn */; };
 /* End PBXBuildFile section */
 
@@ -98,6 +100,8 @@
 		BEEFABCD1234000000000028 /* StoreCheck.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = StoreCheck.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		BEEFABCD1234000000000072 /* UserRole.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserRole.swift; sourceTree = "<group>"; };
 		BEEFABCD1234000000000073 /* AuthViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthViewModel.swift; sourceTree = "<group>"; };
+		BEEFABCD1234000000000076 /* LocationPermissionStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocationPermissionStatus.swift; sourceTree = "<group>"; };
+		BEEFABCD1234000000000077 /* EmployeeSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmployeeSettingsView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -197,6 +201,7 @@
 			isa = PBXGroup;
 			children = (
 				BEEFABCD1234000000000007 /* CheckIn.swift */,
+				BEEFABCD1234000000000076 /* LocationPermissionStatus.swift */,
 				BEEFABCD1234000000000008 /* LocationStatus.swift */,
 				BEEFABCD1234000000000009 /* Store.swift */,
 				BEEFABCD123400000000000A /* UserProfile.swift */,
@@ -247,6 +252,7 @@
 		BEEFABCD123400000000005C /* Views */ = {
 			isa = PBXGroup;
 			children = (
+				BEEFABCD123400000000007A /* Employee */,
 				BEEFABCD123400000000001C /* EmployeeDashboardView.swift */,
 				BEEFABCD123400000000001D /* EmployeeHistoryView.swift */,
 				BEEFABCD123400000000001E /* EmployeeTabView.swift */,
@@ -257,6 +263,14 @@
 				BEEFABCD1234000000000023 /* RootView.swift */,
 			);
 			path = Views;
+			sourceTree = "<group>";
+		};
+		BEEFABCD123400000000007A /* Employee */ = {
+			isa = PBXGroup;
+			children = (
+				BEEFABCD1234000000000077 /* EmployeeSettingsView.swift */,
+			);
+			path = Employee;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -348,6 +362,7 @@
 				BEEFABCD123400000000002D /* RoleSelectionView.swift in Sources */,
 				BEEFABCD123400000000002E /* Theme.swift in Sources */,
 				BEEFABCD123400000000002F /* CheckIn.swift in Sources */,
+				BEEFABCD1234000000000078 /* LocationPermissionStatus.swift in Sources */,
 				BEEFABCD1234000000000030 /* LocationStatus.swift in Sources */,
 				BEEFABCD1234000000000031 /* Store.swift in Sources */,
 				BEEFABCD1234000000000032 /* UserProfile.swift in Sources */,
@@ -373,6 +388,7 @@
 				BEEFABCD1234000000000044 /* EmployeeDashboardView.swift in Sources */,
 				BEEFABCD1234000000000045 /* EmployeeHistoryView.swift in Sources */,
 				BEEFABCD1234000000000046 /* EmployeeTabView.swift in Sources */,
+				BEEFABCD1234000000000079 /* EmployeeSettingsView.swift in Sources */,
 				BEEFABCD1234000000000047 /* ManageEmployeesView.swift in Sources */,
 				BEEFABCD1234000000000048 /* ManageStoresView.swift in Sources */,
 				BEEFABCD1234000000000049 /* ManagerDashboardView.swift in Sources */,
