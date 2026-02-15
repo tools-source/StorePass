@@ -15,7 +15,7 @@ struct ManagerTabView: View {
                 .tabItem { Label("Stores", systemImage: "map") }
 
             ManageEmployeesView(
-                userRepository: container.userRepository,
+                employeeRepository: container.employeeManagementRepository,
                 authRepository: container.authRepository
             )
             .tabItem { Label("Employees", systemImage: "person.3") }

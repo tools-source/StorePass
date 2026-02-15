@@ -56,3 +56,71 @@ exports.validateCheckIn = onCall(async (request) => {
   await db.collection('checkins').add(payload);
   return { approved, distanceMeters: distance };
 });
+
+exports.createEmployeeUnderManager = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'Must be signed in');
+  }
+
+  const managerId = request.auth.uid;
+  const { name, email, tempPassword, storeIds } = request.data;
+
+  if (!name || !email || !tempPassword) {
+    throw new HttpsError('invalid-argument', 'name, email and tempPassword are required.');
+  }
+
+  const db = admin.firestore();
+  const managerSnap = await db.collection('users').doc(managerId).get();
+
+  if (!managerSnap.exists) {
+    throw new HttpsError('permission-denied', 'Manager profile does not exist.');
+  }
+
+  const manager = managerSnap.data();
+  if (manager.role !== 'manager' || manager.isActive !== true) {
+    throw new HttpsError('permission-denied', 'Only active managers can create employees.');
+  }
+
+  let employeeAuth;
+  try {
+    employeeAuth = await admin.auth().createUser({
+      email,
+      password: tempPassword,
+      displayName: name,
+      disabled: false,
+    });
+  } catch (error) {
+    throw new HttpsError('already-exists', error.message || 'Unable to create employee user.');
+  }
+
+  const employeeId = employeeAuth.uid;
+  const now = admin.firestore.FieldValue.serverTimestamp();
+  const normalizedStores = Array.isArray(storeIds) ? storeIds.filter((v) => typeof v === 'string' && v.trim().length > 0) : [];
+
+  const batch = db.batch();
+  const userRef = db.collection('users').doc(employeeId);
+  const linkRef = db.collection('managers').doc(managerId).collection('employees').doc(employeeId);
+
+  batch.set(userRef, {
+    name,
+    email,
+    role: 'employee',
+    assignedStoreIds: normalizedStores,
+    isActive: true,
+    provider: 'password',
+    createdByManagerId: managerId,
+    createdAt: now,
+    lastLoginAt: now,
+  }, { merge: true });
+
+  batch.set(linkRef, {
+    employeeUserId: employeeId,
+    stores: normalizedStores,
+    isActive: true,
+    createdAt: now,
+  }, { merge: true });
+
+  await batch.commit();
+
+  return { employeeId };
+});
