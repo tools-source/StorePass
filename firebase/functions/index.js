@@ -3,17 +3,7 @@ const admin = require('firebase-admin');
 const crypto = require('crypto');
 
 admin.initializeApp();
-
-function haversineMeters(lat1, lon1, lat2, lon2) {
-  const toRad = (v) => (v * Math.PI) / 180;
-  const R = 6371000;
-  const dLat = toRad(lat2 - lat1);
-  const dLon = toRad(lon2 - lon1);
-  const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
+const db = admin.firestore();
 
 function normalizeCode(code) {
   return String(code || '').trim().toUpperCase();
@@ -27,182 +17,93 @@ function generateJoinCode(length = 8) {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   const bytes = crypto.randomBytes(length);
   let code = '';
-
   for (let i = 0; i < length; i += 1) {
     code += alphabet[bytes[i] % alphabet.length];
   }
-
   return code;
 }
 
-exports.validateCheckIn = onCall(async (request) => {
-  if (!request.auth) throw new HttpsError('unauthenticated', 'Must be signed in');
+async function requireActiveUser(uid) {
+  const snap = await db.collection('users').doc(uid).get();
+  if (!snap.exists) throw new HttpsError('permission-denied', 'User profile not found.');
+  const user = snap.data();
+  if (user.isActive !== true) throw new HttpsError('permission-denied', 'Account inactive.');
+  return user;
+}
 
-  const { employeeId, storeId, clientLat, clientLng, timestamp, accuracyMeters } = request.data;
-  if (employeeId !== request.auth.uid) {
-    throw new HttpsError('permission-denied', 'employeeId mismatch');
-  }
+async function requireManager(uid) {
+  const user = await requireActiveUser(uid);
+  if (user.role !== 'manager') throw new HttpsError('permission-denied', 'Manager access required.');
+  return user;
+}
 
-  const db = admin.firestore();
-  const [userSnap, storeSnap] = await Promise.all([
-    db.collection('users').doc(employeeId).get(),
-    db.collection('stores').doc(storeId).get(),
-  ]);
+exports.createStore = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'Must be signed in.');
+  await requireManager(request.auth.uid);
 
-  if (!userSnap.exists || !storeSnap.exists) {
-    throw new HttpsError('not-found', 'User/store missing');
-  }
+  const { name, address, latitude, longitude, radiusMeters } = request.data;
+  if (!name || !address) throw new HttpsError('invalid-argument', 'name and address are required.');
 
-  const user = userSnap.data();
-  const store = storeSnap.data();
-  const distance = haversineMeters(clientLat, clientLng, store.lat, store.lng);
-  const approved = distance <= store.radiusMeters && accuracyMeters <= 50;
-
-  const payload = {
-    employeeId,
-    employeeName: user.name,
-    storeId,
-    storeName: store.name,
-    checkInTime: admin.firestore.FieldValue.serverTimestamp(),
-    clientLat,
-    clientLng,
-    serverValidated: true,
-    distanceMeters: distance,
-    accuracyMeters,
-    status: approved ? 'approved' : 'rejected',
-    rejectReason: approved ? null : 'Out of range or poor accuracy',
-    createdFromTimestamp: timestamp,
-  };
-
-  await db.collection('checkins').add(payload);
-  return { approved, distanceMeters: distance };
-});
-
-exports.createEmployeeUnderManager = onCall(async (request) => {
-  if (!request.auth) {
-    throw new HttpsError('unauthenticated', 'Must be signed in');
-  }
-
-  const managerId = request.auth.uid;
-  const { name, email, tempPassword, storeIds } = request.data;
-
-  if (!name || !email || !tempPassword) {
-    throw new HttpsError('invalid-argument', 'name, email and tempPassword are required.');
-  }
-
-  const db = admin.firestore();
-  const managerSnap = await db.collection('users').doc(managerId).get();
-
-  if (!managerSnap.exists) {
-    throw new HttpsError('permission-denied', 'Manager profile does not exist.');
-  }
-
-  const manager = managerSnap.data();
-  if (manager.role !== 'manager' || manager.isActive !== true) {
-    throw new HttpsError('permission-denied', 'Only active managers can create employees.');
-  }
-
-  let employeeAuth;
-  try {
-    employeeAuth = await admin.auth().createUser({
-      email,
-      password: tempPassword,
-      displayName: name,
-      disabled: false,
-    });
-  } catch (error) {
-    throw new HttpsError('already-exists', error.message || 'Unable to create employee user.');
-  }
-
-  const employeeId = employeeAuth.uid;
+  const joinCode = generateJoinCode();
+  const storeRef = db.collection('stores').doc();
   const now = admin.firestore.FieldValue.serverTimestamp();
-  const normalizedStores = Array.isArray(storeIds) ? storeIds.filter((v) => typeof v === 'string' && v.trim().length > 0) : [];
 
-  const batch = db.batch();
-  const userRef = db.collection('users').doc(employeeId);
-  const linkRef = db.collection('managers').doc(managerId).collection('employees').doc(employeeId);
-
-  batch.set(userRef, {
-    name,
-    email,
-    role: 'employee',
-    assignedStoreIds: normalizedStores,
-    isActive: true,
-    provider: 'password',
-    createdByManagerId: managerId,
-    createdAt: now,
-    lastLoginAt: now,
-  }, { merge: true });
-
-  batch.set(linkRef, {
-    employeeUserId: employeeId,
-    stores: normalizedStores,
+  await storeRef.set({
+    name: String(name).trim(),
+    address: String(address).trim(),
+    latitude: Number(latitude),
+    longitude: Number(longitude),
+    radiusMeters: Number(radiusMeters) || 150,
+    managerId: request.auth.uid,
+    joinCodeHash: hashCode(normalizeCode(joinCode)),
+    joinCodeLast4: joinCode.slice(-4),
+    joinCodeCiphertext: joinCode,
     isActive: true,
     createdAt: now,
+    updatedAt: now,
+  });
+
+  await db.collection('storeMembers').doc(storeRef.id).collection('members').doc(request.auth.uid).set({
+    userId: request.auth.uid,
+    role: 'manager',
+    joinedAt: now,
+    isActive: true,
+    addedBy: 'manager_action',
   }, { merge: true });
 
-  await batch.commit();
-
-  return { employeeId };
+  return { storeId: storeRef.id, joinCode, joinCodeLast4: joinCode.slice(-4) };
 });
 
 exports.joinStoreByCode = onCall(async (request) => {
-  if (!request.auth) {
-    throw new HttpsError('unauthenticated', 'You must be signed in.');
-  }
+  if (!request.auth) throw new HttpsError('unauthenticated', 'You must be signed in.');
 
   const code = normalizeCode(request.data.code);
-  if (!code) {
-    throw new HttpsError('invalid-argument', 'Please enter a join code.');
-  }
+  if (!code) throw new HttpsError('invalid-argument', 'Please enter a join code.');
 
-  const db = admin.firestore();
   const userRef = db.collection('users').doc(request.auth.uid);
-  const userSnap = await userRef.get();
+  const user = await requireActiveUser(request.auth.uid);
+  if (user.role !== 'employee') throw new HttpsError('permission-denied', 'Only employees can join by code.');
 
-  if (!userSnap.exists) {
-    throw new HttpsError('permission-denied', 'User profile not found.');
-  }
-
-  const user = userSnap.data();
-  if (user.role !== 'employee') {
-    throw new HttpsError('permission-denied', 'Only employees can join by code.');
-  }
-  if (user.isActive !== true) {
-    throw new HttpsError('permission-denied', 'Your account is inactive.');
-  }
-
-  const codeHash = hashCode(code);
   const storeQuery = await db.collection('stores')
-    .where('joinCodeHash', '==', codeHash)
+    .where('joinCodeHash', '==', hashCode(code))
+    .where('isActive', '==', true)
     .limit(1)
     .get();
-
-  if (storeQuery.empty) {
-    throw new HttpsError('not-found', 'Invalid join code.');
-  }
+  if (storeQuery.empty) throw new HttpsError('not-found', 'Invalid join code.');
 
   const storeDoc = storeQuery.docs[0];
-  const store = storeDoc.data();
-  if (store.isActive !== true) {
-    throw new HttpsError('failed-precondition', 'This store is inactive.');
-  }
-
   const storeId = storeDoc.id;
-  const storeName = store.name || 'Store';
   const memberRef = db.collection('storeMembers').doc(storeId).collection('members').doc(request.auth.uid);
   const alreadyJoined = Array.isArray(user.assignedStoreIds) && user.assignedStoreIds.includes(storeId);
 
   await db.runTransaction(async (tx) => {
-    const memberSnap = await tx.get(memberRef);
-    if (!memberSnap.exists) {
-      tx.set(memberRef, {
-        userId: request.auth.uid,
-        role: 'employee',
-        joinedAt: admin.firestore.FieldValue.serverTimestamp(),
-        isActive: true,
-      }, { merge: true });
-    }
+    tx.set(memberRef, {
+      userId: request.auth.uid,
+      role: 'employee',
+      joinedAt: admin.firestore.FieldValue.serverTimestamp(),
+      isActive: true,
+      addedBy: 'self_join',
+    }, { merge: true });
 
     tx.set(userRef, {
       assignedStoreIds: admin.firestore.FieldValue.arrayUnion(storeId),
@@ -210,51 +111,185 @@ exports.joinStoreByCode = onCall(async (request) => {
     }, { merge: true });
   });
 
-  return { storeId, storeName, alreadyJoined };
+  return { storeId, storeName: storeDoc.data().name || 'Store', alreadyJoined };
 });
 
-exports.rotateJoinCode = onCall(async (request) => {
-  if (!request.auth) {
-    throw new HttpsError('unauthenticated', 'You must be signed in.');
-  }
+exports.rotateStoreCode = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'You must be signed in.');
+  await requireManager(request.auth.uid);
 
-  const storeId = request.data.storeId;
-  if (!storeId || typeof storeId !== 'string') {
-    throw new HttpsError('invalid-argument', 'storeId is required.');
-  }
+  const { storeId } = request.data;
+  const storeRef = db.collection('stores').doc(storeId);
+  const storeSnap = await storeRef.get();
+  if (!storeSnap.exists) throw new HttpsError('not-found', 'Store not found.');
+  if (storeSnap.data().managerId !== request.auth.uid) throw new HttpsError('permission-denied', 'Not store owner.');
 
-  const db = admin.firestore();
-  const [managerSnap, storeSnap] = await Promise.all([
-    db.collection('users').doc(request.auth.uid).get(),
-    db.collection('stores').doc(storeId).get(),
-  ]);
-
-  if (!managerSnap.exists) {
-    throw new HttpsError('permission-denied', 'Manager profile does not exist.');
-  }
-
-  const manager = managerSnap.data();
-  if (manager.role !== 'manager' || manager.isActive !== true) {
-    throw new HttpsError('permission-denied', 'Only active managers can rotate store codes.');
-  }
-
-  if (!storeSnap.exists) {
-    throw new HttpsError('not-found', 'Store not found.');
-  }
-
-  const store = storeSnap.data();
-  if (store.managerId !== request.auth.uid) {
-    throw new HttpsError('permission-denied', 'You can only rotate codes for your stores.');
-  }
-
-  const newCode = generateJoinCode();
-  const normalized = normalizeCode(newCode);
-
-  await storeSnap.ref.set({
-    joinCodeHash: hashCode(normalized),
-    joinCodeLast4: newCode.slice(-4),
+  const joinCode = generateJoinCode();
+  await storeRef.set({
+    joinCodeHash: hashCode(normalizeCode(joinCode)),
+    joinCodeLast4: joinCode.slice(-4),
+    joinCodeCiphertext: joinCode,
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   }, { merge: true });
 
-  return { storeId, joinCode: newCode, joinCodeLast4: newCode.slice(-4) };
+  return { storeId, joinCode, joinCodeLast4: joinCode.slice(-4) };
+});
+
+exports.getStoreJoinCode = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'You must be signed in.');
+  await requireManager(request.auth.uid);
+
+  const { storeId } = request.data;
+  const snap = await db.collection('stores').doc(storeId).get();
+  if (!snap.exists) throw new HttpsError('not-found', 'Store not found.');
+  const store = snap.data();
+  if (store.managerId !== request.auth.uid) throw new HttpsError('permission-denied', 'Not store owner.');
+  if (!store.joinCodeCiphertext) throw new HttpsError('failed-precondition', 'Rotate code to reveal latest code.');
+
+  return { storeId, joinCode: store.joinCodeCiphertext };
+});
+
+exports.removeEmployeeFromStore = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'You must be signed in.');
+  await requireManager(request.auth.uid);
+
+  const { storeId, employeeId } = request.data;
+  const storeSnap = await db.collection('stores').doc(storeId).get();
+  if (!storeSnap.exists) throw new HttpsError('not-found', 'Store not found.');
+  if (storeSnap.data().managerId !== request.auth.uid) throw new HttpsError('permission-denied', 'Not store owner.');
+
+  await db.collection('storeMembers').doc(storeId).collection('members').doc(employeeId).delete();
+  await db.collection('users').doc(employeeId).set({
+    assignedStoreIds: admin.firestore.FieldValue.arrayRemove(storeId),
+  }, { merge: true });
+  return { ok: true };
+});
+
+exports.removeEmployeeFromAllManagerStores = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'You must be signed in.');
+  await requireManager(request.auth.uid);
+  const { employeeId, managerId } = request.data;
+  if (managerId !== request.auth.uid) throw new HttpsError('permission-denied', 'managerId mismatch.');
+
+  const stores = await db.collection('stores').where('managerId', '==', request.auth.uid).get();
+  const batch = db.batch();
+  const removedIds = [];
+
+  stores.docs.forEach((doc) => {
+    removedIds.push(doc.id);
+    batch.delete(db.collection('storeMembers').doc(doc.id).collection('members').doc(employeeId));
+  });
+
+  if (removedIds.length > 0) {
+    batch.set(db.collection('users').doc(employeeId), {
+      assignedStoreIds: admin.firestore.FieldValue.arrayRemove(...removedIds),
+    }, { merge: true });
+  }
+  await batch.commit();
+  return { removedStoreIds: removedIds };
+});
+
+exports.setEmployeeStoresForManager = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'You must be signed in.');
+  await requireManager(request.auth.uid);
+
+  const { employeeId, storeIds } = request.data;
+  const targetStoreIds = Array.isArray(storeIds) ? [...new Set(storeIds)] : [];
+
+  const ownedStoresSnap = await db.collection('stores').where('managerId', '==', request.auth.uid).get();
+  const owned = new Set(ownedStoresSnap.docs.map((d) => d.id));
+
+  for (const storeId of targetStoreIds) {
+    if (!owned.has(storeId)) throw new HttpsError('permission-denied', 'Cannot assign unowned store.');
+  }
+
+  const memberStores = [];
+  for (const store of ownedStoresSnap.docs) {
+    const memberSnap = await db.collection('storeMembers').doc(store.id).collection('members').doc(employeeId).get();
+    if (memberSnap.exists) memberStores.push(store.id);
+  }
+
+  const toAdd = targetStoreIds.filter((id) => !memberStores.includes(id));
+  const toRemove = memberStores.filter((id) => !targetStoreIds.includes(id));
+
+  const batch = db.batch();
+  toAdd.forEach((storeId) => {
+    batch.set(db.collection('storeMembers').doc(storeId).collection('members').doc(employeeId), {
+      userId: employeeId,
+      role: 'employee',
+      joinedAt: admin.firestore.FieldValue.serverTimestamp(),
+      isActive: true,
+      addedBy: 'manager_action',
+    }, { merge: true });
+  });
+  toRemove.forEach((storeId) => {
+    batch.delete(db.collection('storeMembers').doc(storeId).collection('members').doc(employeeId));
+  });
+
+  if (toAdd.length) {
+    batch.set(db.collection('users').doc(employeeId), { assignedStoreIds: admin.firestore.FieldValue.arrayUnion(...toAdd) }, { merge: true });
+  }
+  if (toRemove.length) {
+    batch.set(db.collection('users').doc(employeeId), { assignedStoreIds: admin.firestore.FieldValue.arrayRemove(...toRemove) }, { merge: true });
+  }
+
+  await batch.commit();
+  return { assignedStoreIds: targetStoreIds };
+});
+
+exports.setEmployeeActive = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'You must be signed in.');
+  await requireManager(request.auth.uid);
+
+  const { employeeId, isActive } = request.data;
+
+  const memberStoreQuery = await db.collectionGroup('members')
+    .where(admin.firestore.FieldPath.documentId(), '==', employeeId)
+    .where('role', '==', 'employee')
+    .get();
+
+  const managerOwnsAny = await Promise.all(memberStoreQuery.docs.map(async (memberDoc) => {
+    const storeId = memberDoc.ref.parent.parent.id;
+    const store = await db.collection('stores').doc(storeId).get();
+    return store.exists && store.data().managerId === request.auth.uid;
+  }));
+
+  if (!managerOwnsAny.some(Boolean)) throw new HttpsError('permission-denied', 'Employee not in your stores.');
+
+  await db.collection('users').doc(employeeId).set({ isActive: !!isActive }, { merge: true });
+  return { employeeId, isActive: !!isActive };
+});
+
+exports.deleteMyAccount = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'You must be signed in.');
+  const uid = request.auth.uid;
+  const mode = request.data.mode;
+  const user = await requireActiveUser(uid);
+
+  if (user.role === 'manager' && mode !== 'manager_delete_all') {
+    throw new HttpsError('failed-precondition', 'Managers must use manager_delete_all or keep stores mode (not enabled).');
+  }
+
+  const memberDocs = await db.collectionGroup('members')
+    .where(admin.firestore.FieldPath.documentId(), '==', uid)
+    .get();
+
+  const batch = db.batch();
+  memberDocs.docs.forEach((doc) => batch.delete(doc.ref));
+
+  if (user.role === 'manager') {
+    const stores = await db.collection('stores').where('managerId', '==', uid).get();
+    for (const store of stores.docs) {
+      const members = await db.collection('storeMembers').doc(store.id).collection('members').get();
+      members.docs.forEach((m) => batch.delete(m.ref));
+      batch.delete(db.collection('storeMembers').doc(store.id));
+      batch.delete(store.ref);
+    }
+  }
+
+  batch.delete(db.collection('users').doc(uid));
+  await batch.commit();
+  await admin.auth().deleteUser(uid);
+
+  return { ok: true };
 });

@@ -5,7 +5,7 @@ final class StoreManagementViewModel: ObservableObject {
     @Published var stores: [Store] = []
     @Published var latestJoinCodesByStoreId: [String: String] = [:]
     @Published var errorMessage: String?
-    @Published var lastCreatedStoreId: String?
+    @Published var toastMessage: String?
 
     private let repository: StoreRepositoryProtocol
 
@@ -13,32 +13,64 @@ final class StoreManagementViewModel: ObservableObject {
         self.repository = repository
     }
 
-    func load() async {
+    func load(managerId: String?) async {
         do {
-            stores = try await repository.fetchStores(ids: nil)
+            if let managerId {
+                stores = try await repository.fetchManagerStores(managerId: managerId)
+            } else {
+                stores = try await repository.fetchStores(ids: nil)
+            }
         } catch {
             errorMessage = error.localizedDescription
         }
     }
 
-    func createStore(name: String, address: String, lat: Double, lng: Double, radiusMeters: Int) async {
+    func createStore(name: String, address: String, latitude: Double, longitude: Double, radiusMeters: Int) async {
         do {
-            let result = try await repository.createStore(name: name, address: address, lat: lat, lng: lng, radiusMeters: radiusMeters)
+            let result = try await repository.createStore(name: name, address: address, latitude: latitude, longitude: longitude, radiusMeters: radiusMeters)
             latestJoinCodesByStoreId[result.store.id] = result.joinCode
-            lastCreatedStoreId = result.store.id
-            await load()
+            toastMessage = "Store created. Code: \(result.joinCode)"
         } catch {
             errorMessage = error.localizedDescription
         }
     }
 
-    func rotateJoinCode(storeId: String) async {
+    func saveStore(_ store: Store) async {
         do {
-            let code = try await repository.rotateJoinCode(storeId: storeId)
-            latestJoinCodesByStoreId[storeId] = code
-            await load()
+            try await repository.upsertStore(store)
+            toastMessage = "Store updated"
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+
+    func deleteStore(id: String) async {
+        do {
+            try await repository.deleteStore(id: id)
+            toastMessage = "Store deleted"
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func rotateStoreCode(storeId: String) async {
+        do {
+            let code = try await repository.rotateStoreCode(storeId: storeId)
+            latestJoinCodesByStoreId[storeId] = code
+            toastMessage = "Code rotated"
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func fetchJoinCode(storeId: String) async -> String? {
+        do {
+            let code = try await repository.getStoreJoinCode(storeId: storeId)
+            latestJoinCodesByStoreId[storeId] = code
+            return code
+        } catch {
+            errorMessage = error.localizedDescription
+            return nil
         }
     }
 }

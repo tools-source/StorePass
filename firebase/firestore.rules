@@ -5,17 +5,9 @@ service cloud.firestore {
     function myUid() { return request.auth.uid; }
     function myUserPath() { return /databases/$(database)/documents/users/$(myUid()); }
     function myUser() { return get(myUserPath()); }
+    function isSelf(uid) { return signedIn() && uid == myUid(); }
     function isManager() {
-      return signedIn() &&
-        exists(myUserPath()) &&
-        myUser().data.role == "manager" &&
-        myUser().data.isActive == true;
-    }
-    function managerEmployeePath(managerId, employeeId) {
-      return /databases/$(database)/documents/managers/$(managerId)/employees/$(employeeId);
-    }
-    function isLinkedEmployee(employeeId) {
-      return signedIn() && isManager() && exists(managerEmployeePath(myUid(), employeeId));
+      return signedIn() && exists(myUserPath()) && myUser().data.role == "manager" && myUser().data.isActive == true;
     }
     function isStoreOwner(storeId) {
       return isManager() &&
@@ -24,63 +16,38 @@ service cloud.firestore {
     }
 
     match /users/{uid} {
-      allow get: if signedIn() && (uid == myUid() || isLinkedEmployee(uid));
+      allow get: if isSelf(uid);
       allow list: if false;
-
-      allow create: if signedIn() && uid == myUid() &&
-        request.resource.data.role == "employee" &&
-        request.resource.data.isActive == true;
-
-      allow update: if signedIn() && (
-        (
-          uid == myUid() &&
-          request.resource.data.role == resource.data.role &&
-          request.resource.data.createdByManagerId == resource.data.createdByManagerId &&
-          request.resource.data.createdAt == resource.data.createdAt &&
-          request.resource.data.assignedStoreIds == resource.data.assignedStoreIds
-        ) ||
-        (
-          isLinkedEmployee(uid) &&
-          request.resource.data.role == resource.data.role &&
-          request.resource.data.createdAt == resource.data.createdAt &&
-          request.resource.data.createdByManagerId == resource.data.createdByManagerId
-        )
-      );
-
-      allow delete: if false;
-    }
-
-    match /managers/{managerId}/employees/{employeeId} {
-      allow get, list: if signedIn() && managerId == myUid() && isManager();
-      allow create, update: if signedIn() && managerId == myUid() && isManager() &&
-        request.resource.data.employeeUserId == employeeId;
-      allow delete: if signedIn() && managerId == myUid() && isManager();
+      allow create: if isSelf(uid) && request.resource.data.role == "employee";
+      allow update: if isSelf(uid)
+        && request.resource.data.role == resource.data.role
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.assignedStoreIds == resource.data.assignedStoreIds;
+      allow delete: if isSelf(uid);
     }
 
     match /stores/{storeId} {
-      allow get, list: if signedIn();
+      allow get: if signedIn() && (
+        resource.data.managerId == myUid() ||
+        exists(/databases/$(database)/documents/storeMembers/$(storeId)/members/$(myUid()))
+      );
+      allow list: if signedIn();
       allow create: if isManager() && request.resource.data.managerId == myUid();
-      allow update: if isStoreOwner(storeId) &&
-        request.resource.data.managerId == resource.data.managerId &&
-        request.resource.data.createdAt == resource.data.createdAt;
-      allow delete: if isStoreOwner(storeId);
+      allow update, delete: if isStoreOwner(storeId)
+        && request.resource.data.managerId == resource.data.managerId
+        && request.resource.data.createdAt == resource.data.createdAt;
     }
 
-    match /storeMembers/{storeId}/members/{userId} {
-      allow get: if signedIn() && (userId == myUid() || isStoreOwner(storeId));
-      allow list: if signedIn() && isStoreOwner(storeId);
+    match /storeMembers/{storeId}/members/{uid} {
+      allow get: if isSelf(uid) || isStoreOwner(storeId);
+      allow list: if isStoreOwner(storeId);
       allow create, update, delete: if false;
     }
 
     match /checkins/{checkinId} {
       allow get: if isManager() || (signedIn() && resource.data.employeeId == myUid());
       allow list: if isManager();
-
-      allow create: if signedIn() && (
-        isManager() ||
-        request.resource.data.employeeId == myUid()
-      );
-
+      allow create: if signedIn() && request.resource.data.employeeId == myUid();
       allow update, delete: if isManager();
     }
   }

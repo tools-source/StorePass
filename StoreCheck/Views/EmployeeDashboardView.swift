@@ -32,10 +32,20 @@ struct EmployeeHomeView: View {
                 VStack(spacing: DS.Spacing.m) {
                     JoinStoreCard(viewModel: viewModel)
 
-                    if viewModel.stores.isEmpty {
-                        Text("No assigned stores yet. Contact your manager.")
-                            .cardStyle()
-                    } else {
+                    VStack(alignment: .leading, spacing: DS.Spacing.s) {
+                        Text("My Stores").font(.headline)
+                        if viewModel.stores.isEmpty {
+                            Text("No assigned stores yet. Join with a store code.")
+                                .foregroundStyle(.secondary)
+                        } else {
+                            ForEach(viewModel.stores) { store in
+                                Text("• \(store.name)")
+                            }
+                        }
+                    }
+                    .cardStyle()
+
+                    if !viewModel.stores.isEmpty {
                         Picker("Assigned store", selection: Binding(get: {
                             viewModel.selectedStore?.id ?? ""
                         }, set: { id in

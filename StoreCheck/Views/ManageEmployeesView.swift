@@ -2,11 +2,8 @@ import SwiftUI
 
 struct ManageEmployeesView: View {
     @StateObject private var vm: EmployeeManagementViewModel
-    @State private var name = ""
-    @State private var email = ""
-    @State private var password = ""
-    @State private var assignedStores = ""
-    @State private var storeEditor: [String: String] = [:]
+    @State private var editingEmployee: EmployeeSummary?
+    @State private var selectedStoreIds: Set<String> = []
 
     init(employeeRepository: EmployeeManagementRepositoryProtocol, authRepository: AuthRepositoryProtocol) {
         _vm = StateObject(wrappedValue: EmployeeManagementViewModel(employeeRepository: employeeRepository, authRepository: authRepository))
@@ -14,143 +11,118 @@ struct ManageEmployeesView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(spacing: DS.Spacing.m) {
-                    createEmployeeCard
-                    filterCard
-                    employeesCard
+            List {
+                Section("Filter") {
+                    Picker("Store", selection: $vm.selectedStoreId) {
+                        Text("All Stores").tag("all")
+                        ForEach(vm.stores) { store in
+                            Text(store.name).tag(store.id)
+                        }
+                    }
+                    .pickerStyle(.menu)
                 }
-                .padding(DS.Spacing.m)
+
+                Section("Employees") {
+                    if vm.isLoading {
+                        ProgressView().frame(maxWidth: .infinity)
+                    } else if vm.filteredEmployees.isEmpty {
+                        Text("No employees joined your stores yet.")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(vm.filteredEmployees) { employee in
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text(employee.name).font(.headline)
+                                Text(employee.email ?? "No email")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                Text(employee.storeNames.joined(separator: ", "))
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                Text(employee.userIsActive ? "Active" : "Inactive")
+                                    .font(.caption2)
+                                    .foregroundStyle(employee.userIsActive ? .green : .orange)
+                            }
+                            .swipeActions(edge: .trailing) {
+                                Button(role: .destructive) {
+                                    Task { await vm.removeFromAll(employeeId: employee.id) }
+                                } label: {
+                                    Label("Remove All", systemImage: "trash")
+                                }
+                            }
+                            .contextMenu {
+                                Button("Edit assigned stores") {
+                                    editingEmployee = employee
+                                    selectedStoreIds = Set(employee.storeIds)
+                                }
+                                Button(employee.userIsActive ? "Deactivate" : "Reactivate") {
+                                    Task { await vm.setActive(employeeId: employee.id, isActive: !employee.userIsActive) }
+                                }
+                                Menu("Remove from a store") {
+                                    ForEach(vm.stores.filter { employee.storeIds.contains($0.id) }) { store in
+                                        Button(store.name, role: .destructive) {
+                                            Task { await vm.removeFromStore(employeeId: employee.id, storeId: store.id) }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
-            .background(DS.Colors.background.ignoresSafeArea())
-            .navigationTitle("Employees")
+            .scrollContentBackground(.hidden)
+            .background(DS.Colors.background)
+            .navigationTitle("Manage Employees")
             .task { await vm.load() }
+            .refreshable { await vm.load() }
+            .sheet(item: $editingEmployee) { employee in
+                NavigationStack {
+                    List {
+                        ForEach(vm.stores) { store in
+                            MultipleSelectionRow(title: store.name, isSelected: selectedStoreIds.contains(store.id)) {
+                                if selectedStoreIds.contains(store.id) {
+                                    selectedStoreIds.remove(store.id)
+                                } else {
+                                    selectedStoreIds.insert(store.id)
+                                }
+                            }
+                        }
+                    }
+                    .navigationTitle("Assign Stores")
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("Cancel") { editingEmployee = nil }
+                        }
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Save") {
+                                Task { await vm.updateStores(employeeId: employee.id, storeIds: Array(selectedStoreIds)) }
+                                editingEmployee = nil
+                            }
+                        }
+                    }
+                }
+            }
             .alert("Error", isPresented: Binding(get: { vm.errorMessage != nil }, set: { _ in vm.errorMessage = nil })) {
                 Button("OK", role: .cancel) { vm.errorMessage = nil }
-            } message: {
-                Text(vm.errorMessage ?? "")
-            }
+            } message: { Text(vm.errorMessage ?? "") }
         }
     }
+}
 
-    private var createEmployeeCard: some View {
-        VStack(alignment: .leading, spacing: DS.Spacing.s) {
-            Text("Create Employee")
-                .font(.headline)
-            TextField("Name", text: $name)
-                .textFieldStyle(.roundedBorder)
-            TextField("Email", text: $email)
-                .textFieldStyle(.roundedBorder)
-                .keyboardType(.emailAddress)
-                .textInputAutocapitalization(.never)
-            SecureField("Temporary password", text: $password)
-                .textFieldStyle(.roundedBorder)
-            TextField("Assigned store IDs (comma separated)", text: $assignedStores)
-                .textFieldStyle(.roundedBorder)
+private struct MultipleSelectionRow: View {
+    let title: String
+    let isSelected: Bool
+    let action: () -> Void
 
-            Button("Create") {
-                Task {
-                    let ids = assignedStores
-                        .split(separator: ",")
-                        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                        .filter { !$0.isEmpty }
-                    await vm.createEmployee(name: name, email: email, password: password, assignedStores: ids)
-                    name = ""
-                    email = ""
-                    password = ""
-                    assignedStores = ""
-                }
-            }
-            .buttonStyle(PrimaryButtonStyle())
-        }
-        .cardStyle()
-    }
-
-    private var filterCard: some View {
-        VStack(alignment: .leading, spacing: DS.Spacing.s) {
-            Text("Filter")
-                .font(.headline)
-            TextField("Optional store id", text: $vm.filterStoreId)
-                .textFieldStyle(.roundedBorder)
-        }
-        .cardStyle()
-    }
-
-    private var employeesCard: some View {
-        VStack(alignment: .leading, spacing: DS.Spacing.s) {
-            Text("Linked Employees")
-                .font(.headline)
-
-            if vm.isLoading {
-                ProgressView()
-                    .frame(maxWidth: .infinity, alignment: .center)
-            } else if vm.filteredEmployees.isEmpty {
-                Text("No linked employees found")
-                    .foregroundStyle(.secondary)
-            } else {
-                ForEach(vm.filteredEmployees) { employee in
-                    employeeRow(employee)
-                    if employee.id != vm.filteredEmployees.last?.id {
-                        Divider().overlay(.white.opacity(0.12))
-                    }
-                }
-            }
-        }
-        .cardStyle()
-    }
-
-    private func employeeRow(_ employee: EmployeeSummary) -> some View {
-        VStack(alignment: .leading, spacing: DS.Spacing.s) {
+    var body: some View {
+        Button(action: action) {
             HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(employee.name)
-                        .font(.headline)
-                        .foregroundStyle(.white)
-                    Text(employee.email ?? "-")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+                Text(title)
                 Spacer()
-                Toggle("", isOn: Binding(
-                    get: { employee.isActive },
-                    set: { isOn in
-                        Task { await vm.setActive(employeeId: employee.employeeUserId, isActive: isOn) }
-                    }
-                ))
-                .labelsHidden()
-            }
-
-            Text("Assigned Stores: \((employee.assignedStoreIds.isEmpty ? ["None"] : employee.assignedStoreIds).joined(separator: ", "))")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            TextField("Edit stores (comma separated)", text: Binding(
-                get: {
-                    storeEditor[employee.id] ?? employee.assignedStoreIds.joined(separator: ", ")
-                },
-                set: { storeEditor[employee.id] = $0 }
-            ))
-            .textFieldStyle(.roundedBorder)
-
-            HStack {
-                Button("Save Stores") {
-                    Task {
-                        let raw = storeEditor[employee.id] ?? employee.assignedStoreIds.joined(separator: ",")
-                        let ids = raw
-                            .split(separator: ",")
-                            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                            .filter { !$0.isEmpty }
-                        await vm.updateStores(employeeId: employee.employeeUserId, storeIds: ids)
-                    }
+                if isSelected {
+                    Image(systemName: "checkmark.circle.fill")
                 }
-                .buttonStyle(.borderedProminent)
-
-                Button("Remove Link", role: .destructive) {
-                    Task { await vm.unlink(employeeId: employee.employeeUserId) }
-                }
-                .buttonStyle(.bordered)
             }
         }
-        .padding(.vertical, 4)
+        .foregroundStyle(.white)
     }
 }
