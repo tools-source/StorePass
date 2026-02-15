@@ -8,14 +8,19 @@ struct LoginView: View {
     var body: some View {
         VStack(spacing: 24) {
             Spacer()
+
             Image(systemName: "building.2.crop.circle")
                 .resizable()
                 .scaledToFit()
                 .frame(width: 84, height: 84)
                 .foregroundStyle(.blue)
 
-            Text("StoreCheck")
-                .font(.largeTitle.bold())
+            VStack(spacing: 8) {
+                Text("StoreCheck")
+                    .font(.largeTitle.bold())
+                Text("Sign in to continue")
+                    .foregroundStyle(.secondary)
+            }
 
             VStack(spacing: 12) {
                 Button {
@@ -36,10 +41,13 @@ struct LoginView: View {
                 .frame(height: 50)
                 .disabled(viewModel.isLoading)
             }
+            .padding(.top, 8)
 
             if viewModel.isLoading {
                 ProgressView("Signing in...")
+                    .padding(.top, 8)
             }
+
             Spacer()
         }
         .padding(24)

@@ -2,21 +2,34 @@ import SwiftUI
 
 struct RootView: View {
     @EnvironmentObject private var container: AppContainer
-    @State private var isLoading = true
+
+    var body: some View {
+        AuthGateView(authService: container.authService as! AuthService)
+    }
+}
+
+private struct AuthGateView: View {
+    @ObservedObject var authService: AuthService
+    @State private var isBooting = true
 
     var body: some View {
         Group {
-            if isLoading {
+            if isBooting {
                 ProgressView("Loading...")
-            } else if let user = (container.authService as? AuthService)?.currentUser {
-                user.role == .employee ? AnyView(EmployeeTabView()) : AnyView(ManagerTabView())
+            } else if let user = authService.currentUser {
+                if user.role == .manager {
+                    ManagerTabView()
+                } else {
+                    EmployeeTabView()
+                }
             } else {
-                AnyView(RoleSelectionView())
+                LoginView()
             }
         }
         .task {
-            await (container.authService as? AuthService)?.restoreSession()
-            isLoading = false
+            guard isBooting else { return }
+            await authService.restoreSession()
+            isBooting = false
         }
     }
 }

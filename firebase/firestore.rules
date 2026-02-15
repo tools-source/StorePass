@@ -1,20 +1,33 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    function isSignedIn() { return request.auth != null; }
-    function userDoc() {
-      return get(/databases/$(database)/documents/users/$(request.auth.uid));
+    function isSignedIn() {
+      return request.auth != null;
     }
+
+    function userDoc(uid) {
+      return get(/databases/$(database)/documents/users/$(uid));
+    }
+
+    function requestUserDoc() {
+      return userDoc(request.auth.uid);
+    }
+
     function isManager() {
-      return isSignedIn() && userDoc().data.role == "manager";
+      return isSignedIn() && requestUserDoc().data.role == "manager";
     }
-    function isEmployee() {
-      return isSignedIn() && userDoc().data.role == "employee";
+
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
     }
 
     match /users/{uid} {
-      allow read: if isManager() || (isSignedIn() && request.auth.uid == uid);
-      allow create, update: if isManager() || (isSignedIn() && request.auth.uid == uid && request.resource.data.role == resource.data.role);
+      allow read: if isOwner(uid) || isManager();
+      allow create: if isOwner(uid) && request.resource.data.role in ["employee", "manager"];
+      allow update: if isOwner(uid)
+        && request.resource.data.role == resource.data.role
+        && request.resource.data.id == resource.data.id
+        || isManager();
       allow delete: if isManager();
     }
 
@@ -24,9 +37,18 @@ service cloud.firestore {
     }
 
     match /checkins/{checkinId} {
-      allow read: if isManager() || (isEmployee() && resource.data.employeeId == request.auth.uid);
-      allow create: if isEmployee() && request.resource.data.employeeId == request.auth.uid;
+      allow read: if isManager() || (isSignedIn() && resource.data.employeeId == request.auth.uid);
+      allow create: if isSignedIn() && request.resource.data.employeeId == request.auth.uid;
       allow update, delete: if isManager();
+    }
+
+    // Example manager-only collections.
+    match /managerReports/{docId} {
+      allow read, write: if isManager();
+    }
+
+    match /managerAnnouncements/{docId} {
+      allow read, write: if isManager();
     }
   }
 }
