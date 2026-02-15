@@ -40,7 +40,13 @@ struct ManageStoresView: View {
                     }
                 }
             }
-            .alert("Delete store", isPresented: Binding(get: { deletingStore != nil }, set: { if !$0 { deletingStore = nil } })) {
+            .alert(
+                "Delete store",
+                isPresented: Binding(
+                    get: { deletingStore != nil },
+                    set: { if !$0 { deletingStore = nil } }
+                )
+            ) {
                 Button("Delete", role: .destructive) {
                     if let id = deletingStore?.id {
                         Task {
@@ -54,9 +60,17 @@ struct ManageStoresView: View {
             } message: {
                 Text("This will remove the store and stop new joins.")
             }
-            .alert("Store tools", isPresented: Binding(get: { vm.errorMessage != nil }, set: { _ in vm.errorMessage = nil })) {
+            .alert(
+                "Store tools",
+                isPresented: Binding(
+                    get: { vm.errorMessage != nil },
+                    set: { _ in vm.errorMessage = nil }
+                )
+            ) {
                 Button("OK", role: .cancel) { vm.errorMessage = nil }
-            } message: { Text(vm.errorMessage ?? "") }
+            } message: {
+                Text(vm.errorMessage ?? "")
+            }
             .overlay(alignment: .bottom) {
                 if let toast = vm.toastMessage {
                     Text(toast)
@@ -66,7 +80,9 @@ struct ManageStoresView: View {
                         .clipShape(Capsule())
                         .padding(.bottom, 24)
                         .onAppear {
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { vm.toastMessage = nil }
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                                vm.toastMessage = nil
+                            }
                         }
                 }
             }
@@ -76,6 +92,7 @@ struct ManageStoresView: View {
     private var createCard: some View {
         VStack(alignment: .leading, spacing: DS.Spacing.s) {
             Text("Create Store").font(.headline)
+
             TextField("Store name", text: $name)
                 .textFieldStyle(.roundedBorder)
 
@@ -88,7 +105,13 @@ struct ManageStoresView: View {
 
             Button("Create Store") {
                 Task {
-                    await vm.createStore(name: name, address: address, latitude: latitude, longitude: longitude, radiusMeters: Int(radius))
+                    await vm.createStore(
+                        name: name,
+                        address: address,
+                        latitude: latitude,
+                        longitude: longitude,
+                        radiusMeters: Int(radius)
+                    )
                     await vm.load(managerId: container.authRepository.currentUserId)
                     name = ""
                     address = ""
@@ -106,6 +129,7 @@ struct ManageStoresView: View {
     private var storesCard: some View {
         VStack(alignment: .leading, spacing: DS.Spacing.s) {
             Text("Store List").font(.headline)
+
             if vm.stores.isEmpty {
                 Text("No stores yet").foregroundStyle(.secondary)
             }
@@ -121,10 +145,21 @@ struct ManageStoresView: View {
                     HStack {
                         Button("Copy code") {
                             Task {
-                                let code = vm.latestJoinCodesByStoreId[store.id] ?? await vm.fetchJoinCode(storeId: store.id)
+                                // ✅ FIX: avoid using `await` inside `??` (autoclosure)
+                                let cached = vm.latestJoinCodesByStoreId[store.id]
+                                let code: String?
+
+                                if let cached {
+                                    code = cached
+                                } else {
+                                    code = await vm.fetchJoinCode(storeId: store.id)
+                                }
+
                                 if let code {
                                     UIPasteboard.general.string = code
                                     vm.toastMessage = "Code copied"
+                                } else {
+                                    vm.errorMessage = "Unable to fetch store code."
                                 }
                             }
                         }
@@ -133,9 +168,12 @@ struct ManageStoresView: View {
                         Button("Rotate code") {
                             Task {
                                 await vm.rotateStoreCode(storeId: store.id)
+
                                 if let code = vm.latestJoinCodesByStoreId[store.id] {
                                     UIPasteboard.general.string = code
+                                    vm.toastMessage = "New code copied"
                                 }
+
                                 await vm.load(managerId: container.authRepository.currentUserId)
                             }
                         }
@@ -149,7 +187,10 @@ struct ManageStoresView: View {
                         }
                     }
                 }
-                if store.id != vm.stores.last?.id { Divider().overlay(.white.opacity(0.15)) }
+
+                if store.id != vm.stores.last?.id {
+                    Divider().overlay(.white.opacity(0.15))
+                }
             }
         }
         .cardStyle()
@@ -206,7 +247,9 @@ private struct AddressSearchField: View {
                     } label: {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(suggestion.title)
-                            Text(suggestion.subtitle).font(.caption).foregroundStyle(.secondary)
+                            Text(suggestion.subtitle)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
@@ -215,6 +258,7 @@ private struct AddressSearchField: View {
 
             TextField("Address (manual override)", text: $address)
                 .textFieldStyle(.roundedBorder)
+
             Text("Lat: \(latitude, specifier: "%.5f"), Lng: \(longitude, specifier: "%.5f")")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
@@ -238,7 +282,9 @@ private struct EditStoreView: View {
             }
             .navigationTitle("Edit Store")
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
                         onSave(store)

@@ -32,19 +32,27 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
         let snapshot: QuerySnapshot
         if let ids {
             if ids.isEmpty { return [] }
-            snapshot = try await db.collection("stores").whereField(FieldPath.documentID(), in: ids).getDocuments()
+            snapshot = try await db.collection("stores")
+                .whereField(FieldPath.documentID(), in: ids)
+                .getDocuments()
         } else {
-            snapshot = try await db.collection("stores").order(by: "name").getDocuments()
+            snapshot = try await db.collection("stores")
+                .order(by: "name")
+                .getDocuments()
         }
         return snapshot.documents.map(decodeStore)
     }
 
     func fetchManagerStores(managerId: String) async throws -> [Store] {
+        // ✅ FIX: Firestore requires a composite index for:
+        // where(managerId == X) + orderBy(name)
+        // To avoid needing indexes during development, we fetch then sort locally.
         let snapshot = try await db.collection("stores")
             .whereField("managerId", isEqualTo: managerId)
-            .order(by: "name")
             .getDocuments()
-        return snapshot.documents.map(decodeStore)
+
+        let stores = snapshot.documents.map(decodeStore)
+        return stores.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
     func upsertStore(_ store: Store) async throws {

@@ -3,6 +3,8 @@ import FirebaseCore
 import FirebaseFirestore
 import Foundation
 
+// MARK: - Protocols
+
 protocol UserRepositoryProtocol {
     func fetchUser(id: String) async throws -> UserProfile?
     func upsertUser(_ user: UserProfile) async throws
@@ -10,12 +12,20 @@ protocol UserRepositoryProtocol {
 
 protocol EmployeeManagementRepositoryProtocol {
     func fetchManagerStores(managerId: String) async throws -> [Store]
+
+    // ✅ NEW: index-free employees fetch using store list
+    func fetchEmployeesForManagerStores(managerStores: [Store]) async throws -> [EmployeeSummary]
+
+    // Keep existing API (optional legacy)
     func fetchEmployeesForManager(managerId: String) async throws -> [EmployeeSummary]
+
     func removeEmployeeFromStore(storeId: String, employeeId: String) async throws
     func removeEmployeeFromAllManagerStores(employeeId: String, managerId: String) async throws
     func setEmployeeStoresForManager(employeeId: String, storeIds: [String]) async throws
     func setEmployeeActive(employeeId: String, isActive: Bool) async throws
 }
+
+// MARK: - User Repo
 
 final class FirestoreUserRepository: UserRepositoryProtocol {
     private var db: Firestore {
@@ -61,66 +71,106 @@ final class FirestoreUserRepository: UserRepositoryProtocol {
     }
 }
 
+// MARK: - Employee Management Repo
+
 final class FirestoreEmployeeManagementRepository: EmployeeManagementRepositoryProtocol {
     private let db = Firestore.firestore()
 
     func fetchManagerStores(managerId: String) async throws -> [Store] {
+        // ✅ FIX: remove orderBy(name) to avoid composite index requirement
         let snapshot = try await db.collection("stores")
             .whereField("managerId", isEqualTo: managerId)
-            .order(by: "name")
             .getDocuments()
-        return snapshot.documents.map(decodeStore)
+
+        let stores = snapshot.documents.map(decodeStore)
+        return stores.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
-    func fetchEmployeesForManager(managerId: String) async throws -> [EmployeeSummary] {
-        let stores = try await fetchManagerStores(managerId: managerId)
-        if stores.isEmpty { return [] }
+    // ✅ NEW: Index-free approach used by the ViewModel
+    // Strategy:
+    // 1) For each store: read storeMembers/{storeId}/members (no orderBy)
+    // 2) Filter employees in Swift
+    // 3) Fetch user profiles in chunks of 10 with documentID IN query
+    // 4) Sort locally
+    func fetchEmployeesForManagerStores(managerStores: [Store]) async throws -> [EmployeeSummary] {
+        if managerStores.isEmpty { return [] }
 
+        let storesById = Dictionary(uniqueKeysWithValues: managerStores.map { ($0.id, $0) })
+        let storeIds = managerStores.map(\.id)
+
+        // employeeId -> set(storeId)
         var storeIdsByEmployee: [String: Set<String>] = [:]
         var inactiveMemberByEmployee: [String: Bool] = [:]
 
-        for store in stores {
-            let members = try await db.collection("storeMembers").document(store.id)
+        // 1) Members per store (no orderBy, no where)
+        for storeId in storeIds {
+            let membersSnap = try await db.collection("storeMembers")
+                .document(storeId)
                 .collection("members")
-                .whereField("role", isEqualTo: UserRole.employee.rawValue)
                 .getDocuments()
-            for member in members.documents {
-                let employeeId = member.documentID
-                storeIdsByEmployee[employeeId, default: []].insert(store.id)
-                if let memberActive = member.data()["isActive"] as? Bool, memberActive == false {
+
+            for doc in membersSnap.documents {
+                let data = doc.data()
+
+                // Filter to employees locally
+                let role = data["role"] as? String ?? ""
+                guard role == UserRole.employee.rawValue else { continue }
+
+                let employeeId = (data["userId"] as? String) ?? doc.documentID
+                storeIdsByEmployee[employeeId, default: []].insert(storeId)
+
+                if let memberActive = data["isActive"] as? Bool, memberActive == false {
                     inactiveMemberByEmployee[employeeId] = true
                 }
             }
         }
 
         if storeIdsByEmployee.isEmpty { return [] }
-        let storesById = Dictionary(uniqueKeysWithValues: stores.map { ($0.id, $0) })
 
-        return try await withThrowingTaskGroup(of: EmployeeSummary?.self) { group in
-            for employeeId in storeIdsByEmployee.keys {
-                group.addTask {
-                    let userSnap = try await self.db.collection("users").document(employeeId).getDocument()
-                    guard let data = userSnap.data() else { return nil }
-                    let storeIds = Array(storeIdsByEmployee[employeeId] ?? []).sorted()
-                    let names = storeIds.compactMap { storesById[$0]?.name }
-                    return EmployeeSummary(
-                        id: employeeId,
-                        name: data["name"] as? String ?? "Employee",
-                        email: data["email"] as? String,
-                        storeIds: storeIds,
-                        storeNames: names,
-                        userIsActive: data["isActive"] as? Bool ?? true,
-                        hasInactiveMembership: inactiveMemberByEmployee[employeeId] ?? false
-                    )
-                }
-            }
+        let employeeIds = Array(storeIdsByEmployee.keys)
 
-            var rows: [EmployeeSummary] = []
-            for try await item in group {
-                if let item { rows.append(item) }
+        // 2) Fetch user profiles in chunks of 10 (Firestore "in" limit)
+        var userDataById: [String: [String: Any]] = [:]
+        for chunk in employeeIds.chunked(into: 10) {
+            let usersSnap = try await db.collection("users")
+                .whereField(FieldPath.documentID(), in: chunk)
+                .getDocuments()
+
+            for doc in usersSnap.documents {
+                userDataById[doc.documentID] = doc.data()
             }
-            return rows.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
         }
+
+        // 3) Build summaries
+        var rows: [EmployeeSummary] = []
+        rows.reserveCapacity(employeeIds.count)
+
+        for employeeId in employeeIds {
+            guard let data = userDataById[employeeId] else { continue }
+
+            let storeIdsForEmployee = Array(storeIdsByEmployee[employeeId] ?? []).sorted()
+            let storeNames = storeIdsForEmployee.compactMap { storesById[$0]?.name }
+
+            rows.append(
+                EmployeeSummary(
+                    id: employeeId,
+                    name: data["name"] as? String ?? "Employee",
+                    email: data["email"] as? String,
+                    storeIds: storeIdsForEmployee,
+                    storeNames: storeNames,
+                    userIsActive: data["isActive"] as? Bool ?? true,
+                    hasInactiveMembership: inactiveMemberByEmployee[employeeId] ?? false
+                )
+            )
+        }
+
+        return rows.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    // Legacy method kept for compatibility (calls the new one)
+    func fetchEmployeesForManager(managerId: String) async throws -> [EmployeeSummary] {
+        let stores = try await fetchManagerStores(managerId: managerId)
+        return try await fetchEmployeesForManagerStores(managerStores: stores)
     }
 
     func removeEmployeeFromStore(storeId: String, employeeId: String) async throws {
@@ -189,5 +239,21 @@ final class FirestoreEmployeeManagementRepository: EmployeeManagementRepositoryP
             throw NSError(domain: "StorePass", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: "Backend request failed."])
         }
         return object["result"] as? [String: Any] ?? object
+    }
+}
+
+// MARK: - Helpers
+
+private extension Array {
+    func chunked(into size: Int) -> [[Element]] {
+        guard size > 0 else { return [self] }
+        var result: [[Element]] = []
+        var i = 0
+        while i < count {
+            let end = Swift.min(i + size, count)
+            result.append(Array(self[i..<end]))
+            i = end
+        }
+        return result
     }
 }

@@ -26,12 +26,28 @@ final class EmployeeManagementViewModel: ObservableObject {
             errorMessage = "Unable to resolve current manager session."
             return
         }
+
         isLoading = true
         defer { isLoading = false }
 
         do {
-            stores = try await employeeRepository.fetchManagerStores(managerId: managerId)
-            employees = try await employeeRepository.fetchEmployeesForManager(managerId: managerId)
+            // 1) Fetch stores owned by this manager (safe query)
+            let fetchedStores = try await employeeRepository.fetchManagerStores(managerId: managerId)
+            stores = fetchedStores
+
+            // Keep selectedStoreId valid
+            if selectedStoreId != "all" && !fetchedStores.contains(where: { $0.id == selectedStoreId }) {
+                selectedStoreId = "all"
+            }
+
+            // 2) Fetch employees using a 2-step approach (members -> users) to avoid composite indexes
+            // IMPORTANT:
+            // Your repository must implement this method using:
+            // - query storeMembers/{storeId}/members (no orderBy)
+            // - then fetch users/{uid} in chunks of 10 using documentID IN queries
+            // - then sort locally
+            employees = try await employeeRepository.fetchEmployeesForManagerStores(managerStores: fetchedStores)
+
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription
@@ -75,3 +91,17 @@ final class EmployeeManagementViewModel: ObservableObject {
         }
     }
 }
+
+/*
+ REQUIRED REPOSITORY CHANGE
+
+ Update your EmployeeManagementRepositoryProtocol to include:
+
+ func fetchEmployeesForManagerStores(managerStores: [Store]) async throws -> [EmployeeSummary]
+
+ And stop using:
+ func fetchEmployeesForManager(managerId: String) async throws -> [EmployeeSummary]
+
+ Because the managerId-based query often becomes a composite-index query.
+ The store-based 2-step approach avoids indexes reliably.
+*/
