@@ -98,13 +98,22 @@ Defined in `firebase/firestore.indexes.json`:
 
 ---
 
+## Production Auth/Routing Contract
+- The app signs in with Google/Apple, then only upserts `users/{uid}` for the signed-in account.
+- It reads only `users/{uid}` to resolve role + active status and routes accordingly.
+- Selecting **Manager** on login does not change authentication provider; it only requests manager routing.
+- If selected mode is Manager but profile role is not manager, login is denied with a friendly message and the user is returned to login.
+
+---
+
 ## Production Role Bootstrap (Manual)
 StoreCheck does **not** auto-assign manager privileges.
 
 After first sign-in for the intended manager account:
-1. Open **Firestore Console → users → {uid}**.
-2. Set `role` to `"manager"`.
-3. Save the document and sign in again.
+1. Launch the app and sign in once (Google or Apple).
+2. Open **Firestore Console → users → {uid}** for that account.
+3. Set `role` to `"manager"` and keep `isActive = true`.
+4. Save the document, relaunch the app, and sign in again.
 
 All other users should keep `role = "employee"`.
 

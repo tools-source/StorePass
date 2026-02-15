@@ -105,9 +105,17 @@ final class AuthService: ObservableObject, AuthServiceProtocol {
             throw NSError(domain: "StorePass", code: 1004, userInfo: [NSLocalizedDescriptionKey: "Not authenticated."])
         }
 
+        #if DEBUG
+        print("[AuthService] Signed in uid: \(uid)")
+        #endif
+
         let existing = try await userRepository.fetchUser(id: uid)
         let now = Date()
-        var user = existing ?? UserProfile(
+        #if DEBUG
+        print("[AuthService] users/\(uid) existed: \(existing != nil)")
+        #endif
+
+        let user = existing ?? UserProfile(
             id: uid,
             name: fullName?.isEmpty == false ? fullName! : "StorePass User",
             email: email,
@@ -119,13 +127,56 @@ final class AuthService: ObservableObject, AuthServiceProtocol {
             isActive: true
         )
 
-        user.name = fullName?.isEmpty == false ? fullName! : user.name
-        user.email = email ?? user.email
-        user.lastLoginAt = now
-        user.provider = provider
+        var updates: [String: Any] = [
+            "lastLoginAt": now,
+            "provider": provider,
+            "isActive": existing?.isActive ?? true
+        ]
 
-        try await userRepository.upsertUser(user)
-        return user
+        if existing == nil {
+            updates["createdAt"] = now
+            updates["role"] = UserRole.employee.rawValue
+            updates["assignedStoreIds"] = []
+        }
+
+        if let fullName, !fullName.isEmpty {
+            updates["name"] = fullName
+        } else if existing == nil {
+            updates["name"] = "StorePass User"
+        }
+
+        if let email {
+            updates["email"] = email
+        } else if existing == nil {
+            updates["email"] = NSNull()
+        }
+
+        let merged = merge(user: user, updates: updates, fallbackNow: now)
+        try await userRepository.upsertUser(merged)
+
+        guard let refreshed = try await userRepository.fetchUser(id: uid) else {
+            throw NSError(domain: "StorePass", code: 1005, userInfo: [NSLocalizedDescriptionKey: "Unable to load your user profile."])
+        }
+
+        #if DEBUG
+        print("[AuthService] Resolved role: \(refreshed.role.rawValue), isActive: \(refreshed.isActive)")
+        #endif
+
+        return refreshed
+    }
+
+    private func merge(user: UserProfile, updates: [String: Any], fallbackNow: Date) -> UserProfile {
+        UserProfile(
+            id: user.id,
+            name: updates["name"] as? String ?? user.name,
+            email: updates["email"] as? String ?? user.email,
+            role: UserRole(rawValue: updates["role"] as? String ?? user.role.rawValue) ?? user.role,
+            createdAt: updates["createdAt"] as? Date ?? user.createdAt,
+            lastLoginAt: updates["lastLoginAt"] as? Date ?? fallbackNow,
+            provider: updates["provider"] as? String ?? user.provider,
+            assignedStoreIds: updates["assignedStoreIds"] as? [String] ?? user.assignedStoreIds,
+            isActive: updates["isActive"] as? Bool ?? user.isActive
+        )
     }
 
     private func normalizedProviderID(_ providerID: String) -> String {

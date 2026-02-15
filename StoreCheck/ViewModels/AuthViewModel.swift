@@ -27,7 +27,11 @@ final class AuthViewModel: ObservableObject {
         defer { isLoading = false }
 
         await authService.restoreSession()
-        await syncStateFromAuthService()
+        do {
+            try await resolveRoleAfterSignIn(preferredRole: nil)
+        } catch {
+            errorMessage = userFacingMessage(for: error)
+        }
     }
 
     func signInWithGoogle(preferredRole: UserRole? = nil) async {
@@ -85,13 +89,27 @@ final class AuthViewModel: ObservableObject {
 
     private func resolveRoleAfterSignIn(preferredRole: UserRole?) async throws {
         let user = try await authService.refreshCurrentUserProfile()
+
+        guard user.isActive else {
+            #if DEBUG
+            print("[AuthViewModel] Manager access denied: account inactive for uid \(user.id)")
+            #endif
+            errorMessage = "This account is inactive. Contact your administrator."
+            try await authService.signOut()
+            clearState()
+            return
+        }
+
         syncState(with: user)
 
         guard let preferredRole else { return }
         guard preferredRole != user.role else { return }
 
         if preferredRole == .manager && user.role == .employee {
-            errorMessage = "This account is not a manager. Please sign in as Employee."
+            #if DEBUG
+            print("[AuthViewModel] Manager access denied: role mismatch for uid \(user.id), role=\(user.role.rawValue)")
+            #endif
+            errorMessage = "This account is not a manager."
             try await authService.signOut()
             clearState()
         } else if preferredRole == .employee && user.role == .manager {
@@ -99,13 +117,6 @@ final class AuthViewModel: ObservableObject {
         }
     }
 
-    private func syncStateFromAuthService() async {
-        guard let user = authService.currentUser else {
-            clearState()
-            return
-        }
-        syncState(with: user)
-    }
 
     private func syncState(with user: AppUser) {
         currentUser = user
