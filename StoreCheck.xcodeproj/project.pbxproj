@@ -15,6 +15,7 @@
 		BEEFABCD123400000000002A /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000002 /* AppDelegate.swift */; };
 		BEEFABCD123400000000002B /* StoreCheckApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000003 /* StoreCheckApp.swift */; };
 		BEEFABCD123400000000007B /* FirebaseBootstrap.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD123400000000007A /* FirebaseBootstrap.swift */; };
+		BEEFABCD123400000000007D /* DebugOptions.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD123400000000007C /* DebugOptions.swift */; };
 		BEEFABCD123400000000002C /* LoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000004 /* LoginView.swift */; };
 		BEEFABCD123400000000002D /* RoleSelectionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000005 /* RoleSelectionView.swift */; };
 		BEEFABCD123400000000002E /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000006 /* Theme.swift */; };
@@ -63,6 +64,7 @@
 		BEEFABCD1234000000000002 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		BEEFABCD1234000000000003 /* StoreCheckApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoreCheckApp.swift; sourceTree = "<group>"; };
 		BEEFABCD123400000000007A /* FirebaseBootstrap.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FirebaseBootstrap.swift; sourceTree = "<group>"; };
+		BEEFABCD123400000000007C /* DebugOptions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugOptions.swift; sourceTree = "<group>"; };
 		BEEFABCD1234000000000004 /* LoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginView.swift; sourceTree = "<group>"; };
 		BEEFABCD1234000000000005 /* RoleSelectionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoleSelectionView.swift; sourceTree = "<group>"; };
 		BEEFABCD1234000000000006 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
@@ -179,6 +181,7 @@
 				BEEFABCD1234000000000002 /* AppDelegate.swift */,
 				BEEFABCD1234000000000003 /* StoreCheckApp.swift */,
 				BEEFABCD123400000000007A /* FirebaseBootstrap.swift */,
+				BEEFABCD123400000000007C /* DebugOptions.swift */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -362,6 +365,7 @@
 				BEEFABCD123400000000002A /* AppDelegate.swift in Sources */,
 				BEEFABCD123400000000002B /* StoreCheckApp.swift in Sources */,
 				BEEFABCD123400000000007B /* FirebaseBootstrap.swift in Sources */,
+				BEEFABCD123400000000007D /* DebugOptions.swift in Sources */,
 				BEEFABCD123400000000002C /* LoginView.swift in Sources */,
 				BEEFABCD123400000000002D /* RoleSelectionView.swift in Sources */,
 				BEEFABCD123400000000002E /* Theme.swift in Sources */,

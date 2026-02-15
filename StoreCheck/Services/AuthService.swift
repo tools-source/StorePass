@@ -10,7 +10,7 @@ import UIKit
 @MainActor
 protocol AuthServiceProtocol: AnyObject {
     var currentUser: AppUser? { get }
-    func restoreSession() async
+    func restoreSession(forceSignOutOnLaunch: Bool) async
     func signInWithGoogle() async throws
     func signInWithApple(idToken: String, rawNonce: String, fullName: PersonNameComponents?, email: String?) async throws
     func refreshCurrentUserProfile() async throws -> AppUser
@@ -43,15 +43,47 @@ final class AuthService: ObservableObject, AuthServiceProtocol {
         self.userRepository = userRepository
     }
 
-    func restoreSession() async {
-        guard auth.currentUser?.uid != nil else {
+    func restoreSession(forceSignOutOnLaunch: Bool = false) async {
+        #if DEBUG
+        print("[AuthService] restoreSession start")
+        #endif
+
+        if forceSignOutOnLaunch {
+            #if DEBUG
+            print("[AuthService] FORCE_SIGN_OUT_ON_LAUNCH enabled, clearing cached sessions")
+            #endif
+            try? auth.signOut()
+            GIDSignIn.sharedInstance.signOut()
+            #if DEBUG
+            print("[AuthService] Apple Sign In has no global sign-out; local Firebase/Google session cleared")
+            #endif
             currentUser = nil
             return
         }
 
+        guard auth.currentUser?.uid != nil else {
+            #if DEBUG
+            print("[AuthService] restoreSession: no authenticated Firebase user")
+            #endif
+            currentUser = nil
+            return
+        }
+
+        #if DEBUG
+        if let uid = auth.currentUser?.uid {
+            print("[AuthService] restoreSession found Firebase currentUser uid: \(uid)")
+        }
+        #endif
+
         do {
             currentUser = try await refreshCurrentUserProfile()
+            #if DEBUG
+            print("[AuthService] restoreSession profile refresh complete")
+            #endif
         } catch {
+            #if DEBUG
+            print("[AuthService] restoreSession failed to load profile: \(error.localizedDescription)")
+            #endif
             currentUser = nil
         }
     }
@@ -101,6 +133,10 @@ final class AuthService: ObservableObject, AuthServiceProtocol {
 
     func signOut() async throws {
         let providerIDs = Set(auth.currentUser?.providerData.map(\.providerID) ?? [])
+        #if DEBUG
+        print("[AuthService] signOut requested. Providers: \(providerIDs)")
+        #endif
+
         if providerIDs.contains("google.com") {
             do {
                 try await GIDSignIn.sharedInstance.disconnect()
@@ -108,6 +144,12 @@ final class AuthService: ObservableObject, AuthServiceProtocol {
                 GIDSignIn.sharedInstance.signOut()
             }
         }
+
+        #if DEBUG
+        if providerIDs.contains("apple.com") {
+            print("[AuthService] Apple Sign In has no global sign-out; clearing local Firebase session only")
+        }
+        #endif
 
         try auth.signOut()
         GIDSignIn.sharedInstance.signOut()

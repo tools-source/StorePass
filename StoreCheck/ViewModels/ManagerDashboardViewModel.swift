@@ -10,45 +10,57 @@ final class ManagerDashboardViewModel: ObservableObject {
 
     private let checkInRepository: CheckInRepositoryProtocol
     private var listenerToken: CheckInListenerToken?
-    private var isDashboardActive = false
-
+    private var isDashboardVisible = false
+    private var isManager = false
 
     init(checkInRepository: CheckInRepositoryProtocol) {
         self.checkInRepository = checkInRepository
     }
 
-    func setDashboardActive(_ isActive: Bool) {
-        guard isDashboardActive != isActive else { return }
-        isDashboardActive = isActive
+    func updateListenerState(isDashboardVisible: Bool, isManager: Bool, source: String) {
+        self.isDashboardVisible = isDashboardVisible
+        self.isManager = isManager
 
-        if isActive {
+        #if DEBUG
+        print("[Checkins] updateListenerState source=\(source) visible=\(isDashboardVisible) isManager=\(isManager)")
+        #endif
+
+        if isDashboardVisible, isManager {
             checkinError = nil
-            startListeningIfNeeded()
+            startListeningIfNeeded(source: source)
         } else {
-            stopListening()
+            stopListening(source: source)
             checkinError = nil
         }
     }
 
-    func refreshListener() {
-        guard isDashboardActive else { return }
-        stopListening()
-        startListeningIfNeeded()
+    func refreshListener(source: String) {
+        guard isDashboardVisible, isManager else { return }
+        stopListening(source: source)
+        startListeningIfNeeded(source: source)
     }
 
-    func stopListening() {
+    func stopListening(source: String) {
+        guard listenerToken != nil else { return }
+        #if DEBUG
+        print("[Checkins] listener stop source=\(source)")
+        #endif
         listenerToken?.cancel()
         listenerToken = nil
     }
 
-    private func startListeningIfNeeded() {
-        guard isDashboardActive, listenerToken == nil else { return }
+    private func startListeningIfNeeded(source: String) {
+        guard isDashboardVisible, isManager, listenerToken == nil else { return }
 
         let filter = CheckInFilter(
             storeId: selectedStoreId.isEmpty ? nil : selectedStoreId,
             status: selectedStatus,
             date: selectedDate
         )
+
+        #if DEBUG
+        print("[Checkins] listener start source=\(source) storeId=\(filter.storeId ?? "all") status=\(filter.status?.rawValue ?? "all")")
+        #endif
 
         listenerToken = checkInRepository.listenToTodaysCheckIns(
             filter: filter,
@@ -61,7 +73,9 @@ final class ManagerDashboardViewModel: ObservableObject {
             onError: { [weak self] error in
                 Task { @MainActor in
                     self?.checkinError = error.localizedDescription
-                    print("[Checkins] Listener error: \(error.localizedDescription)")
+                    #if DEBUG
+                    print("[Checkins] listener error: \(error.localizedDescription)")
+                    #endif
                 }
             }
         )
