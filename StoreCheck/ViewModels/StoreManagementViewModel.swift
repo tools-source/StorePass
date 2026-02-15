@@ -8,6 +8,7 @@ final class StoreManagementViewModel: ObservableObject {
     @Published var toastMessage: String?
 
     private let repository: StoreRepositoryProtocol
+    private var toastClearTask: Task<Void, Never>?
 
     init(repository: StoreRepositoryProtocol) {
         self.repository = repository
@@ -31,7 +32,7 @@ final class StoreManagementViewModel: ObservableObject {
         do {
             let result = try await repository.createStore(name: name, address: address, latitude: latitude, longitude: longitude, radiusMeters: radiusMeters)
             latestJoinCodesByStoreId[result.store.id] = result.joinCode
-            toastMessage = "Store created. Code: \(result.joinCode)"
+            showToast("Store created. Code: \(result.joinCode)")
             storeError = nil
         } catch {
             storeError = error.localizedDescription
@@ -42,7 +43,7 @@ final class StoreManagementViewModel: ObservableObject {
     func saveStore(_ store: Store) async {
         do {
             try await repository.upsertStore(store)
-            toastMessage = "Store updated"
+            showToast("Store updated")
             storeError = nil
         } catch {
             storeError = error.localizedDescription
@@ -53,7 +54,7 @@ final class StoreManagementViewModel: ObservableObject {
     func deleteStore(id: String) async {
         do {
             try await repository.deleteStore(id: id)
-            toastMessage = "Store deleted"
+            showToast("Store deleted")
             storeError = nil
         } catch {
             storeError = error.localizedDescription
@@ -65,7 +66,7 @@ final class StoreManagementViewModel: ObservableObject {
         do {
             let code = try await repository.rotateStoreCode(storeId: storeId)
             latestJoinCodesByStoreId[storeId] = code
-            toastMessage = "Code rotated"
+            showToast("Code rotated")
             storeError = nil
         } catch {
             storeError = error.localizedDescription
@@ -83,6 +84,18 @@ final class StoreManagementViewModel: ObservableObject {
             storeError = error.localizedDescription
             print("[Stores] Fetch-code error: \(error.localizedDescription)")
             return nil
+        }
+    }
+
+    func showToast(_ message: String) {
+        toastMessage = message
+        toastClearTask?.cancel()
+        toastClearTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                self?.toastMessage = nil
+            }
         }
     }
 }

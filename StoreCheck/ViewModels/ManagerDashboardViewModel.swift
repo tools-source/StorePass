@@ -10,13 +10,36 @@ final class ManagerDashboardViewModel: ObservableObject {
 
     private let checkInRepository: CheckInRepositoryProtocol
     private var listenerToken: CheckInListenerToken?
+    private var isDashboardActive = false
 
     init(checkInRepository: CheckInRepositoryProtocol) {
         self.checkInRepository = checkInRepository
     }
 
-    func startListening() {
-        guard listenerToken == nil else { return }
+    func setDashboardActive(_ isActive: Bool) {
+        guard isDashboardActive != isActive else { return }
+        isDashboardActive = isActive
+
+        if isActive {
+            startListeningIfNeeded()
+        } else {
+            stopListening()
+        }
+    }
+
+    func refreshListener() {
+        guard isDashboardActive else { return }
+        stopListening()
+        startListeningIfNeeded()
+    }
+
+    func stopListening() {
+        listenerToken?.cancel()
+        listenerToken = nil
+    }
+
+    private func startListeningIfNeeded() {
+        guard isDashboardActive, listenerToken == nil else { return }
 
         let filter = CheckInFilter(
             storeId: selectedStoreId.isEmpty ? nil : selectedStoreId,
@@ -39,15 +62,5 @@ final class ManagerDashboardViewModel: ObservableObject {
                 }
             }
         )
-    }
-
-    func refreshListener() {
-        stopListening()
-        startListening()
-    }
-
-    func stopListening() {
-        listenerToken?.cancel()
-        listenerToken = nil
     }
 }
