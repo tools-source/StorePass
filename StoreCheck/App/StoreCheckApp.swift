@@ -3,7 +3,7 @@ import SwiftUI
 
 @main
 struct StoreCheckApp: App {
-    @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+    @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @StateObject private var appContainer: AppContainer
 
     init() {
