@@ -22,11 +22,23 @@ final class AuthViewModel: ObservableObject {
         self.authService = authService
     }
 
-    func restoreSession() async {
+    func restoreSession(forceSignOutOnLaunch: Bool = false) async {
+        #if DEBUG
+        print("[AuthViewModel] restoreSession start")
+        #endif
         isLoading = true
         defer { isLoading = false }
 
-        await authService.restoreSession()
+        await authService.restoreSession(forceSignOutOnLaunch: forceSignOutOnLaunch)
+
+        guard authService.currentUser != nil else {
+            #if DEBUG
+            print("[AuthViewModel] restoreSession complete: no active session")
+            #endif
+            clearState()
+            return
+        }
+
         do {
             try await resolveRoleAfterSignIn(preferredRole: nil)
         } catch {
@@ -90,6 +102,10 @@ final class AuthViewModel: ObservableObject {
     private func resolveRoleAfterSignIn(preferredRole: UserRole?) async throws {
         let user = try await authService.refreshCurrentUserProfile()
 
+        #if DEBUG
+        print("[AuthViewModel] resolved role=\(user.role.rawValue) for uid=\(user.id)")
+        #endif
+
         guard user.isActive else {
             #if DEBUG
             print("[AuthViewModel] Manager access denied: account inactive for uid \(user.id)")
@@ -119,6 +135,9 @@ final class AuthViewModel: ObservableObject {
 
 
     private func syncState(with user: AppUser) {
+        #if DEBUG
+        print("[AuthViewModel] syncState uid=\(user.id) role=\(user.role.rawValue)")
+        #endif
         currentUser = user
         resolvedRole = user.role
         authState = .signedIn(userId: user.id)

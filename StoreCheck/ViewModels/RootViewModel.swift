@@ -11,7 +11,7 @@ final class RootViewModel: ObservableObject {
     }
 
     func boot() async {
-        await authService.restoreSession()
+        await authService.restoreSession(forceSignOutOnLaunch: false)
         isLoading = false
     }
 }
