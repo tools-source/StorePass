@@ -1,3 +1,4 @@
+import GoogleSignIn
 import SwiftUI
 
 @main
@@ -10,6 +11,9 @@ struct StoreCheckApp: App {
             RootView()
                 .environmentObject(appContainer)
                 .preferredColorScheme(nil)
+                .onOpenURL { url in
+                    _ = GIDSignIn.sharedInstance.handle(url)
+                }
         }
     }
 }

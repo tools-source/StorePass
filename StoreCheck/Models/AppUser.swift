@@ -1,10 +1,5 @@
 import Foundation
 
-enum UserRole: String, Codable, CaseIterable {
-    case employee
-    case manager
-}
-
 struct AppUser: Codable, Identifiable {
     let id: String
     var name: String
@@ -39,7 +34,15 @@ struct AppUser: Codable, Identifiable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, name, email, role, createdAt, lastLoginAt, provider, assignedStoreIds, isActive
+        case id
+        case name
+        case email
+        case role
+        case createdAt
+        case lastLoginAt
+        case provider
+        case assignedStoreIds
+        case isActive
     }
 
     init(from decoder: Decoder) throws {

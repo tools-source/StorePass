@@ -29,7 +29,7 @@ final class AppContainer: ObservableObject {
         self.locationService = locationService
         self.csvExporter = csvExporter
         self.offlineQueue = offlineQueue
-        self.authService = AuthService(authRepository: authRepository, userRepository: userRepository)
+        self.authService = AuthService()
         self.checkInService = CheckInService(
             userRepository: userRepository,
             storeRepository: storeRepository,

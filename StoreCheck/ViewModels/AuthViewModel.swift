@@ -13,6 +13,12 @@ final class AuthViewModel: ObservableObject {
         self.authService = authService
     }
 
+    func restoreSession() async {
+        isLoading = true
+        defer { isLoading = false }
+        await authService.restoreSession()
+    }
+
     func signInWithGoogle() async {
         isLoading = true
         defer { isLoading = false }
@@ -34,6 +40,7 @@ final class AuthViewModel: ObservableObject {
         Task {
             isLoading = true
             defer { isLoading = false }
+
             do {
                 let credential = try extractAppleCredential(from: result)
                 guard let nonce = currentNonce else {

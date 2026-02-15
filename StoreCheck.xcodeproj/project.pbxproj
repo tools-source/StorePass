@@ -48,6 +48,7 @@
 		BEEFABCD123400000000006C /* FirebaseCore in Frameworks */ = {isa = PBXBuildFile; productRef = BEEFABCD1234000000000068 /* FirebaseCore */; };
 		BEEFABCD123400000000006D /* FirebaseFirestore in Frameworks */ = {isa = PBXBuildFile; productRef = BEEFABCD1234000000000069 /* FirebaseFirestore */; };
 		BEEFABCD123400000000006E /* FirebaseFirestoreSwift in Frameworks */ = {isa = PBXBuildFile; productRef = BEEFABCD123400000000006A /* FirebaseFirestoreSwift */; };
+		BEEFABCD123400000000006F /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = BEEFABCD1234000000000071 /* GoogleSignIn */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -99,6 +100,7 @@
 			BEEFABCD123400000000006C /* FirebaseCore in Frameworks */,
 			BEEFABCD123400000000006D /* FirebaseFirestore in Frameworks */,
 			BEEFABCD123400000000006E /* FirebaseFirestoreSwift in Frameworks */,
+			BEEFABCD123400000000006F /* GoogleSignIn in Frameworks */,
 		); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXFrameworksBuildPhase section */
 
@@ -186,11 +188,12 @@
 			BEEFABCD1234000000000068 /* FirebaseCore */,
 			BEEFABCD1234000000000069 /* FirebaseFirestore */,
 			BEEFABCD123400000000006A /* FirebaseFirestoreSwift */,
+			BEEFABCD1234000000000071 /* GoogleSignIn */,
 		); productName = StoreCheck; productReference = BEEFABCD1234000000000028 /* StoreCheck.app */; productType = "com.apple.product-type.application"; };
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
-		BEEFABCD123400000000004F /* Project object */ = {isa = PBXProject; attributes = {BuildIndependentTargetsInParallel = 1; LastSwiftUpdateCheck = 1600; LastUpgradeCheck = 1600; TargetAttributes = {BEEFABCD1234000000000050 = {CreatedOnToolsVersion = 16.0;};};}; buildConfigurationList = BEEFABCD1234000000000060 /* Build configuration list for PBXProject "StoreCheck" */; compatibilityVersion = "Xcode 14.0"; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en, Base,); mainGroup = BEEFABCD1234000000000051; packageReferences = (BEEFABCD1234000000000066 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */,); productRefGroup = BEEFABCD1234000000000052 /* Products */; projectDirPath = ""; projectRoot = ""; targets = (BEEFABCD1234000000000050 /* StoreCheck */,); };
+		BEEFABCD123400000000004F /* Project object */ = {isa = PBXProject; attributes = {BuildIndependentTargetsInParallel = 1; LastSwiftUpdateCheck = 1600; LastUpgradeCheck = 1600; TargetAttributes = {BEEFABCD1234000000000050 = {CreatedOnToolsVersion = 16.0;};};}; buildConfigurationList = BEEFABCD1234000000000060 /* Build configuration list for PBXProject "StoreCheck" */; compatibilityVersion = "Xcode 14.0"; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en, Base,); mainGroup = BEEFABCD1234000000000051; packageReferences = (BEEFABCD1234000000000066 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */, BEEFABCD1234000000000070 /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */,); productRefGroup = BEEFABCD1234000000000052 /* Products */; projectDirPath = ""; projectRoot = ""; targets = (BEEFABCD1234000000000050 /* StoreCheck */,); };
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
@@ -243,6 +246,7 @@
 
 /* Begin XCRemoteSwiftPackageReference section */
 		BEEFABCD1234000000000066 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */ = {isa = XCRemoteSwiftPackageReference; repositoryURL = "https://github.com/firebase/firebase-ios-sdk"; requirement = {kind = upToNextMajorVersion; minimumVersion = 10.0.0;}; };
+		BEEFABCD1234000000000070 /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */ = {isa = XCRemoteSwiftPackageReference; repositoryURL = "https://github.com/google/GoogleSignIn-iOS"; requirement = {kind = upToNextMajorVersion; minimumVersion = 7.0.0;}; };
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -250,6 +254,7 @@
 		BEEFABCD1234000000000068 /* FirebaseCore */ = {isa = XCSwiftPackageProductDependency; package = BEEFABCD1234000000000066 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */; productName = FirebaseCore; };
 		BEEFABCD1234000000000069 /* FirebaseFirestore */ = {isa = XCSwiftPackageProductDependency; package = BEEFABCD1234000000000066 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */; productName = FirebaseFirestore; };
 		BEEFABCD123400000000006A /* FirebaseFirestoreSwift */ = {isa = XCSwiftPackageProductDependency; package = BEEFABCD1234000000000066 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */; productName = FirebaseFirestoreSwift; };
+		BEEFABCD1234000000000071 /* GoogleSignIn */ = {isa = XCSwiftPackageProductDependency; package = BEEFABCD1234000000000070 /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */; productName = GoogleSignIn; };
 /* End XCSwiftPackageProductDependency section */
 
 /* Begin XCBuildConfiguration section */
