@@ -3,8 +3,16 @@ import Foundation
 
 @MainActor
 final class AuthViewModel: ObservableObject {
+    enum AuthState: Equatable {
+        case signedOut
+        case signedIn(userId: String)
+    }
+
+    @Published var authState: AuthState = .signedOut
+    @Published var resolvedRole: UserRole?
     @Published var isLoading = false
     @Published var errorMessage: String?
+    @Published private(set) var currentUser: AppUser?
 
     private let authService: AuthService
     private(set) var currentNonce: String?
@@ -16,15 +24,19 @@ final class AuthViewModel: ObservableObject {
     func restoreSession() async {
         isLoading = true
         defer { isLoading = false }
+
         await authService.restoreSession()
+        await syncStateFromAuthService()
     }
 
-    func signInWithGoogle() async {
+    func signInWithGoogle(preferredRole: UserRole? = nil) async {
         isLoading = true
         defer { isLoading = false }
+
         do {
             try await authService.signInWithGoogle()
             try await authService.bootstrapManagerIfNeeded()
+            try await resolveRoleAfterSignIn(preferredRole: preferredRole)
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -37,10 +49,11 @@ final class AuthViewModel: ObservableObject {
         request.nonce = authService.sha256(nonce)
     }
 
-    func handleAppleSignInResult(_ result: Result<ASAuthorization, Error>) {
+    func handleAppleSignInResult(_ result: Result<ASAuthorization, Error>, preferredRole: UserRole? = nil) {
         Task {
             isLoading = true
             defer { isLoading = false }
+
             do {
                 guard case .success(let authorization) = result,
                       let credential = authorization.credential as? ASAuthorizationAppleIDCredential,
@@ -49,11 +62,61 @@ final class AuthViewModel: ObservableObject {
                       let idToken = String(data: tokenData, encoding: .utf8) else {
                     throw NSError(domain: "StorePass", code: 2001, userInfo: [NSLocalizedDescriptionKey: "Apple sign in failed. Please try again."])
                 }
+
                 try await authService.signInWithApple(idToken: idToken, rawNonce: nonce, fullName: credential.fullName, email: credential.email)
                 try await authService.bootstrapManagerIfNeeded()
+                try await resolveRoleAfterSignIn(preferredRole: preferredRole)
             } catch {
                 errorMessage = error.localizedDescription
             }
         }
+    }
+
+    func signOut() async {
+        isLoading = true
+        defer { isLoading = false }
+
+        do {
+            try await authService.signOut()
+            clearState()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func resolveRoleAfterSignIn(preferredRole: UserRole?) async throws {
+        let user = try await authService.refreshCurrentUserProfile()
+        syncState(with: user)
+
+        guard let preferredRole else { return }
+        guard preferredRole != user.role else { return }
+
+        if preferredRole == .manager && user.role == .employee {
+            errorMessage = "This account is not a manager. Please sign in as Employee."
+            try await authService.signOut()
+            clearState()
+        } else if preferredRole == .employee && user.role == .manager {
+            errorMessage = "Manager account detected. Routing you to Manager tools."
+        }
+    }
+
+    private func syncStateFromAuthService() async {
+        guard let user = authService.currentUser else {
+            clearState()
+            return
+        }
+        syncState(with: user)
+    }
+
+    private func syncState(with user: AppUser) {
+        currentUser = user
+        resolvedRole = user.role
+        authState = .signedIn(userId: user.id)
+    }
+
+    private func clearState() {
+        authState = .signedOut
+        resolvedRole = nil
+        currentUser = nil
     }
 }

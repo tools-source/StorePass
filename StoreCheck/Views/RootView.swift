@@ -1,37 +1,37 @@
 import SwiftUI
 
 struct RootView: View {
-    @EnvironmentObject private var container: AppContainer
+    @StateObject private var authViewModel = AuthViewModel(authService: AppContainer.shared.authService)
 
     var body: some View {
-        AuthGateView(authService: container.authService)
+        SessionRouterView()
+            .environmentObject(authViewModel)
     }
 }
 
-private struct AuthGateView: View {
-    @ObservedObject var authService: AuthService
-    @State private var isBooting = true
+private struct SessionRouterView: View {
+    @EnvironmentObject private var authViewModel: AuthViewModel
 
     var body: some View {
         Group {
-            if isBooting {
-                ProgressView("Loading")
-                    .tint(.white)
-            } else if let user = authService.currentUser {
-                if user.role == .manager {
+            switch authViewModel.authState {
+            case .signedOut:
+                LoginView()
+            case .signedIn:
+                if authViewModel.resolvedRole == nil {
+                    ProgressView("Loading account")
+                        .tint(.white)
+                } else if authViewModel.resolvedRole == .manager {
                     ManagerTabView()
                 } else {
                     EmployeeTabView()
                 }
-            } else {
-                LoginView()
             }
         }
         .background(DS.Colors.background.ignoresSafeArea())
         .task {
-            guard isBooting else { return }
-            await authService.restoreSession()
-            isBooting = false
+            guard authViewModel.authState == .signedOut else { return }
+            await authViewModel.restoreSession()
         }
     }
 }

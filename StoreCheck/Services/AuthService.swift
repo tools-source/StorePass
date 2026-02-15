@@ -13,7 +13,8 @@ protocol AuthServiceProtocol: AnyObject {
     func restoreSession() async
     func signInWithGoogle() async throws
     func signInWithApple(idToken: String, rawNonce: String, fullName: PersonNameComponents?, email: String?) async throws
-    func signOut() throws
+    func refreshCurrentUserProfile() async throws -> AppUser
+    func signOut() async throws
     func randomNonceString(length: Int) -> String
     func sha256(_ input: String) -> String
     func bootstrapManagerIfNeeded() async throws
@@ -32,17 +33,13 @@ final class AuthService: ObservableObject, AuthServiceProtocol {
     }
 
     func restoreSession() async {
-        guard let uid = auth.currentUser?.uid else {
+        guard auth.currentUser?.uid != nil else {
             currentUser = nil
             return
         }
 
         do {
-            if let existing = try await userRepository.fetchUser(id: uid) {
-                currentUser = existing
-            } else {
-                currentUser = try await upsertUserFromAuth(provider: auth.currentUser?.providerID ?? "unknown", fullName: auth.currentUser?.displayName, email: auth.currentUser?.email)
-            }
+            currentUser = try await refreshCurrentUserProfile()
         } catch {
             currentUser = nil
         }
@@ -78,9 +75,29 @@ final class AuthService: ObservableObject, AuthServiceProtocol {
         currentUser = try await upsertUserFromAuth(provider: "apple", fullName: fullNameString.isEmpty ? authResult.user.displayName : fullNameString, email: email ?? authResult.user.email)
     }
 
-    func signOut() throws {
-        GIDSignIn.sharedInstance.signOut()
+    func refreshCurrentUserProfile() async throws -> AppUser {
+        guard let firebaseUser = auth.currentUser else {
+            throw NSError(domain: "StorePass", code: 1004, userInfo: [NSLocalizedDescriptionKey: "Not authenticated."])
+        }
+
+        let provider = firebaseUser.providerData.first?.providerID ?? firebaseUser.providerID
+        let profile = try await upsertUserFromAuth(provider: normalizedProviderID(provider), fullName: firebaseUser.displayName, email: firebaseUser.email)
+        currentUser = profile
+        return profile
+    }
+
+    func signOut() async throws {
+        let providerIDs = Set(auth.currentUser?.providerData.map(\.providerID) ?? [])
+        if providerIDs.contains("google.com") {
+            do {
+                try await GIDSignIn.sharedInstance.disconnect()
+            } catch {
+                GIDSignIn.sharedInstance.signOut()
+            }
+        }
+
         try auth.signOut()
+        GIDSignIn.sharedInstance.signOut()
         currentUser = nil
     }
 
@@ -113,12 +130,25 @@ final class AuthService: ObservableObject, AuthServiceProtocol {
             assignedStoreIds: [],
             isActive: true
         )
+
         user.name = fullName?.isEmpty == false ? fullName! : user.name
         user.email = email ?? user.email
         user.lastLoginAt = now
         user.provider = provider
+
         try await userRepository.upsertUser(user)
         return user
+    }
+
+    private func normalizedProviderID(_ providerID: String) -> String {
+        switch providerID {
+        case "google.com":
+            return "google"
+        case "apple.com":
+            return "apple"
+        default:
+            return providerID
+        }
     }
 
     func randomNonceString(length: Int = 32) -> String {
