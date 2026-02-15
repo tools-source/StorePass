@@ -7,6 +7,7 @@ import GoogleSignIn
 import Security
 import UIKit
 
+@MainActor
 protocol AuthServiceProtocol: AnyObject {
     var currentUser: AppUser? { get }
     func restoreSession() async
@@ -87,7 +88,7 @@ final class AuthService: ObservableObject, AuthServiceProtocol {
         guard var user = currentUser else { return }
         let managerCount = try await userRepository.fetchManagersCount()
         if managerCount == 0, !UserDefaults.standard.bool(forKey: "managerBootstrapDone") {
-            user.role = .manager
+            user.role = UserRole.manager
             try await userRepository.upsertUser(user)
             UserDefaults.standard.set(true, forKey: "managerBootstrapDone")
             currentUser = user
@@ -105,7 +106,7 @@ final class AuthService: ObservableObject, AuthServiceProtocol {
             id: uid,
             name: fullName?.isEmpty == false ? fullName! : "StorePass User",
             email: email,
-            role: .employee,
+            role: UserRole.employee,
             createdAt: now,
             lastLoginAt: now,
             provider: provider,
