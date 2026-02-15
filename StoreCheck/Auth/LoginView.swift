@@ -41,7 +41,7 @@ struct LoginView: View {
                     viewModel.handleAppleSignInResult(result, preferredRole: requestedRole)
                 }
                 .signInWithAppleButtonStyle(.white)
-                .frame(maxWidth: .infinity)
+                .frame(maxWidth: 375)
                 .frame(height: 52)
                 .clipShape(RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous))
             }

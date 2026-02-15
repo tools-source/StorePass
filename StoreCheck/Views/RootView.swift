@@ -1,7 +1,20 @@
 import SwiftUI
 
 struct RootView: View {
-    @StateObject private var authViewModel = AuthViewModel(authService: AppContainer.shared.authService)
+    @EnvironmentObject private var appContainer: AppContainer
+
+    var body: some View {
+        RootContentView(authService: appContainer.authService)
+    }
+}
+
+private struct RootContentView: View {
+    @StateObject private var authViewModel: AuthViewModel
+    @EnvironmentObject private var appContainer: AppContainer
+
+    init(authService: AuthService) {
+        _authViewModel = StateObject(wrappedValue: AuthViewModel(authService: authService))
+    }
 
     var body: some View {
         SessionRouterView()
@@ -11,6 +24,7 @@ struct RootView: View {
 
 private struct SessionRouterView: View {
     @EnvironmentObject private var authViewModel: AuthViewModel
+    @EnvironmentObject private var appContainer: AppContainer
 
     var body: some View {
         Group {
@@ -21,9 +35,9 @@ private struct SessionRouterView: View {
                 if let role = authViewModel.currentUser?.role ?? authViewModel.resolvedRole {
                     switch role {
                     case .manager:
-                        ManagerTabView()
+                        ManagerTabView(container: appContainer)
                     case .employee:
-                        EmployeeTabView()
+                        EmployeeTabView(container: appContainer)
                     }
                 } else {
                     ProgressView("Loading account")

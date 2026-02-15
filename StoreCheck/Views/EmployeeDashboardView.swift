@@ -2,12 +2,21 @@ import SwiftUI
 import UIKit
 
 struct EmployeeDashboardView: View {
-    @StateObject private var vm = EmployeeDashboardViewModel(
-        authService: AppContainer.shared.authService,
-        storeRepository: AppContainer.shared.storeRepository,
-        checkInService: AppContainer.shared.checkInService,
-        locationService: AppContainer.shared.locationService
-    )
+    @StateObject private var vm: EmployeeDashboardViewModel
+
+    init(
+        authService: AuthService,
+        storeRepository: StoreRepositoryProtocol,
+        checkInService: CheckInServiceProtocol,
+        locationService: LocationServiceProtocol
+    ) {
+        _vm = StateObject(wrappedValue: EmployeeDashboardViewModel(
+            authService: authService,
+            storeRepository: storeRepository,
+            checkInService: checkInService,
+            locationService: locationService
+        ))
+    }
 
     var body: some View {
         EmployeeHomeView(viewModel: vm)

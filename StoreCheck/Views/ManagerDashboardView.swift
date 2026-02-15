@@ -1,15 +1,22 @@
 import SwiftUI
 
 struct ManagerDashboardView: View {
-    @StateObject private var vm = ManagerDashboardViewModel(checkInRepository: AppContainer.shared.checkInRepository)
+    @StateObject private var vm: ManagerDashboardViewModel
+    private let csvExporter: CSVExportServiceProtocol
+
+    init(checkInRepository: CheckInRepositoryProtocol, csvExporter: CSVExportServiceProtocol) {
+        _vm = StateObject(wrappedValue: ManagerDashboardViewModel(checkInRepository: checkInRepository))
+        self.csvExporter = csvExporter
+    }
 
     var body: some View {
-        ManagerHomeView(viewModel: vm)
+        ManagerHomeView(viewModel: vm, csvExporter: csvExporter)
     }
 }
 
 struct ManagerHomeView: View {
     @ObservedObject var viewModel: ManagerDashboardViewModel
+    let csvExporter: CSVExportServiceProtocol
 
     var body: some View {
         NavigationStack {
@@ -27,7 +34,7 @@ struct ManagerHomeView: View {
             .navigationTitle("Today Check-ins")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    if let url = AppContainer.shared.csvExporter.generateCSV(from: viewModel.checkIns) {
+                    if let url = csvExporter.generateCSV(from: viewModel.checkIns) {
                         ShareLink(item: url) { Label("Export", systemImage: "square.and.arrow.up") }
                     }
                 }

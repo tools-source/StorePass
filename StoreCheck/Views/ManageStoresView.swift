@@ -1,12 +1,16 @@
 import SwiftUI
 
 struct ManageStoresView: View {
-    @StateObject private var vm = StoreManagementViewModel(repository: AppContainer.shared.storeRepository)
+    @StateObject private var vm: StoreManagementViewModel
     @State private var name = ""
     @State private var address = ""
     @State private var lat = ""
     @State private var lng = ""
     @State private var radius = 150.0
+
+    init(repository: StoreRepositoryProtocol) {
+        _vm = StateObject(wrappedValue: StoreManagementViewModel(repository: repository))
+    }
 
     var body: some View {
         StoresView(viewModel: vm, name: $name, address: $address, lat: $lat, lng: $lng, radius: $radius)

@@ -1,4 +1,3 @@
-import FirebaseCore
 import UIKit
 
 final class AppDelegate: NSObject, UIApplicationDelegate {
@@ -6,9 +5,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
-        if FirebaseApp.app() == nil {
-            FirebaseApp.configure()
-        }
+        FirebaseBootstrap.configureIfNeeded(source: "AppDelegate.didFinishLaunching")
         return true
     }
 }
