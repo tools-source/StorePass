@@ -17,6 +17,11 @@ service cloud.firestore {
     function isLinkedEmployee(employeeId) {
       return signedIn() && isManager() && exists(managerEmployeePath(myUid(), employeeId));
     }
+    function isStoreOwner(storeId) {
+      return isManager() &&
+        exists(/databases/$(database)/documents/stores/$(storeId)) &&
+        get(/databases/$(database)/documents/stores/$(storeId)).data.managerId == myUid();
+    }
 
     match /users/{uid} {
       allow get: if signedIn() && (uid == myUid() || isLinkedEmployee(uid));
@@ -27,11 +32,15 @@ service cloud.firestore {
         request.resource.data.isActive == true;
 
       allow update: if signedIn() && (
-        (uid == myUid() &&
+        (
+          uid == myUid() &&
           request.resource.data.role == resource.data.role &&
-          request.resource.data.createdByManagerId == resource.data.createdByManagerId
+          request.resource.data.createdByManagerId == resource.data.createdByManagerId &&
+          request.resource.data.createdAt == resource.data.createdAt &&
+          request.resource.data.assignedStoreIds == resource.data.assignedStoreIds
         ) ||
-        (isLinkedEmployee(uid) &&
+        (
+          isLinkedEmployee(uid) &&
           request.resource.data.role == resource.data.role &&
           request.resource.data.createdAt == resource.data.createdAt &&
           request.resource.data.createdByManagerId == resource.data.createdByManagerId
@@ -50,7 +59,17 @@ service cloud.firestore {
 
     match /stores/{storeId} {
       allow get, list: if signedIn();
-      allow create, update, delete: if isManager();
+      allow create: if isManager() && request.resource.data.managerId == myUid();
+      allow update: if isStoreOwner(storeId) &&
+        request.resource.data.managerId == resource.data.managerId &&
+        request.resource.data.createdAt == resource.data.createdAt;
+      allow delete: if isStoreOwner(storeId);
+    }
+
+    match /storeMembers/{storeId}/members/{userId} {
+      allow get: if signedIn() && (userId == myUid() || isStoreOwner(storeId));
+      allow list: if signedIn() && isStoreOwner(storeId);
+      allow create, update, delete: if false;
     }
 
     match /checkins/{checkinId} {

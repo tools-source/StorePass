@@ -7,6 +7,8 @@ final class EmployeeDashboardViewModel: ObservableObject {
     @Published var locationStatus: LocationCheckState = .unknown
     @Published var errorMessage: String?
     @Published var checkInSuccessBanner = false
+    @Published var joinCodeInput = ""
+    @Published var joinStatusMessage: String?
 
     private let authService: AuthService
     private let storeRepository: StoreRepositoryProtocol
@@ -55,6 +57,20 @@ final class EmployeeDashboardViewModel: ObservableObject {
         do {
             _ = try await checkInService.submitCheckIn(user: user, store: store)
             checkInSuccessBanner = true
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func joinStoreByCode() async {
+        do {
+            let result = try await storeRepository.joinStoreByCode(code: joinCodeInput)
+            _ = try await authService.refreshCurrentUserProfile()
+            await load()
+            joinStatusMessage = result.alreadyJoined
+                ? "You're already linked to \(result.storeName)."
+                : "Joined \(result.storeName) successfully."
+            joinCodeInput = ""
         } catch {
             errorMessage = error.localizedDescription
         }
