@@ -3,20 +3,23 @@ import SwiftUI
 struct ManagerDashboardView: View {
     @StateObject private var vm: ManagerDashboardViewModel
     private let csvExporter: CSVExportServiceProtocol
+    let isActiveTab: Bool
 
-    init(checkInRepository: CheckInRepositoryProtocol, csvExporter: CSVExportServiceProtocol) {
+    init(checkInRepository: CheckInRepositoryProtocol, csvExporter: CSVExportServiceProtocol, isActiveTab: Bool) {
         _vm = StateObject(wrappedValue: ManagerDashboardViewModel(checkInRepository: checkInRepository))
         self.csvExporter = csvExporter
+        self.isActiveTab = isActiveTab
     }
 
     var body: some View {
-        ManagerHomeView(viewModel: vm, csvExporter: csvExporter)
+        ManagerHomeView(viewModel: vm, csvExporter: csvExporter, isActiveTab: isActiveTab)
     }
 }
 
 struct ManagerHomeView: View {
     @ObservedObject var viewModel: ManagerDashboardViewModel
     let csvExporter: CSVExportServiceProtocol
+    let isActiveTab: Bool
 
     var body: some View {
         NavigationStack {
@@ -39,8 +42,11 @@ struct ManagerHomeView: View {
                     }
                 }
             }
-            .onAppear { viewModel.startListening() }
-            .onDisappear { viewModel.stopListening() }
+            .onAppear { viewModel.setDashboardActive(isActiveTab) }
+            .onDisappear { viewModel.setDashboardActive(false) }
+            .onChange(of: isActiveTab) { _, active in
+                viewModel.setDashboardActive(active)
+            }
             .onChange(of: viewModel.selectedStoreId) { _, _ in viewModel.refreshListener() }
             .onChange(of: viewModel.selectedStatus) { _, _ in viewModel.refreshListener() }
             .onChange(of: viewModel.selectedDate) { _, _ in viewModel.refreshListener() }

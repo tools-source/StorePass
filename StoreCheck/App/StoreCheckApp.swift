@@ -7,7 +7,7 @@ struct StoreCheckApp: App {
     @StateObject private var appContainer: AppContainer
 
     init() {
-        FirebaseBootstrap.configureIfNeeded(source: "@main init")
+        FirebaseBootstrap.configureIfNeeded(source: "@main init fallback")
         _appContainer = StateObject(wrappedValue: AppContainer())
     }
 

@@ -79,11 +79,6 @@ struct ManageStoresView: View {
                         .background(.black.opacity(0.85))
                         .clipShape(Capsule())
                         .padding(.bottom, 24)
-                        .onAppear {
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                                vm.toastMessage = nil
-                            }
-                        }
                 }
             }
         }
@@ -156,7 +151,7 @@ struct ManageStoresView: View {
 
                                 if let code {
                                     UIPasteboard.general.string = code
-                                    vm.toastMessage = "Code copied"
+                                    vm.showToast("Code copied")
                                 } else {
                                     vm.storeError = "Unable to fetch store code."
                                 }
@@ -170,7 +165,7 @@ struct ManageStoresView: View {
 
                                 if let code = vm.latestJoinCodesByStoreId[store.id] {
                                     UIPasteboard.general.string = code
-                                    vm.toastMessage = "New code copied"
+                                    vm.showToast("New code copied")
                                 }
 
                                 await vm.load(managerId: container.authRepository.currentUserId)
@@ -261,19 +256,22 @@ private struct AddressSearchField: View {
                 TextField("Address (manual override)", text: $address)
                     .textFieldStyle(.roundedBorder)
 
-                Button("Use selected address") {
+                Button("Done editing") {
                     isManualOverrideVisible = false
                 }
-                .font(.caption)
+                .font(.caption2)
             } else {
                 TextField("Address", text: .constant(address.isEmpty ? "No address selected yet" : address))
                     .textFieldStyle(.roundedBorder)
                     .disabled(true)
 
-                Button("Edit address") {
-                    isManualOverrideVisible = true
+                HStack {
+                    Spacer()
+                    Button("Edit") {
+                        isManualOverrideVisible = true
+                    }
+                    .font(.caption2)
                 }
-                .font(.caption)
             }
 
             Text("Lat: \(latitude, specifier: "%.5f"), Lng: \(longitude, specifier: "%.5f")")

@@ -47,9 +47,6 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
     }
 
     func fetchManagerStores(managerId: String) async throws -> [Store] {
-        // ✅ FIX: Firestore requires a composite index for:
-        // where(managerId == X) + orderBy(name)
-        // To avoid needing indexes during development, we fetch then sort locally.
         let snapshot = try await db.collection("stores")
             .whereField("managerId", isEqualTo: managerId)
             .getDocuments()
@@ -83,9 +80,12 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
             "radiusMeters": radiusMeters
         ])
 
-        guard let storeId = response["storeId"] as? String,
-              let joinCode = response["joinCode"] as? String else {
-            throw NSError(domain: "StorePass", code: 5001, userInfo: [NSLocalizedDescriptionKey: "Unable to create store."])
+        guard let storeId = stringValue(from: response, keys: ["storeId", "storeID", "store_id"]),
+              let joinCode = stringValue(from: response, keys: ["joinCode", "join_code", "joincode"]) else {
+            #if DEBUG
+            print("[Stores] createStore unexpected payload: \(debugJSONString(from: response))")
+            #endif
+            throw NSError(domain: "StorePass", code: 5001, userInfo: [NSLocalizedDescriptionKey: "Unable to create store. Unexpected backend response."])
         }
 
         let store = Store(
@@ -138,16 +138,16 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
         let data = document.data()
         return Store(
             id: document.documentID,
-            name: data["name"] as? String ?? "Unnamed Store",
-            address: data["address"] as? String ?? "",
-            latitude: data["latitude"] as? Double ?? data["lat"] as? Double ?? 0,
-            longitude: data["longitude"] as? Double ?? data["lng"] as? Double ?? 0,
-            radiusMeters: data["radiusMeters"] as? Int ?? 150,
-            isActive: data["isActive"] as? Bool ?? true,
-            managerId: data["managerId"] as? String,
+            name: stringValue(from: data, keys: ["name"]) ?? "Unnamed Store",
+            address: stringValue(from: data, keys: ["address"]) ?? "",
+            latitude: doubleValue(from: data, keys: ["latitude", "lat"]) ?? 0,
+            longitude: doubleValue(from: data, keys: ["longitude", "lng", "lon"]) ?? 0,
+            radiusMeters: intValue(from: data, keys: ["radiusMeters", "radius"]) ?? 150,
+            isActive: boolValue(from: data, keys: ["isActive"]) ?? true,
+            managerId: stringValue(from: data, keys: ["managerId"]),
             createdAt: (data["createdAt"] as? Timestamp)?.dateValue(),
             updatedAt: (data["updatedAt"] as? Timestamp)?.dateValue(),
-            joinCodeLast4: data["joinCodeLast4"] as? String
+            joinCodeLast4: stringValue(from: data, keys: ["joinCodeLast4"])
         )
     }
 
@@ -178,16 +178,101 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
             throw NSError(domain: "StorePass", code: 4004, userInfo: [NSLocalizedDescriptionKey: "Unexpected backend response."])
         }
 
-        let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
+        let rawResponse = String(data: data, encoding: .utf8) ?? "<non-utf8 \(data.count) bytes>"
+        let object: [String: Any]
+
+        do {
+            object = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
+        } catch {
+            #if DEBUG
+            print("[StoreCallable] \(name) non-JSON response (status=\(httpResponse.statusCode)): \(rawResponse)")
+            #endif
+            let message: String
+            #if DEBUG
+            message = "Backend returned invalid JSON: \(rawResponse)"
+            #else
+            message = "Backend returned invalid JSON."
+            #endif
+            throw NSError(domain: "StorePass", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: message])
+        }
+
         if let errorObj = object["error"] as? [String: Any] {
-            let message = errorObj["message"] as? String ?? "Backend error"
+            #if DEBUG
+            print("[StoreCallable] \(name) error payload: \(debugJSONString(from: object))")
+            #endif
+            let message = stringValue(from: errorObj, keys: ["message"]) ?? "Backend error"
             throw NSError(domain: "StorePass", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: message])
         }
 
         guard (200...299).contains(httpResponse.statusCode) else {
+            #if DEBUG
+            print("[StoreCallable] \(name) status=\(httpResponse.statusCode), response=\(debugJSONString(from: object))")
+            #endif
             throw NSError(domain: "StorePass", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: "Backend request failed."])
         }
 
-        return object["result"] as? [String: Any] ?? object
+        if let result = object["result"] as? [String: Any] {
+            return result
+        }
+
+        if let nestedData = object["data"] as? [String: Any] {
+            return nestedData
+        }
+
+        if object["storeId"] != nil || object["storeID"] != nil || object["joinCode"] != nil {
+            return object
+        }
+
+        #if DEBUG
+        print("[StoreCallable] \(name) missing expected keys in payload: \(debugJSONString(from: object))")
+        #endif
+        return object
+    }
+
+    private func stringValue(from data: [String: Any], keys: [String]) -> String? {
+        for key in keys {
+            if let string = data[key] as? String, !string.isEmpty { return string }
+            if let number = data[key] as? NSNumber { return number.stringValue }
+        }
+        return nil
+    }
+
+    private func doubleValue(from data: [String: Any], keys: [String]) -> Double? {
+        for key in keys {
+            if let value = data[key] as? Double { return value }
+            if let value = data[key] as? Int { return Double(value) }
+            if let value = data[key] as? NSNumber { return value.doubleValue }
+            if let value = data[key] as? String, let double = Double(value) { return double }
+        }
+        return nil
+    }
+
+    private func intValue(from data: [String: Any], keys: [String]) -> Int? {
+        for key in keys {
+            if let value = data[key] as? Int { return value }
+            if let value = data[key] as? Double { return Int(value) }
+            if let value = data[key] as? NSNumber { return value.intValue }
+            if let value = data[key] as? String, let int = Int(value) { return int }
+        }
+        return nil
+    }
+
+    private func boolValue(from data: [String: Any], keys: [String]) -> Bool? {
+        for key in keys {
+            if let value = data[key] as? Bool { return value }
+            if let value = data[key] as? NSNumber { return value.boolValue }
+            if let value = data[key] as? String { return ["1", "true", "yes"].contains(value.lowercased()) }
+        }
+        return nil
+    }
+
+    private func debugJSONString(from dictionary: [String: Any]) -> String {
+        guard JSONSerialization.isValidJSONObject(dictionary),
+              let data = try? JSONSerialization.data(withJSONObject: dictionary, options: [.prettyPrinted]),
+              let string = String(data: data, encoding: .utf8) else {
+            return "\(dictionary)"
+        }
+
+        return string
     }
 }

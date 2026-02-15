@@ -194,13 +194,32 @@ final class FirestoreEmployeeManagementRepository: EmployeeManagementRepositoryP
 
     private func decodeStore(_ document: QueryDocumentSnapshot) -> Store {
         let data = document.data()
+
+        func asDouble(_ keys: [String]) -> Double? {
+            for key in keys {
+                if let value = data[key] as? Double { return value }
+                if let value = data[key] as? Int { return Double(value) }
+                if let value = data[key] as? NSNumber { return value.doubleValue }
+            }
+            return nil
+        }
+
+        func asInt(_ keys: [String]) -> Int? {
+            for key in keys {
+                if let value = data[key] as? Int { return value }
+                if let value = data[key] as? Double { return Int(value) }
+                if let value = data[key] as? NSNumber { return value.intValue }
+            }
+            return nil
+        }
+
         return Store(
             id: document.documentID,
             name: data["name"] as? String ?? "Store",
             address: data["address"] as? String ?? "",
-            latitude: data["latitude"] as? Double ?? data["lat"] as? Double ?? 0,
-            longitude: data["longitude"] as? Double ?? data["lng"] as? Double ?? 0,
-            radiusMeters: data["radiusMeters"] as? Int ?? 150,
+            latitude: asDouble(["latitude", "lat"]) ?? 0,
+            longitude: asDouble(["longitude", "lng", "lon"]) ?? 0,
+            radiusMeters: asInt(["radiusMeters", "radius"]) ?? 150,
             isActive: data["isActive"] as? Bool ?? true,
             managerId: data["managerId"] as? String,
             createdAt: (data["createdAt"] as? Timestamp)?.dateValue(),
