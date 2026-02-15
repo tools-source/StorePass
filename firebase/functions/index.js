@@ -1,5 +1,6 @@
 const { onCall, HttpsError } = require('firebase-functions/v2/https');
 const admin = require('firebase-admin');
+const crypto = require('crypto');
 
 admin.initializeApp();
 
@@ -12,6 +13,26 @@ function haversineMeters(lat1, lon1, lat2, lon2) {
     Math.sin(dLat / 2) ** 2 +
     Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function normalizeCode(code) {
+  return String(code || '').trim().toUpperCase();
+}
+
+function hashCode(normalizedCode) {
+  return crypto.createHash('sha256').update(normalizedCode).digest('hex');
+}
+
+function generateJoinCode(length = 8) {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const bytes = crypto.randomBytes(length);
+  let code = '';
+
+  for (let i = 0; i < length; i += 1) {
+    code += alphabet[bytes[i] % alphabet.length];
+  }
+
+  return code;
 }
 
 exports.validateCheckIn = onCall(async (request) => {
@@ -123,4 +144,117 @@ exports.createEmployeeUnderManager = onCall(async (request) => {
   await batch.commit();
 
   return { employeeId };
+});
+
+exports.joinStoreByCode = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'You must be signed in.');
+  }
+
+  const code = normalizeCode(request.data.code);
+  if (!code) {
+    throw new HttpsError('invalid-argument', 'Please enter a join code.');
+  }
+
+  const db = admin.firestore();
+  const userRef = db.collection('users').doc(request.auth.uid);
+  const userSnap = await userRef.get();
+
+  if (!userSnap.exists) {
+    throw new HttpsError('permission-denied', 'User profile not found.');
+  }
+
+  const user = userSnap.data();
+  if (user.role !== 'employee') {
+    throw new HttpsError('permission-denied', 'Only employees can join by code.');
+  }
+  if (user.isActive !== true) {
+    throw new HttpsError('permission-denied', 'Your account is inactive.');
+  }
+
+  const codeHash = hashCode(code);
+  const storeQuery = await db.collection('stores')
+    .where('joinCodeHash', '==', codeHash)
+    .limit(1)
+    .get();
+
+  if (storeQuery.empty) {
+    throw new HttpsError('not-found', 'Invalid join code.');
+  }
+
+  const storeDoc = storeQuery.docs[0];
+  const store = storeDoc.data();
+  if (store.isActive !== true) {
+    throw new HttpsError('failed-precondition', 'This store is inactive.');
+  }
+
+  const storeId = storeDoc.id;
+  const storeName = store.name || 'Store';
+  const memberRef = db.collection('storeMembers').doc(storeId).collection('members').doc(request.auth.uid);
+  const alreadyJoined = Array.isArray(user.assignedStoreIds) && user.assignedStoreIds.includes(storeId);
+
+  await db.runTransaction(async (tx) => {
+    const memberSnap = await tx.get(memberRef);
+    if (!memberSnap.exists) {
+      tx.set(memberRef, {
+        userId: request.auth.uid,
+        role: 'employee',
+        joinedAt: admin.firestore.FieldValue.serverTimestamp(),
+        isActive: true,
+      }, { merge: true });
+    }
+
+    tx.set(userRef, {
+      assignedStoreIds: admin.firestore.FieldValue.arrayUnion(storeId),
+      lastLoginAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+  });
+
+  return { storeId, storeName, alreadyJoined };
+});
+
+exports.rotateJoinCode = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'You must be signed in.');
+  }
+
+  const storeId = request.data.storeId;
+  if (!storeId || typeof storeId !== 'string') {
+    throw new HttpsError('invalid-argument', 'storeId is required.');
+  }
+
+  const db = admin.firestore();
+  const [managerSnap, storeSnap] = await Promise.all([
+    db.collection('users').doc(request.auth.uid).get(),
+    db.collection('stores').doc(storeId).get(),
+  ]);
+
+  if (!managerSnap.exists) {
+    throw new HttpsError('permission-denied', 'Manager profile does not exist.');
+  }
+
+  const manager = managerSnap.data();
+  if (manager.role !== 'manager' || manager.isActive !== true) {
+    throw new HttpsError('permission-denied', 'Only active managers can rotate store codes.');
+  }
+
+  if (!storeSnap.exists) {
+    throw new HttpsError('not-found', 'Store not found.');
+  }
+
+  const store = storeSnap.data();
+  if (store.managerId !== request.auth.uid) {
+    throw new HttpsError('permission-denied', 'You can only rotate codes for your stores.');
+  }
+
+  const newCode = generateJoinCode();
+  const normalized = normalizeCode(newCode);
+
+  await storeSnap.ref.set({
+    joinCodeHash: hashCode(normalized),
+    joinCodeLast4: newCode.slice(-4),
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  }, { merge: true });
+
+  return { storeId, joinCode: newCode, joinCodeLast4: newCode.slice(-4) };
 });

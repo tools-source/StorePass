@@ -9,6 +9,9 @@ struct Store: Codable, Identifiable, Hashable {
     var lng: Double
     var radiusMeters: Int
     var isActive: Bool
+    var managerId: String?
+    var createdAt: Date?
+    var joinCodeLast4: String?
 
     var coordinate: CLLocationCoordinate2D {
         CLLocationCoordinate2D(latitude: lat, longitude: lng)

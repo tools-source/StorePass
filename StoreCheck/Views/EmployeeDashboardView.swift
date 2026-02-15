@@ -30,6 +30,8 @@ struct EmployeeHomeView: View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: DS.Spacing.m) {
+                    JoinStoreCard(viewModel: viewModel)
+
                     if viewModel.stores.isEmpty {
                         Text("No assigned stores yet. Contact your manager.")
                             .cardStyle()
@@ -75,6 +77,13 @@ struct EmployeeHomeView: View {
             } message: {
                 Text("Check-in submitted successfully.")
             }
+            .alert("Store access", isPresented: Binding(get: {
+                viewModel.errorMessage != nil
+            }, set: { if !$0 { viewModel.errorMessage = nil } })) {
+                Button("OK", role: .cancel) { }
+            } message: {
+                Text(viewModel.errorMessage ?? "")
+            }
         }
     }
 
@@ -103,6 +112,37 @@ struct EmployeeHomeView: View {
                 viewModel.refreshLocation()
             }
             .buttonStyle(.bordered)
+        }
+        .cardStyle()
+    }
+}
+
+private struct JoinStoreCard: View {
+    @ObservedObject var viewModel: EmployeeDashboardViewModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DS.Spacing.s) {
+            Text("Join Store")
+                .font(.headline)
+            TextField("Enter store code", text: $viewModel.joinCodeInput)
+                .textInputAutocapitalization(.characters)
+                .autocorrectionDisabled()
+                .padding(12)
+                .background(DS.Colors.background)
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+
+            Button("Join") {
+                Task {
+                    await viewModel.joinStoreByCode()
+                }
+            }
+            .buttonStyle(PrimaryButtonStyle())
+
+            if let joinStatusMessage = viewModel.joinStatusMessage {
+                Text(joinStatusMessage)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
         .cardStyle()
     }
