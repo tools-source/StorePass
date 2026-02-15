@@ -49,8 +49,7 @@ struct EmployeeHomeView: View {
                         Picker("Assigned store", selection: Binding(get: {
                             viewModel.selectedStore?.id ?? ""
                         }, set: { id in
-                            viewModel.selectedStore = viewModel.stores.first(where: { $0.id == id })
-                            viewModel.refreshLocation()
+                            viewModel.selectStore(withId: id)
                         })) {
                             ForEach(viewModel.stores) { store in
                                 Text(store.name).tag(store.id)

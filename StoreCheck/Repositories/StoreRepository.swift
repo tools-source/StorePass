@@ -31,6 +31,11 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
         return Firestore.firestore()
     }
 
+    private var auth: Auth {
+        FirebaseBootstrap.assertConfigured(context: "FirestoreStoreRepository.auth")
+        return Auth.auth()
+    }
+
     func fetchStores(ids: [String]? = nil) async throws -> [Store] {
         let snapshot: QuerySnapshot
         if let ids {
@@ -72,66 +77,48 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
     }
 
     func createStore(name: String, address: String, latitude: Double, longitude: Double, radiusMeters: Int) async throws -> StoreCreationResult {
-        let response = try await callable(name: "createStore", payload: [
-            "name": name,
-            "address": address,
-            "latitude": latitude,
-            "longitude": longitude,
-            "radiusMeters": radiusMeters
-        ])
-
-        guard let storeId = stringValue(from: response, keys: ["storeId", "storeID", "store_id"]),
-              let joinCode = stringValue(from: response, keys: ["joinCode", "join_code", "joincode"]) else {
-            #if DEBUG
-            print("[Stores] createStore unexpected payload: \(debugJSONString(from: response))")
-            #endif
-            throw NSError(domain: "StorePass", code: 5001, userInfo: [NSLocalizedDescriptionKey: "Unable to create store. Unexpected backend response."])
-        }
+        let payload = try await callable(
+            name: "createStore",
+            payload: [
+                "name": name,
+                "address": address,
+                "latitude": latitude,
+                "longitude": longitude,
+                "radiusMeters": radiusMeters
+            ],
+            responseType: CreateStorePayload.self
+        )
 
         let store = Store(
-            id: storeId,
+            id: payload.storeId,
             name: name,
             address: address,
             latitude: latitude,
             longitude: longitude,
             radiusMeters: radiusMeters,
             isActive: true,
-            managerId: Auth.auth().currentUser?.uid,
+            managerId: auth.currentUser?.uid,
             createdAt: Date(),
             updatedAt: Date(),
-            joinCodeLast4: String(joinCode.suffix(4))
+            joinCodeLast4: String(payload.joinCode.suffix(4))
         )
-        return StoreCreationResult(store: store, joinCode: joinCode)
+
+        return StoreCreationResult(store: store, joinCode: payload.joinCode)
     }
 
     func rotateStoreCode(storeId: String) async throws -> String {
-        let response = try await callable(name: "rotateStoreCode", payload: ["storeId": storeId])
-        guard let joinCode = response["joinCode"] as? String else {
-            throw NSError(domain: "StorePass", code: 5002, userInfo: [NSLocalizedDescriptionKey: "Unable to rotate code."])
-        }
-        return joinCode
+        let response = try await callable(name: "rotateStoreCode", payload: ["storeId": storeId], responseType: JoinCodePayload.self)
+        return response.joinCode
     }
 
     func getStoreJoinCode(storeId: String) async throws -> String {
-        let response = try await callable(name: "getStoreJoinCode", payload: ["storeId": storeId])
-        guard let joinCode = response["joinCode"] as? String else {
-            throw NSError(domain: "StorePass", code: 5003, userInfo: [NSLocalizedDescriptionKey: "Unable to reveal code."])
-        }
-        return joinCode
+        let response = try await callable(name: "getStoreJoinCode", payload: ["storeId": storeId], responseType: JoinCodePayload.self)
+        return response.joinCode
     }
 
     func joinStoreByCode(code: String) async throws -> JoinStoreResult {
-        let response = try await callable(name: "joinStoreByCode", payload: ["code": code])
-        guard let storeId = response["storeId"] as? String,
-              let storeName = response["storeName"] as? String else {
-            throw NSError(domain: "StorePass", code: 5004, userInfo: [NSLocalizedDescriptionKey: "Unexpected response while joining store."])
-        }
-
-        return JoinStoreResult(
-            storeId: storeId,
-            storeName: storeName,
-            alreadyJoined: response["alreadyJoined"] as? Bool ?? false
-        )
+        let response = try await callable(name: "joinStoreByCode", payload: ["code": code], responseType: JoinStorePayload.self)
+        return JoinStoreResult(storeId: response.storeId, storeName: response.storeName, alreadyJoined: response.alreadyJoined ?? false)
     }
 
     private func decodeStore(_ document: QueryDocumentSnapshot) -> Store {
@@ -151,10 +138,10 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
         )
     }
 
-    private func callable(name: String, payload: [String: Any]) async throws -> [String: Any] {
+    private func callable<T: Decodable>(name: String, payload: [String: Any], responseType: T.Type) async throws -> T {
         FirebaseBootstrap.assertConfigured(context: "FirestoreStoreRepository.callable")
 
-        guard let user = Auth.auth().currentUser else {
+        guard let user = auth.currentUser else {
             throw NSError(domain: "StorePass", code: 4001, userInfo: [NSLocalizedDescriptionKey: "You must be signed in."])
         }
 
@@ -179,54 +166,36 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
         }
 
         let rawResponse = String(data: data, encoding: .utf8) ?? "<non-utf8 \(data.count) bytes>"
-        let object: [String: Any]
+        let decoder = JSONDecoder()
 
-        do {
-            object = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
-        } catch {
+        let wrapped = try? decoder.decode(BackendEnvelope<T>.self, from: data)
+        if let backendMessage = wrapped?.error?.message {
+            throw NSError(domain: "StorePass", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: backendMessage])
+        }
+
+        guard (200 ... 299).contains(httpResponse.statusCode) else {
             #if DEBUG
-            print("[StoreCallable] \(name) non-JSON response (status=\(httpResponse.statusCode)): \(rawResponse)")
-            #endif
-            let message: String
-            #if DEBUG
-            message = "Backend returned invalid JSON: \(rawResponse)"
+            let message = "Backend request failed (status=\(httpResponse.statusCode)). Raw: \(rawResponse)"
             #else
-            message = "Backend returned invalid JSON."
+            let message = "Backend request failed."
             #endif
             throw NSError(domain: "StorePass", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: message])
         }
 
-        if let errorObj = object["error"] as? [String: Any] {
-            #if DEBUG
-            print("[StoreCallable] \(name) error payload: \(debugJSONString(from: object))")
-            #endif
-            let message = stringValue(from: errorObj, keys: ["message"]) ?? "Backend error"
-            throw NSError(domain: "StorePass", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: message])
+        if let payload = wrapped?.result ?? wrapped?.data {
+            return payload
         }
 
-        guard (200...299).contains(httpResponse.statusCode) else {
-            #if DEBUG
-            print("[StoreCallable] \(name) status=\(httpResponse.statusCode), response=\(debugJSONString(from: object))")
-            #endif
-            throw NSError(domain: "StorePass", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: "Backend request failed."])
-        }
-
-        if let result = object["result"] as? [String: Any] {
-            return result
-        }
-
-        if let nestedData = object["data"] as? [String: Any] {
-            return nestedData
-        }
-
-        if object["storeId"] != nil || object["storeID"] != nil || object["joinCode"] != nil {
-            return object
+        if let directPayload = try? decoder.decode(T.self, from: data) {
+            return directPayload
         }
 
         #if DEBUG
-        print("[StoreCallable] \(name) missing expected keys in payload: \(debugJSONString(from: object))")
+        let message = "Backend returned invalid JSON shape for \(name). Raw: \(rawResponse)"
+        #else
+        let message = "Backend returned invalid JSON."
         #endif
-        return object
+        throw NSError(domain: "StorePass", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: message])
     }
 
     private func stringValue(from data: [String: Any], keys: [String]) -> String? {
@@ -265,14 +234,86 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
         }
         return nil
     }
+}
 
-    private func debugJSONString(from dictionary: [String: Any]) -> String {
-        guard JSONSerialization.isValidJSONObject(dictionary),
-              let data = try? JSONSerialization.data(withJSONObject: dictionary, options: [.prettyPrinted]),
-              let string = String(data: data, encoding: .utf8) else {
-            return "\(dictionary)"
+private struct BackendEnvelope<T: Decodable>: Decodable {
+    let result: T?
+    let data: T?
+    let error: BackendErrorPayload?
+}
+
+private struct BackendErrorPayload: Decodable {
+    let message: String?
+}
+
+private struct JoinCodePayload: Decodable {
+    let joinCode: String
+
+    enum CodingKeys: String, CodingKey {
+        case joinCode
+        case join_code
+        case joincode
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        joinCode = try container.decodeFirstString(forKeys: [.joinCode, .join_code, .joincode])
+    }
+}
+
+private struct CreateStorePayload: Decodable {
+    let storeId: String
+    let joinCode: String
+
+    enum CodingKeys: String, CodingKey {
+        case storeId
+        case storeID
+        case store_id
+        case joinCode
+        case join_code
+        case joincode
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        storeId = try container.decodeFirstString(forKeys: [.storeId, .storeID, .store_id])
+        joinCode = try container.decodeFirstString(forKeys: [.joinCode, .join_code, .joincode])
+    }
+}
+
+private struct JoinStorePayload: Decodable {
+    let storeId: String
+    let storeName: String
+    let alreadyJoined: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case storeId
+        case storeID
+        case store_id
+        case storeName
+        case alreadyJoined
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        storeId = try container.decodeFirstString(forKeys: [.storeId, .storeID, .store_id])
+        storeName = try container.decode(String.self, forKey: .storeName)
+        alreadyJoined = try container.decodeIfPresent(Bool.self, forKey: .alreadyJoined)
+    }
+}
+
+private extension KeyedDecodingContainer {
+    func decodeFirstString(forKeys keys: [K]) throws -> String {
+        for key in keys {
+            if let value = try decodeIfPresent(String.self, forKey: key), !value.isEmpty {
+                return value
+            }
+
+            if let number = try decodeIfPresent(Int.self, forKey: key) {
+                return String(number)
+            }
         }
 
-        return string
+        throw DecodingError.keyNotFound(keys[0], DecodingError.Context(codingPath: codingPath, debugDescription: "Expected one of keys: \(keys)"))
     }
 }
