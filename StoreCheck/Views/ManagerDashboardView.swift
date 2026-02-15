@@ -13,11 +13,16 @@ struct ManagerDashboardView: View {
     }
 
     var body: some View {
-        ManagerHomeView(viewModel: vm, csvExporter: csvExporter, isActiveTab: isActiveTab, isManager: authViewModel.currentUser?.role == .manager)
+        ManagerCheckinsView(
+            viewModel: vm,
+            csvExporter: csvExporter,
+            isActiveTab: isActiveTab,
+            isManager: authViewModel.currentUser?.role == .manager
+        )
     }
 }
 
-struct ManagerHomeView: View {
+private struct ManagerCheckinsView: View {
     @ObservedObject var viewModel: ManagerDashboardViewModel
     let csvExporter: CSVExportServiceProtocol
     let isActiveTab: Bool
@@ -55,15 +60,6 @@ struct ManagerHomeView: View {
             }
             .onChange(of: isManager) { _, roleIsManager in
                 viewModel.updateListenerState(isDashboardVisible: isActiveTab, isManager: roleIsManager, source: "ManagerDashboardView.onChange(isManager)")
-            }
-            .onChange(of: viewModel.selectedStoreId) { _, _ in
-                viewModel.refreshListener(source: "ManagerDashboardView.onChange(selectedStoreId)")
-            }
-            .onChange(of: viewModel.selectedStatus) { _, _ in
-                viewModel.refreshListener(source: "ManagerDashboardView.onChange(selectedStatus)")
-            }
-            .onChange(of: viewModel.selectedDate) { _, _ in
-                viewModel.refreshListener(source: "ManagerDashboardView.onChange(selectedDate)")
             }
             .alert("Check-ins", isPresented: Binding(get: { viewModel.checkinError != nil }, set: { _ in viewModel.checkinError = nil })) {
                 Button("OK", role: .cancel) { viewModel.checkinError = nil }

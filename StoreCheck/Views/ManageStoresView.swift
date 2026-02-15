@@ -4,7 +4,7 @@ import UIKit
 
 struct ManageStoresView: View {
     @EnvironmentObject private var container: AppContainer
-    @StateObject private var vm: StoreManagementViewModel
+    @StateObject private var viewModel: StoreManagementViewModel
 
     @State private var name = ""
     @State private var address = ""
@@ -16,63 +16,53 @@ struct ManageStoresView: View {
     @State private var deletingStore: Store?
 
     init(repository: StoreRepositoryProtocol) {
-        _vm = StateObject(wrappedValue: StoreManagementViewModel(repository: repository))
+        _viewModel = StateObject(wrappedValue: StoreManagementViewModel(repository: repository))
     }
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: DS.Spacing.m) {
-                    createCard
-                    storesCard
+                    createStoreCard
+                    storeListCard
                 }
                 .padding(DS.Spacing.m)
             }
             .background(DS.Colors.background.ignoresSafeArea())
             .navigationTitle("Stores")
-            .task { await vm.load(managerId: container.authRepository.currentUserId) }
-            .refreshable { await vm.load(managerId: container.authRepository.currentUserId) }
+            .task { await viewModel.load(managerId: container.authRepository.currentUserId) }
+            .refreshable { await viewModel.load(managerId: container.authRepository.currentUserId) }
             .sheet(item: $editingStore) { store in
-                EditStoreView(store: store) { updated in
+                EditStoreView(store: store) { updatedStore in
                     Task {
-                        await vm.saveStore(updated)
-                        await vm.load(managerId: container.authRepository.currentUserId)
+                        await viewModel.saveStore(updatedStore)
+                        await viewModel.load(managerId: container.authRepository.currentUserId)
                     }
                 }
             }
             .alert(
                 "Delete store",
-                isPresented: Binding(
-                    get: { deletingStore != nil },
-                    set: { if !$0 { deletingStore = nil } }
-                )
+                isPresented: Binding(get: { deletingStore != nil }, set: { if !$0 { deletingStore = nil } })
             ) {
                 Button("Delete", role: .destructive) {
-                    if let id = deletingStore?.id {
-                        Task {
-                            await vm.deleteStore(id: id)
-                            await vm.load(managerId: container.authRepository.currentUserId)
-                        }
+                    guard let storeId = deletingStore?.id else { return }
+                    Task {
+                        await viewModel.deleteStore(id: storeId)
+                        await viewModel.load(managerId: container.authRepository.currentUserId)
                     }
                     deletingStore = nil
                 }
                 Button("Cancel", role: .cancel) { deletingStore = nil }
             } message: {
-                Text("This will remove the store and stop new joins.")
+                Text("This store and its member links will be removed.")
             }
-            .alert(
-                "Store tools",
-                isPresented: Binding(
-                    get: { vm.storeError != nil },
-                    set: { _ in vm.storeError = nil }
-                )
-            ) {
-                Button("OK", role: .cancel) { vm.storeError = nil }
+            .alert("Stores", isPresented: Binding(get: { viewModel.storeError != nil }, set: { _ in viewModel.storeError = nil })) {
+                Button("OK", role: .cancel) { viewModel.storeError = nil }
             } message: {
-                Text(vm.storeError ?? "")
+                Text(viewModel.storeError ?? "")
             }
             .overlay(alignment: .bottom) {
-                if let toast = vm.toastMessage {
+                if let toast = viewModel.toastMessage {
                     Text(toast)
                         .padding(.horizontal, 16)
                         .padding(.vertical, 10)
@@ -84,9 +74,10 @@ struct ManageStoresView: View {
         }
     }
 
-    private var createCard: some View {
+    private var createStoreCard: some View {
         VStack(alignment: .leading, spacing: DS.Spacing.s) {
-            Text("Create Store").font(.headline)
+            Text("Create Store")
+                .font(.headline)
 
             TextField("Store name", text: $name)
                 .textFieldStyle(.roundedBorder)
@@ -98,21 +89,23 @@ struct ManageStoresView: View {
                 Slider(value: $radius, in: 50...500, step: 10)
             }
 
-            Button("Create Store") {
+            Button("Create") {
                 Task {
-                    await vm.createStore(
+                    await viewModel.createStore(
                         name: name,
                         address: address,
                         latitude: latitude,
                         longitude: longitude,
                         radiusMeters: Int(radius)
                     )
-                    await vm.load(managerId: container.authRepository.currentUserId)
-                    name = ""
-                    address = ""
-                    latitude = 0
-                    longitude = 0
-                    radius = 150
+                    await viewModel.load(managerId: container.authRepository.currentUserId)
+                    await MainActor.run {
+                        name = ""
+                        address = ""
+                        latitude = 0
+                        longitude = 0
+                        radius = 150
+                    }
                 }
             }
             .buttonStyle(PrimaryButtonStyle())
@@ -121,18 +114,25 @@ struct ManageStoresView: View {
         .cardStyle()
     }
 
-    private var storesCard: some View {
+    private var storeListCard: some View {
         VStack(alignment: .leading, spacing: DS.Spacing.s) {
-            Text("Store List").font(.headline)
+            Text("Store List")
+                .font(.headline)
 
-            if vm.stores.isEmpty {
-                Text("No stores yet").foregroundStyle(.secondary)
+            if viewModel.stores.isEmpty {
+                Text("No stores yet")
+                    .foregroundStyle(.secondary)
             }
 
-            ForEach(vm.stores) { store in
+            ForEach(viewModel.stores) { store in
                 VStack(alignment: .leading, spacing: 8) {
-                    Text(store.name).font(.headline)
-                    Text(store.address).font(.caption).foregroundStyle(.secondary)
+                    Text(store.name)
+                        .font(.headline)
+
+                    Text(store.address)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
                     Text("\(store.radiusMeters)m radius • code ending ••••\(store.joinCodeLast4 ?? "----")")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
@@ -140,20 +140,12 @@ struct ManageStoresView: View {
                     HStack {
                         Button("Copy code") {
                             Task {
-                                let cached = vm.latestJoinCodesByStoreId[store.id]
-                                let code: String?
-
-                                if let cached {
-                                    code = cached
+                                let joinCode = viewModel.latestJoinCodesByStoreId[store.id] ?? await viewModel.fetchJoinCode(storeId: store.id)
+                                if let joinCode {
+                                    UIPasteboard.general.string = joinCode
+                                    viewModel.showToast("Code copied")
                                 } else {
-                                    code = await vm.fetchJoinCode(storeId: store.id)
-                                }
-
-                                if let code {
-                                    UIPasteboard.general.string = code
-                                    vm.showToast("Code copied")
-                                } else {
-                                    vm.storeError = "Unable to fetch store code."
+                                    viewModel.storeError = "Unable to fetch store code."
                                 }
                             }
                         }
@@ -161,28 +153,29 @@ struct ManageStoresView: View {
 
                         Button("Rotate code") {
                             Task {
-                                await vm.rotateStoreCode(storeId: store.id)
-
-                                if let code = vm.latestJoinCodesByStoreId[store.id] {
-                                    UIPasteboard.general.string = code
-                                    vm.showToast("New code copied")
+                                await viewModel.rotateStoreCode(storeId: store.id)
+                                if let newCode = viewModel.latestJoinCodesByStoreId[store.id] {
+                                    UIPasteboard.general.string = newCode
+                                    viewModel.showToast("New code copied")
                                 }
-
-                                await vm.load(managerId: container.authRepository.currentUserId)
+                                await viewModel.load(managerId: container.authRepository.currentUserId)
                             }
                         }
                         .buttonStyle(.borderedProminent)
 
-                        Menu {
-                            Button("Edit") { editingStore = store }
-                            Button("Delete", role: .destructive) { deletingStore = store }
-                        } label: {
-                            Image(systemName: "ellipsis.circle")
+                        Button("Edit") {
+                            editingStore = store
                         }
+                        .buttonStyle(.bordered)
+
+                        Button("Delete", role: .destructive) {
+                            deletingStore = store
+                        }
+                        .buttonStyle(.bordered)
                     }
                 }
 
-                if store.id != vm.stores.last?.id {
+                if store.id != viewModel.stores.last?.id {
                     Divider().overlay(.white.opacity(0.15))
                 }
             }
@@ -191,8 +184,11 @@ struct ManageStoresView: View {
     }
 }
 
-private final class AddressSearchService: NSObject, ObservableObject, MKLocalSearchCompleterDelegate {
-    @Published var query = "" { didSet { completer.queryFragment = query } }
+@MainActor
+final class AddressSearchService: NSObject, ObservableObject, MKLocalSearchCompleterDelegate {
+    @Published var query = "" {
+        didSet { completer.queryFragment = query }
+    }
     @Published var suggestions: [MKLocalSearchCompletion] = []
 
     private let completer = MKLocalSearchCompleter()
@@ -215,12 +211,12 @@ private final class AddressSearchService: NSObject, ObservableObject, MKLocalSea
     }
 }
 
-private struct AddressSearchField: View {
+struct AddressSearchField: View {
     @Binding var address: String
     @Binding var latitude: Double
     @Binding var longitude: Double
+
     @StateObject private var search = AddressSearchService()
-    @State private var isManualOverrideVisible = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -228,49 +224,31 @@ private struct AddressSearchField: View {
                 .textFieldStyle(.roundedBorder)
 
             if !search.suggestions.isEmpty {
-                ForEach(search.suggestions.prefix(5), id: \.self) { suggestion in
-                    Button {
-                        Task {
-                            if let resolved = await search.select(suggestion) {
-                                address = resolved.0
-                                latitude = resolved.1.latitude
-                                longitude = resolved.1.longitude
-                                search.query = resolved.0
-                                search.suggestions = []
-                                isManualOverrideVisible = false
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(search.suggestions.prefix(5), id: \.self) { suggestion in
+                        Button {
+                            Task {
+                                guard let resolved = await search.select(suggestion) else { return }
+                                await MainActor.run {
+                                    address = resolved.0
+                                    latitude = resolved.1.latitude
+                                    longitude = resolved.1.longitude
+                                    search.query = resolved.0
+                                    search.suggestions = []
+                                }
                             }
+                        } label: {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(suggestion.title)
+                                Text(suggestion.subtitle)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
                         }
-                    } label: {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(suggestion.title)
-                            Text(suggestion.subtitle)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .buttonStyle(.plain)
+                        .padding(.vertical, 2)
                     }
-                }
-            }
-
-            if isManualOverrideVisible {
-                TextField("Address (manual override)", text: $address)
-                    .textFieldStyle(.roundedBorder)
-
-                Button("Done editing") {
-                    isManualOverrideVisible = false
-                }
-                .font(.caption2)
-            } else {
-                TextField("Address", text: .constant(address.isEmpty ? "No address selected yet" : address))
-                    .textFieldStyle(.roundedBorder)
-                    .disabled(true)
-
-                HStack {
-                    Spacer()
-                    Button("Edit") {
-                        isManualOverrideVisible = true
-                    }
-                    .font(.caption2)
                 }
             }
 
@@ -278,22 +256,42 @@ private struct AddressSearchField: View {
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }
+        .onAppear {
+            if !address.isEmpty, search.query.isEmpty {
+                search.query = address
+            }
+        }
     }
 }
 
 private struct EditStoreView: View {
     @Environment(\.dismiss) private var dismiss
-    @State var store: Store
+
+    @State private var store: Store
+    @State private var address: String
+    @State private var latitude: Double
+    @State private var longitude: Double
+
     let onSave: (Store) -> Void
+
+    init(store: Store, onSave: @escaping (Store) -> Void) {
+        _store = State(initialValue: store)
+        _address = State(initialValue: store.address)
+        _latitude = State(initialValue: store.latitude)
+        _longitude = State(initialValue: store.longitude)
+        self.onSave = onSave
+    }
 
     var body: some View {
         NavigationStack {
             Form {
-                TextField("Store name", text: $store.name)
-                TextField("Address", text: $store.address)
-                TextField("Latitude", value: $store.latitude, format: .number)
-                TextField("Longitude", value: $store.longitude, format: .number)
-                Stepper("Radius \(store.radiusMeters)m", value: $store.radiusMeters, in: 50...600, step: 10)
+                Section("Store") {
+                    TextField("Store name", text: $store.name)
+                    AddressSearchField(address: $address, latitude: $latitude, longitude: $longitude)
+                    TextField("Latitude", value: $latitude, format: .number)
+                    TextField("Longitude", value: $longitude, format: .number)
+                    Stepper("Radius \(store.radiusMeters)m", value: $store.radiusMeters, in: 50...600, step: 10)
+                }
             }
             .navigationTitle("Edit Store")
             .toolbar {
@@ -302,6 +300,9 @@ private struct EditStoreView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
+                        store.address = address
+                        store.latitude = latitude
+                        store.longitude = longitude
                         onSave(store)
                         dismiss()
                     }

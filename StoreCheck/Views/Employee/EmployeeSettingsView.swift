@@ -1,12 +1,12 @@
 import FirebaseAuth
 import FirebaseCore
+import FirebaseFirestore
 import SwiftUI
 
-struct EmployeeSettingsView: View {
+struct AccountSettingsView: View {
     @EnvironmentObject private var authViewModel: AuthViewModel
-    @StateObject private var vm = SettingsViewModel()
-    @State private var deleteText = ""
-    @State private var showDeleteDialog = false
+    @StateObject private var viewModel = AccountSettingsViewModel()
+    @State private var showDeleteConfirmation = false
 
     var body: some View {
         NavigationStack {
@@ -23,64 +23,97 @@ struct EmployeeSettingsView: View {
                     }
 
                     Button("Delete Account", role: .destructive) {
-                        showDeleteDialog = true
+                        showDeleteConfirmation = true
                     }
                 }
             }
             .scrollContentBackground(.hidden)
             .background(DS.Colors.background)
             .navigationTitle("Settings")
-            .alert("Delete account", isPresented: $showDeleteDialog) {
-                TextField("Type DELETE", text: $deleteText)
+            .alert("Delete account permanently?", isPresented: $showDeleteConfirmation) {
                 Button("Cancel", role: .cancel) {}
                 Button("Delete", role: .destructive) {
-                    guard deleteText == "DELETE" else {
-                        vm.errorMessage = "Please type DELETE to confirm."
-                        return
-                    }
                     Task {
-                        let mode: String
-                        if authViewModel.currentUser?.role == .manager {
-                            mode = "manager_delete_all"
-                        } else {
-                            mode = "employee"
-                        }
-                        await vm.deleteAccount(mode: mode)
-                        if vm.errorMessage == nil {
+                        await viewModel.deleteAccount(role: authViewModel.currentUser?.role)
+                        if viewModel.errorMessage == nil {
                             await authViewModel.signOut()
                         }
                     }
                 }
             } message: {
-                Text("This action is permanent.")
+                Text("This deletes your profile, unlinks memberships, and removes login access.")
             }
-            .alert("Settings", isPresented: Binding(get: { vm.errorMessage != nil }, set: { _ in vm.errorMessage = nil })) {
-                Button("OK", role: .cancel) { vm.errorMessage = nil }
-            } message: { Text(vm.errorMessage ?? "") }
+            .alert("Settings", isPresented: Binding(get: { viewModel.errorMessage != nil }, set: { _ in viewModel.errorMessage = nil })) {
+                Button("OK", role: .cancel) { viewModel.errorMessage = nil }
+            } message: {
+                Text(viewModel.errorMessage ?? "")
+            }
         }
     }
 }
 
+struct EmployeeSettingsView: View {
+    var body: some View {
+        AccountSettingsView()
+    }
+}
+
 @MainActor
-final class SettingsViewModel: ObservableObject {
+final class AccountSettingsViewModel: ObservableObject {
     @Published var errorMessage: String?
 
     private var auth: Auth {
-        FirebaseBootstrap.assertConfigured(context: "SettingsViewModel.auth")
+        FirebaseBootstrap.assertConfigured(context: "AccountSettingsViewModel.auth")
         return Auth.auth()
     }
 
+    private var db: Firestore {
+        FirebaseBootstrap.assertConfigured(context: "AccountSettingsViewModel.db")
+        return Firestore.firestore()
+    }
+
     private var firebaseApp: FirebaseApp {
-        FirebaseBootstrap.assertConfigured(context: "SettingsViewModel.firebaseApp")
+        FirebaseBootstrap.assertConfigured(context: "AccountSettingsViewModel.firebaseApp")
         guard let app = FirebaseApp.app() else {
             fatalError("Firebase app is unexpectedly unavailable.")
         }
         return app
     }
 
-    func deleteAccount(mode: String) async {
+    func deleteAccount(role: UserRole?) async {
+        guard let currentUser = auth.currentUser else {
+            errorMessage = "You must be signed in."
+            return
+        }
+
         do {
-            _ = try await callable(name: "deleteMyAccount", payload: ["mode": mode])
+            try await db.collection("users").document(currentUser.uid).delete()
+
+            let mode = role == .manager ? "manager_delete_all" : "employee"
+            _ = try? await callable(name: "deleteMyAccount", payload: ["mode": mode])
+
+            if auth.currentUser != nil {
+                do {
+                    try await currentUser.delete()
+                } catch {
+                    let nsError = error as NSError
+                    if nsError.domain == AuthErrorDomain,
+                       nsError.code == AuthErrorCode.requiresRecentLogin.rawValue {
+                        errorMessage = "For security, please sign in again and retry account deletion."
+                        return
+                    }
+
+                    if nsError.domain == AuthErrorDomain,
+                       nsError.code == AuthErrorCode.userNotFound.rawValue {
+                        errorMessage = nil
+                        return
+                    }
+
+                    throw error
+                }
+            }
+
+            errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -111,10 +144,13 @@ final class SettingsViewModel: ObservableObject {
         guard let httpResponse = response as? HTTPURLResponse else {
             throw NSError(domain: "StorePass", code: 4004, userInfo: [NSLocalizedDescriptionKey: "Unexpected backend response."])
         }
+
         let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
         if let errorObj = object["error"] as? [String: Any] {
-            throw NSError(domain: "StorePass", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: errorObj["message"] as? String ?? "Backend error"])
+            let message = errorObj["message"] as? String ?? "Backend error"
+            throw NSError(domain: "StorePass", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: message])
         }
+
         return object["result"] as? [String: Any] ?? object
     }
 }

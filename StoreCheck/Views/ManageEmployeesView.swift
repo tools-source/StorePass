@@ -1,128 +1,117 @@
 import SwiftUI
 
-struct ManageEmployeesView: View {
-    @StateObject private var vm: EmployeeManagementViewModel
-    @State private var editingEmployee: EmployeeSummary?
-    @State private var selectedStoreIds: Set<String> = []
+struct EmployeeManagementView: View {
+    @StateObject private var viewModel: EmployeeManagementViewModel
 
     init(employeeRepository: EmployeeManagementRepositoryProtocol, authRepository: AuthRepositoryProtocol) {
-        _vm = StateObject(wrappedValue: EmployeeManagementViewModel(employeeRepository: employeeRepository, authRepository: authRepository))
+        _viewModel = StateObject(
+            wrappedValue: EmployeeManagementViewModel(
+                employeeRepository: employeeRepository,
+                authRepository: authRepository
+            )
+        )
     }
 
     var body: some View {
         NavigationStack {
             List {
-                Section("Filter") {
-                    Picker("Store", selection: $vm.selectedStoreId) {
-                        Text("All Stores").tag("all")
-                        ForEach(vm.stores) { store in
-                            Text(store.name).tag(store.id)
-                        }
-                    }
-                    .pickerStyle(.menu)
-                }
-
-                Section("Employees") {
-                    if vm.isLoading {
-                        ProgressView().frame(maxWidth: .infinity)
-                    } else if vm.filteredEmployees.isEmpty {
-                        Text("No employees joined your stores yet.")
-                            .foregroundStyle(.secondary)
-                    } else {
-                        ForEach(vm.filteredEmployees) { employee in
-                            VStack(alignment: .leading, spacing: 6) {
-                                Text(employee.name).font(.headline)
-                                Text(employee.email ?? "No email")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                Text(employee.storeNames.joined(separator: ", "))
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                Text(employee.userIsActive ? "Active" : "Inactive")
-                                    .font(.caption2)
-                                    .foregroundStyle(employee.userIsActive ? .green : .orange)
-                            }
-                            .swipeActions(edge: .trailing) {
-                                Button(role: .destructive) {
-                                    Task { await vm.removeFromAll(employeeId: employee.id) }
-                                } label: {
-                                    Label("Remove All", systemImage: "trash")
-                                }
-                            }
-                            .contextMenu {
-                                Button("Edit assigned stores") {
-                                    editingEmployee = employee
-                                    selectedStoreIds = Set(employee.storeIds)
-                                }
-                                Button(employee.userIsActive ? "Deactivate" : "Reactivate") {
-                                    Task { await vm.setActive(employeeId: employee.id, isActive: !employee.userIsActive) }
-                                }
-                                Menu("Remove from a store") {
-                                    ForEach(vm.stores.filter { employee.storeIds.contains($0.id) }) { store in
-                                        Button(store.name, role: .destructive) {
-                                            Task { await vm.removeFromStore(employeeId: employee.id, storeId: store.id) }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+                filterSection
+                employeesSection
             }
             .scrollContentBackground(.hidden)
             .background(DS.Colors.background)
-            .navigationTitle("Manage Employees")
-            .task { await vm.load() }
-            .refreshable { await vm.load() }
-            .sheet(item: $editingEmployee) { employee in
-                NavigationStack {
-                    List {
-                        ForEach(vm.stores) { store in
-                            MultipleSelectionRow(title: store.name, isSelected: selectedStoreIds.contains(store.id)) {
-                                if selectedStoreIds.contains(store.id) {
-                                    selectedStoreIds.remove(store.id)
-                                } else {
-                                    selectedStoreIds.insert(store.id)
-                                }
-                            }
-                        }
-                    }
-                    .navigationTitle("Assign Stores")
-                    .toolbar {
-                        ToolbarItem(placement: .cancellationAction) {
-                            Button("Cancel") { editingEmployee = nil }
-                        }
-                        ToolbarItem(placement: .confirmationAction) {
-                            Button("Save") {
-                                Task { await vm.updateStores(employeeId: employee.id, storeIds: Array(selectedStoreIds)) }
-                                editingEmployee = nil
-                            }
-                        }
-                    }
+            .navigationTitle("Employees")
+            .task { await viewModel.load() }
+            .refreshable { await viewModel.load() }
+            .alert("Employees", isPresented: Binding(get: { viewModel.employeeError != nil }, set: { _ in viewModel.employeeError = nil })) {
+                Button("OK", role: .cancel) { viewModel.employeeError = nil }
+            } message: {
+                Text(viewModel.employeeError ?? "")
+            }
+        }
+    }
+
+    private var filterSection: some View {
+        Section("Store Filter") {
+            Picker("Store", selection: $viewModel.selectedStoreId) {
+                Text("All").tag(EmployeeManagementViewModel.allStoresFilter)
+                ForEach(viewModel.stores) { store in
+                    Text(store.name).tag(store.id)
                 }
             }
-            .alert("Error", isPresented: Binding(get: { vm.employeeError != nil }, set: { _ in vm.employeeError = nil })) {
-                Button("OK", role: .cancel) { vm.employeeError = nil }
-            } message: { Text(vm.employeeError ?? "") }
+            .pickerStyle(.segmented)
+
+            if viewModel.selectedStoreId != EmployeeManagementViewModel.allStoresFilter,
+               let activeStore = viewModel.stores.first(where: { $0.id == viewModel.selectedStoreId }) {
+                Text("Showing employees in \(activeStore.name)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
+        .listRowBackground(DS.Colors.card)
+    }
+
+    private var employeesSection: some View {
+        Section("Team") {
+            if viewModel.isLoading {
+                ProgressView().frame(maxWidth: .infinity)
+            } else if viewModel.filteredEmployees.isEmpty {
+                Text("No employees have joined yet.")
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(viewModel.filteredEmployees) { employee in
+                    VStack(alignment: .leading, spacing: DS.Spacing.s) {
+                        Text(employee.name)
+                            .font(.headline)
+                        Text(employee.email ?? "No email on file")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        Text(viewModel.storeSummary(for: employee))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        Label(
+                            employee.userIsActive ? "Active" : "Inactive",
+                            systemImage: employee.userIsActive ? "checkmark.circle.fill" : "minus.circle.fill"
+                        )
+                        .font(.caption)
+                        .foregroundStyle(employee.userIsActive ? .green : .orange)
+
+                        HStack {
+                            Menu("Remove from store") {
+                                ForEach(viewModel.stores.filter { employee.storeIds.contains($0.id) }) { store in
+                                    Button(store.name, role: .destructive) {
+                                        Task { await viewModel.removeFromStore(employeeId: employee.id, storeId: store.id) }
+                                    }
+                                }
+                            }
+                            .buttonStyle(.bordered)
+
+                            Button("Remove all", role: .destructive) {
+                                Task { await viewModel.removeFromAll(employeeId: employee.id) }
+                            }
+                            .buttonStyle(.bordered)
+
+                            Button(employee.userIsActive ? "Disable" : "Enable") {
+                                Task { await viewModel.setActive(employeeId: employee.id, isActive: !employee.userIsActive) }
+                            }
+                            .buttonStyle(.borderedProminent)
+                        }
+                    }
+                    .padding(.vertical, 6)
+                }
+            }
+        }
+        .listRowBackground(DS.Colors.card)
     }
 }
 
-private struct MultipleSelectionRow: View {
-    let title: String
-    let isSelected: Bool
-    let action: () -> Void
+struct ManageEmployeesView: View {
+    let employeeRepository: EmployeeManagementRepositoryProtocol
+    let authRepository: AuthRepositoryProtocol
 
     var body: some View {
-        Button(action: action) {
-            HStack {
-                Text(title)
-                Spacer()
-                if isSelected {
-                    Image(systemName: "checkmark.circle.fill")
-                }
-            }
-        }
-        .foregroundStyle(.white)
+        EmployeeManagementView(employeeRepository: employeeRepository, authRepository: authRepository)
     }
 }
