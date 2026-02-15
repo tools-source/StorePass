@@ -16,6 +16,9 @@
 		BEEFABCD123400000000002B /* StoreCheckApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000003 /* StoreCheckApp.swift */; };
 		BEEFABCD123400000000007B /* FirebaseBootstrap.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD123400000000007A /* FirebaseBootstrap.swift */; };
 		BEEFABCD123400000000007D /* DebugOptions.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD123400000000007C /* DebugOptions.swift */; };
+		BEEFABCD1234000000000087 /* RoleProfileRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000081 /* RoleProfileRepository.swift */; };
+		BEEFABCD1234000000000088 /* ManagerAccessRequiredView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000082 /* ManagerAccessRequiredView.swift */; };
+		BEEFABCD1234000000000089 /* EmployeeSetupRequiredView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000083 /* EmployeeSetupRequiredView.swift */; };
 		BEEFABCD123400000000002C /* LoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000004 /* LoginView.swift */; };
 		BEEFABCD123400000000002D /* RoleSelectionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000005 /* RoleSelectionView.swift */; };
 		BEEFABCD123400000000002E /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000006 /* Theme.swift */; };
@@ -106,6 +109,9 @@
 		BEEFABCD1234000000000073 /* AuthViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthViewModel.swift; sourceTree = "<group>"; };
 		BEEFABCD1234000000000076 /* LocationPermissionStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoreCheck/Models/LocationPermissionStatus.swift; sourceTree = SOURCE_ROOT; };
 		BEEFABCD1234000000000077 /* EmployeeSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoreCheck/Views/Employee/EmployeeSettingsView.swift; sourceTree = SOURCE_ROOT; };
+		BEEFABCD1234000000000081 /* RoleProfileRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoleProfileRepository.swift; sourceTree = "<group>"; };
+		BEEFABCD1234000000000082 /* ManagerAccessRequiredView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManagerAccessRequiredView.swift; sourceTree = "<group>"; };
+		BEEFABCD1234000000000083 /* EmployeeSetupRequiredView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmployeeSetupRequiredView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -223,6 +229,7 @@
 				BEEFABCD123400000000000C /* CheckInRepository.swift */,
 				BEEFABCD123400000000000D /* StoreRepository.swift */,
 				BEEFABCD123400000000000E /* UserRepository.swift */,
+				BEEFABCD1234000000000081 /* RoleProfileRepository.swift */,
 			);
 			path = Repositories;
 			sourceTree = "<group>";
@@ -267,6 +274,8 @@
 				BEEFABCD1234000000000021 /* ManagerDashboardView.swift */,
 				BEEFABCD1234000000000022 /* ManagerTabView.swift */,
 				BEEFABCD1234000000000023 /* RootView.swift */,
+				BEEFABCD1234000000000082 /* ManagerAccessRequiredView.swift */,
+				BEEFABCD1234000000000083 /* EmployeeSetupRequiredView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -379,6 +388,7 @@
 				BEEFABCD1234000000000034 /* CheckInRepository.swift in Sources */,
 				BEEFABCD1234000000000035 /* StoreRepository.swift in Sources */,
 				BEEFABCD1234000000000036 /* UserRepository.swift in Sources */,
+				BEEFABCD1234000000000087 /* RoleProfileRepository.swift in Sources */,
 				BEEFABCD1234000000000037 /* AuthService.swift in Sources */,
 				BEEFABCD1234000000000038 /* CSVExportService.swift in Sources */,
 				BEEFABCD1234000000000039 /* CheckInService.swift in Sources */,
@@ -402,6 +412,8 @@
 				BEEFABCD1234000000000049 /* ManagerDashboardView.swift in Sources */,
 				BEEFABCD123400000000004A /* ManagerTabView.swift in Sources */,
 				BEEFABCD123400000000004B /* RootView.swift in Sources */,
+				BEEFABCD1234000000000088 /* ManagerAccessRequiredView.swift in Sources */,
+				BEEFABCD1234000000000089 /* EmployeeSetupRequiredView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

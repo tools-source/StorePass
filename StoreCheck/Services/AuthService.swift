@@ -10,11 +10,14 @@ import UIKit
 @MainActor
 protocol AuthServiceProtocol: AnyObject {
     var currentUser: AppUser? { get }
+    func setCurrentUser(_ user: AppUser?)
+
     func restoreSession(forceSignOutOnLaunch: Bool) async
     func signInWithGoogle() async throws
     func signInWithApple(idToken: String, rawNonce: String, fullName: PersonNameComponents?, email: String?) async throws
-    func refreshCurrentUserProfile() async throws -> AppUser
+    func authUser() -> FirebaseAuth.User?
     func signOut() async throws
+    func deleteAuthAccount() async throws
     func randomNonceString(length: Int) -> String
     func sha256(_ input: String) -> String
 }
@@ -25,7 +28,6 @@ final class AuthService: ObservableObject, AuthServiceProtocol {
 
     private lazy var auth: Auth = authFactory()
     private let authFactory: () -> Auth
-    private let userRepository: UserRepositoryProtocol
 
     private var firebaseApp: FirebaseApp {
         FirebaseBootstrap.assertConfigured(context: "AuthService.firebaseApp")
@@ -38,52 +40,14 @@ final class AuthService: ObservableObject, AuthServiceProtocol {
     init(authFactory: @escaping () -> Auth = {
         FirebaseBootstrap.assertConfigured(context: "AuthService.authFactory")
         return Auth.auth()
-    }, userRepository: UserRepositoryProtocol) {
+    }) {
         self.authFactory = authFactory
-        self.userRepository = userRepository
     }
 
     func restoreSession(forceSignOutOnLaunch: Bool = false) async {
-        #if DEBUG
-        print("[AuthService] restoreSession start")
-        #endif
-
         if forceSignOutOnLaunch {
-            #if DEBUG
-            print("[AuthService] FORCE_SIGN_OUT_ON_LAUNCH enabled, clearing cached sessions")
-            #endif
             try? auth.signOut()
             GIDSignIn.sharedInstance.signOut()
-            #if DEBUG
-            print("[AuthService] Apple Sign In has no global sign-out; local Firebase/Google session cleared")
-            #endif
-            currentUser = nil
-            return
-        }
-
-        guard auth.currentUser?.uid != nil else {
-            #if DEBUG
-            print("[AuthService] restoreSession: no authenticated Firebase user")
-            #endif
-            currentUser = nil
-            return
-        }
-
-        #if DEBUG
-        if let uid = auth.currentUser?.uid {
-            print("[AuthService] restoreSession found Firebase currentUser uid: \(uid)")
-        }
-        #endif
-
-        do {
-            currentUser = try await refreshCurrentUserProfile()
-            #if DEBUG
-            print("[AuthService] restoreSession profile refresh complete")
-            #endif
-        } catch {
-            #if DEBUG
-            print("[AuthService] restoreSession failed to load profile: \(error.localizedDescription)")
-            #endif
             currentUser = nil
         }
     }
@@ -109,33 +73,24 @@ final class AuthService: ObservableObject, AuthServiceProtocol {
         }
 
         let credential = GoogleAuthProvider.credential(withIDToken: idToken, accessToken: result.user.accessToken.tokenString)
-        let authResult = try await auth.signIn(with: credential)
-        currentUser = try await upsertUserFromAuth(provider: "google", fullName: authResult.user.displayName, email: authResult.user.email)
+        _ = try await auth.signIn(with: credential)
     }
 
     func signInWithApple(idToken: String, rawNonce: String, fullName: PersonNameComponents?, email: String?) async throws {
         let credential = OAuthProvider.appleCredential(withIDToken: idToken, rawNonce: rawNonce, fullName: fullName)
-        let authResult = try await auth.signIn(with: credential)
-        let fullNameString = [fullName?.givenName, fullName?.familyName].compactMap { $0 }.joined(separator: " ")
-        currentUser = try await upsertUserFromAuth(provider: "apple", fullName: fullNameString.isEmpty ? authResult.user.displayName : fullNameString, email: email ?? authResult.user.email)
+        _ = try await auth.signIn(with: credential)
     }
 
-    func refreshCurrentUserProfile() async throws -> AppUser {
-        guard let firebaseUser = auth.currentUser else {
-            throw NSError(domain: "StorePass", code: 1004, userInfo: [NSLocalizedDescriptionKey: "Not authenticated."])
-        }
+    func authUser() -> FirebaseAuth.User? {
+        auth.currentUser
+    }
 
-        let provider = firebaseUser.providerData.first?.providerID ?? firebaseUser.providerID
-        let profile = try await upsertUserFromAuth(provider: normalizedProviderID(provider), fullName: firebaseUser.displayName, email: firebaseUser.email)
-        currentUser = profile
-        return profile
+    func setCurrentUser(_ user: AppUser?) {
+        currentUser = user
     }
 
     func signOut() async throws {
         let providerIDs = Set(auth.currentUser?.providerData.map(\.providerID) ?? [])
-        #if DEBUG
-        print("[AuthService] signOut requested. Providers: \(providerIDs)")
-        #endif
 
         if providerIDs.contains("google.com") {
             do {
@@ -145,105 +100,14 @@ final class AuthService: ObservableObject, AuthServiceProtocol {
             }
         }
 
-        #if DEBUG
-        if providerIDs.contains("apple.com") {
-            print("[AuthService] Apple Sign In has no global sign-out; clearing local Firebase session only")
-        }
-        #endif
-
         try auth.signOut()
         GIDSignIn.sharedInstance.signOut()
         currentUser = nil
     }
 
-    private func upsertUserFromAuth(provider: String, fullName: String?, email: String?) async throws -> AppUser {
-        guard let uid = auth.currentUser?.uid else {
-            throw NSError(domain: "StorePass", code: 1004, userInfo: [NSLocalizedDescriptionKey: "Not authenticated."])
-        }
-
-        #if DEBUG
-        print("[AuthService] Signed in uid: \(uid)")
-        #endif
-
-        let existing = try await userRepository.fetchUser(id: uid)
-        let now = Date()
-        #if DEBUG
-        print("[AuthService] users/\(uid) existed: \(existing != nil)")
-        #endif
-
-        let user = existing ?? UserProfile(
-            id: uid,
-            name: fullName?.isEmpty == false ? fullName! : "StorePass User",
-            email: email,
-            role: UserRole.employee,
-            createdAt: now,
-            lastLoginAt: now,
-            provider: provider,
-            assignedStoreIds: [],
-            isActive: true
-        )
-
-        var updates: [String: Any] = [
-            "lastLoginAt": now,
-            "provider": provider,
-            "isActive": existing?.isActive ?? true
-        ]
-
-        if existing == nil {
-            updates["createdAt"] = now
-            updates["role"] = UserRole.employee.rawValue
-            updates["assignedStoreIds"] = []
-        }
-
-        if let fullName, !fullName.isEmpty {
-            updates["name"] = fullName
-        } else if existing == nil {
-            updates["name"] = "StorePass User"
-        }
-
-        if let email {
-            updates["email"] = email
-        } else if existing == nil {
-            updates["email"] = NSNull()
-        }
-
-        let merged = merge(user: user, updates: updates, fallbackNow: now)
-        try await userRepository.upsertUser(merged)
-
-        guard let refreshed = try await userRepository.fetchUser(id: uid) else {
-            throw NSError(domain: "StorePass", code: 1005, userInfo: [NSLocalizedDescriptionKey: "Unable to load your user profile."])
-        }
-
-        #if DEBUG
-        print("[AuthService] Resolved role: \(refreshed.role.rawValue), isActive: \(refreshed.isActive)")
-        #endif
-
-        return refreshed
-    }
-
-    private func merge(user: UserProfile, updates: [String: Any], fallbackNow: Date) -> UserProfile {
-        UserProfile(
-            id: user.id,
-            name: updates["name"] as? String ?? user.name,
-            email: updates["email"] as? String ?? user.email,
-            role: UserRole(rawValue: updates["role"] as? String ?? user.role.rawValue) ?? user.role,
-            createdAt: updates["createdAt"] as? Date ?? user.createdAt,
-            lastLoginAt: updates["lastLoginAt"] as? Date ?? fallbackNow,
-            provider: updates["provider"] as? String ?? user.provider,
-            assignedStoreIds: updates["assignedStoreIds"] as? [String] ?? user.assignedStoreIds,
-            isActive: updates["isActive"] as? Bool ?? user.isActive
-        )
-    }
-
-    private func normalizedProviderID(_ providerID: String) -> String {
-        switch providerID {
-        case "google.com":
-            return "google"
-        case "apple.com":
-            return "apple"
-        default:
-            return providerID
-        }
+    func deleteAuthAccount() async throws {
+        guard let user = auth.currentUser else { return }
+        try await user.delete()
     }
 
     func randomNonceString(length: Int = 32) -> String {

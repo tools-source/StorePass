@@ -34,13 +34,13 @@ final class FirestoreUserRepository: UserRepositoryProtocol {
     }
 
     func fetchUser(id: String) async throws -> UserProfile? {
-        let doc = try await db.collection("users").document(id).getDocument()
+        let doc = try await db.collection("employees").document(id).getDocument()
         guard let data = doc.data() else { return nil }
         return decodeUser(id: doc.documentID, data: data)
     }
 
     func upsertUser(_ user: UserProfile) async throws {
-        try await db.collection("users").document(user.id).setData(encode(user: user), merge: true)
+        try await db.collection("employees").document(user.id).setData(encode(user: user), merge: true)
     }
 
     fileprivate func decodeUser(id: String, data: [String: Any]) -> UserProfile {
@@ -48,7 +48,7 @@ final class FirestoreUserRepository: UserRepositoryProtocol {
             id: id,
             name: data["name"] as? String ?? "StorePass User",
             email: data["email"] as? String,
-            role: UserRole(rawValue: data["role"] as? String ?? "employee") ?? .employee,
+            role: .employee,
             createdAt: (data["createdAt"] as? Timestamp)?.dateValue() ?? Date(),
             lastLoginAt: (data["lastLoginAt"] as? Timestamp)?.dateValue() ?? Date(),
             provider: data["provider"] as? String ?? "unknown",
@@ -61,8 +61,7 @@ final class FirestoreUserRepository: UserRepositoryProtocol {
         [
             "name": user.name,
             "email": user.email as Any,
-            "role": user.role.rawValue,
-            "createdAt": Timestamp(date: user.createdAt),
+                        "createdAt": Timestamp(date: user.createdAt),
             "lastLoginAt": Timestamp(date: user.lastLoginAt),
             "provider": user.provider,
             "assignedStoreIds": user.assignedStoreIds,
@@ -148,7 +147,7 @@ final class FirestoreEmployeeManagementRepository: EmployeeManagementRepositoryP
         // 2) Fetch user profiles in chunks of 10 (Firestore "in" limit)
         var userDataById: [String: [String: Any]] = [:]
         for chunk in employeeIds.chunked(into: 10) {
-            let usersSnap = try await db.collection("users")
+            let usersSnap = try await db.collection("employees")
                 .whereField(FieldPath.documentID(), in: chunk)
                 .getDocuments()
 
