@@ -3,6 +3,7 @@ import Foundation
 @MainActor
 final class EmployeeManagementViewModel: ObservableObject {
     @Published var employees: [UserProfile] = []
+    @Published var errorMessage: String?
 
     private let userRepository: UserRepositoryProtocol
     private let authRepository: AuthRepositoryProtocol
@@ -13,7 +14,11 @@ final class EmployeeManagementViewModel: ObservableObject {
     }
 
     func load() async {
-        employees = (try? await userRepository.fetchEmployees()) ?? []
+        do {
+            employees = try await userRepository.fetchEmployees()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 
     func createEmployee(name: String, email: String, password: String, assignedStores: [String]) async {
@@ -33,14 +38,18 @@ final class EmployeeManagementViewModel: ObservableObject {
             try await userRepository.upsertUser(profile)
             await load()
         } catch {
-            print(error.localizedDescription)
+            errorMessage = error.localizedDescription
         }
     }
 
     func setActive(_ employee: UserProfile, isActive: Bool) async {
-        var updated = employee
-        updated.isActive = isActive
-        try? await userRepository.upsertUser(updated)
-        await load()
+        do {
+            var copy = employee
+            copy.isActive = isActive
+            try await userRepository.upsertUser(copy)
+            await load()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 }

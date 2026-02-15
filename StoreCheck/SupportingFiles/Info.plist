@@ -33,6 +33,10 @@
 	<string>1</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>StorePass uses your location to validate geo-fenced check-ins.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>StorePass uses your location to verify you are at your assigned store when checking in.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

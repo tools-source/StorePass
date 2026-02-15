@@ -3,8 +3,10 @@ import Foundation
 @MainActor
 final class ManagerDashboardViewModel: ObservableObject {
     @Published var checkIns: [CheckIn] = []
-    @Published var selectedStore: String = "All"
-    @Published var selectedStatus: String = "All"
+    @Published var selectedStoreId: String = ""
+    @Published var selectedStatus: CheckInStatus?
+    @Published var selectedDate: Date = Date()
+    @Published var errorMessage: String?
 
     private let checkInRepository: CheckInRepositoryProtocol
 
@@ -14,13 +16,10 @@ final class ManagerDashboardViewModel: ObservableObject {
 
     func load() async {
         do {
-            let all = try await checkInRepository.fetchTodaysCheckIns()
-            checkIns = all.filter {
-                (selectedStore == "All" || $0.storeName == selectedStore) &&
-                (selectedStatus == "All" || $0.status.rawValue == selectedStatus)
-            }
+            let filter = CheckInFilter(storeId: selectedStoreId.isEmpty ? nil : selectedStoreId, status: selectedStatus, date: selectedDate)
+            checkIns = try await checkInRepository.fetchTodaysCheckIns(filter: filter)
         } catch {
-            checkIns = []
+            errorMessage = error.localizedDescription
         }
     }
 }

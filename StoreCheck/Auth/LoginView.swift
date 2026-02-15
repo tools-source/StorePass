@@ -2,29 +2,34 @@ import AuthenticationServices
 import SwiftUI
 
 struct LoginView: View {
-    @StateObject private var viewModel = AuthViewModel(authService: AppContainer.shared.authService as! AuthService)
+    @EnvironmentObject private var container: AppContainer
+    @StateObject private var viewModel: AuthViewModel
     @State private var showError = false
 
-    var body: some View {
-        VStack(spacing: 24) {
-            Spacer()
-            Image(systemName: "building.2.crop.circle")
-                .resizable()
-                .scaledToFit()
-                .frame(width: 84, height: 84)
-                .foregroundStyle(.blue)
+    init() {
+        _viewModel = StateObject(wrappedValue: AuthViewModel(authService: AppContainer.shared.authService))
+    }
 
-            Text("StoreCheck")
+    var body: some View {
+        VStack(spacing: 20) {
+            Spacer()
+            Image(systemName: "lock.shield")
+                .font(.system(size: 56))
+                .foregroundStyle(DS.Colors.primary)
+
+            Text("StorePass")
                 .font(.largeTitle.bold())
+                .foregroundStyle(.white)
+
+            Text("Secure employee check-ins with geo validation")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
 
             VStack(spacing: 12) {
-                Button {
+                Button("Continue with Google") {
                     Task { await viewModel.signInWithGoogle() }
-                } label: {
-                    Label("Continue with Google", systemImage: "globe")
-                        .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(PrimaryButtonStyle())
                 .disabled(viewModel.isLoading)
 
                 SignInWithAppleButton(.signIn) { request in
@@ -32,24 +37,24 @@ struct LoginView: View {
                 } onCompletion: { result in
                     viewModel.handleAppleSignInResult(result)
                 }
-                .signInWithAppleButtonStyle(.black)
-                .frame(maxWidth: 375)   // <= important
-                .frame(height: 50)
-                .disabled(viewModel.isLoading)
+                .signInWithAppleButtonStyle(.white)
+                .frame(maxWidth: .infinity)
+                .frame(height: 52)
+                .clipShape(RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous))
             }
+            .frame(maxWidth: 420)
 
-            if viewModel.isLoading {
-                ProgressView("Signing in...")
-            }
+            if viewModel.isLoading { ProgressView().tint(.white) }
             Spacer()
         }
         .padding(24)
-        .alert("Sign-In Error", isPresented: $showError, actions: {
+        .background(DS.Colors.background.ignoresSafeArea())
+        .alert("Sign in failed", isPresented: $showError) {
             Button("OK", role: .cancel) { viewModel.errorMessage = nil }
-        }, message: {
+        } message: {
             Text(viewModel.errorMessage ?? "Unknown error")
-        })
-        .onChange(of: viewModel.errorMessage) { newValue in
+        }
+        .onChange(of: viewModel.errorMessage) { _, newValue in
             showError = newValue != nil
         }
     }

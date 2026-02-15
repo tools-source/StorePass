@@ -3,6 +3,7 @@ import Foundation
 @MainActor
 final class StoreManagementViewModel: ObservableObject {
     @Published var stores: [Store] = []
+    @Published var errorMessage: String?
 
     private let repository: StoreRepositoryProtocol
 
@@ -11,16 +12,19 @@ final class StoreManagementViewModel: ObservableObject {
     }
 
     func load() async {
-        stores = (try? await repository.fetchStores(ids: nil)) ?? []
+        do {
+            stores = try await repository.fetchStores(ids: nil)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 
     func save(store: Store) async {
-        try? await repository.upsertStore(store)
-        await load()
-    }
-
-    func delete(id: String) async {
-        try? await repository.deleteStore(id: id)
-        await load()
+        do {
+            try await repository.upsertStore(store)
+            await load()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 }

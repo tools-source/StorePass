@@ -3,22 +3,23 @@ import Foundation
 @MainActor
 final class AppContainer: ObservableObject {
     static let shared = AppContainer()
+
     let authRepository: AuthRepositoryProtocol
     let userRepository: UserRepositoryProtocol
     let storeRepository: StoreRepositoryProtocol
     let checkInRepository: CheckInRepositoryProtocol
-    let authService: AuthServiceProtocol
-    let locationService: LocationServiceProtocol
+    let locationService: LocationService
     let checkInService: CheckInServiceProtocol
     let csvExporter: CSVExportServiceProtocol
     let offlineQueue: OfflineCheckInQueueProtocol
+    let authService: AuthService
 
     init(
         authRepository: AuthRepositoryProtocol = FirebaseAuthRepository(),
         userRepository: UserRepositoryProtocol = FirestoreUserRepository(),
         storeRepository: StoreRepositoryProtocol = FirestoreStoreRepository(),
         checkInRepository: CheckInRepositoryProtocol = FirestoreCheckInRepository(),
-        locationService: LocationServiceProtocol = LocationService(),
+        locationService: LocationService = LocationService(),
         csvExporter: CSVExportServiceProtocol = CSVExportService(),
         offlineQueue: OfflineCheckInQueueProtocol = OfflineCheckInQueue()
     ) {
@@ -29,7 +30,7 @@ final class AppContainer: ObservableObject {
         self.locationService = locationService
         self.csvExporter = csvExporter
         self.offlineQueue = offlineQueue
-        self.authService = AuthService()
+        self.authService = AuthService(userRepository: userRepository)
         self.checkInService = CheckInService(
             userRepository: userRepository,
             storeRepository: storeRepository,

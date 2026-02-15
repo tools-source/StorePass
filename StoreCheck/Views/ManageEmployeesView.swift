@@ -1,46 +1,62 @@
 import SwiftUI
 
 struct ManageEmployeesView: View {
-    @StateObject private var vm = EmployeeManagementViewModel(
-        userRepository: AppContainer.shared.userRepository,
-        authRepository: AppContainer.shared.authRepository
-    )
+    @StateObject private var vm = EmployeeManagementViewModel(userRepository: AppContainer.shared.userRepository, authRepository: AppContainer.shared.authRepository)
     @State private var name = ""
     @State private var email = ""
     @State private var password = ""
     @State private var assignedStores = ""
 
     var body: some View {
+        EmployeesView(viewModel: vm, name: $name, email: $email, password: $password, assignedStores: $assignedStores)
+    }
+}
+
+struct EmployeesView: View {
+    @ObservedObject var viewModel: EmployeeManagementViewModel
+    @Binding var name: String
+    @Binding var email: String
+    @Binding var password: String
+    @Binding var assignedStores: String
+
+    var body: some View {
         NavigationStack {
-            VStack {
-                Form {
+            Form {
+                Section("Create Employee") {
                     TextField("Name", text: $name)
                     TextField("Email", text: $email)
-                    SecureField("Temp Password", text: $password)
-                    TextField("Assigned Store IDs (comma separated)", text: $assignedStores)
-                    Button("Create Employee") {
+                    SecureField("Temporary password", text: $password)
+                    TextField("Assigned store IDs (comma separated)", text: $assignedStores)
+                    Button("Create") {
                         Task {
-                            let storeIds = assignedStores.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
-                            await vm.createEmployee(name: name, email: email, password: password, assignedStores: storeIds)
+                            let ids = assignedStores.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+                            await viewModel.createEmployee(name: name, email: email, password: password, assignedStores: ids)
                         }
                     }
                 }
-                List(vm.employees) { employee in
-                    HStack {
-                        VStack(alignment: .leading) {
-                            Text(employee.name)
-                            Text(employee.email).font(.caption)
+
+                Section("Employees") {
+                    if viewModel.employees.isEmpty {
+                        Text("No employees found")
+                    } else {
+                        ForEach(viewModel.employees) { employee in
+                            HStack {
+                                VStack(alignment: .leading) {
+                                    Text(employee.name)
+                                    Text(employee.email ?? "-").font(.caption)
+                                }
+                                Spacer()
+                                Toggle("Active", isOn: Binding(get: { employee.isActive }, set: { isOn in
+                                    Task { await viewModel.setActive(employee, isActive: isOn) }
+                                }))
+                                .labelsHidden()
+                            }
                         }
-                        Spacer()
-                        Toggle("", isOn: Binding(get: { employee.isActive }, set: { isOn in
-                            Task { await vm.setActive(employee, isActive: isOn) }
-                        }))
-                        .labelsHidden()
                     }
                 }
             }
-            .navigationTitle("Manage Employees")
-            .task { await vm.load() }
+            .navigationTitle("Employees")
+            .task { await viewModel.load() }
         }
     }
 }

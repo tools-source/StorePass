@@ -7,9 +7,8 @@ struct Store: Codable, Identifiable, Hashable {
     var address: String
     var lat: Double
     var lng: Double
-    var radiusMeters: Double
+    var radiusMeters: Int
     var isActive: Bool
-    var createdAt: Date
 
     var coordinate: CLLocationCoordinate2D {
         CLLocationCoordinate2D(latitude: lat, longitude: lng)

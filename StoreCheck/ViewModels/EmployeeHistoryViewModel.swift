@@ -3,7 +3,7 @@ import Foundation
 @MainActor
 final class EmployeeHistoryViewModel: ObservableObject {
     @Published var checkIns: [CheckIn] = []
-    @Published var selectedStoreId: String?
+    @Published var errorMessage: String?
 
     private let authService: AuthService
     private let checkInRepository: CheckInRepositoryProtocol
@@ -16,10 +16,9 @@ final class EmployeeHistoryViewModel: ObservableObject {
     func load() async {
         guard let id = authService.currentUser?.id else { return }
         do {
-            let all = try await checkInRepository.fetchCheckIns(employeeId: id, limit: 30)
-            checkIns = selectedStoreId == nil ? all : all.filter { $0.storeId == selectedStoreId }
+            checkIns = try await checkInRepository.fetchCheckIns(employeeId: id, limit: 30)
         } catch {
-            checkIns = []
+            errorMessage = error.localizedDescription
         }
     }
 }
