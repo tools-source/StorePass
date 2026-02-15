@@ -98,10 +98,15 @@ Defined in `firebase/firestore.indexes.json`:
 
 ---
 
-## First Manager Bootstrap
-When no manager exists in Firestore, the first successfully signed-in user is auto-promoted to manager once per device (`UserDefaults` flag: `managerBootstrapDone`).
+## Production Role Bootstrap (Manual)
+StoreCheck does **not** auto-assign manager privileges.
 
-For production-hardening, replace local flag with a secure server-side Cloud Function/manual admin claim workflow.
+After first sign-in for the intended manager account:
+1. Open **Firestore Console → users → {uid}**.
+2. Set `role` to `"manager"`.
+3. Save the document and sign in again.
+
+All other users should keep `role = "employee"`.
 
 ---
 

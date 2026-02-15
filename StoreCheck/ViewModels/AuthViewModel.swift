@@ -1,4 +1,5 @@
 import AuthenticationServices
+import FirebaseFirestore
 import Foundation
 
 @MainActor
@@ -35,10 +36,9 @@ final class AuthViewModel: ObservableObject {
 
         do {
             try await authService.signInWithGoogle()
-            try await authService.bootstrapManagerIfNeeded()
             try await resolveRoleAfterSignIn(preferredRole: preferredRole)
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = userFacingMessage(for: error)
         }
     }
 
@@ -64,10 +64,9 @@ final class AuthViewModel: ObservableObject {
                 }
 
                 try await authService.signInWithApple(idToken: idToken, rawNonce: nonce, fullName: credential.fullName, email: credential.email)
-                try await authService.bootstrapManagerIfNeeded()
                 try await resolveRoleAfterSignIn(preferredRole: preferredRole)
             } catch {
-                errorMessage = error.localizedDescription
+                errorMessage = userFacingMessage(for: error)
             }
         }
     }
@@ -80,7 +79,7 @@ final class AuthViewModel: ObservableObject {
             try await authService.signOut()
             clearState()
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = userFacingMessage(for: error)
         }
     }
 
@@ -118,5 +117,15 @@ final class AuthViewModel: ObservableObject {
         authState = .signedOut
         resolvedRole = nil
         currentUser = nil
+    }
+
+    private func userFacingMessage(for error: Error) -> String {
+        let nsError = error as NSError
+        if nsError.domain == FirestoreErrorDomain,
+           nsError.code == FirestoreErrorCode.permissionDenied.rawValue {
+            return "You don't have permission for this action. If this is your first manager login, ask an admin to set users/{uid}.role to manager in Firestore."
+        }
+
+        return error.localizedDescription
     }
 }

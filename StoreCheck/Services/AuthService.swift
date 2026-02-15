@@ -17,7 +17,6 @@ protocol AuthServiceProtocol: AnyObject {
     func signOut() async throws
     func randomNonceString(length: Int) -> String
     func sha256(_ input: String) -> String
-    func bootstrapManagerIfNeeded() async throws
 }
 
 @MainActor
@@ -99,17 +98,6 @@ final class AuthService: ObservableObject, AuthServiceProtocol {
         try auth.signOut()
         GIDSignIn.sharedInstance.signOut()
         currentUser = nil
-    }
-
-    func bootstrapManagerIfNeeded() async throws {
-        guard var user = currentUser else { return }
-        let managerCount = try await userRepository.fetchManagersCount()
-        if managerCount == 0, !UserDefaults.standard.bool(forKey: "managerBootstrapDone") {
-            user.role = UserRole.manager
-            try await userRepository.upsertUser(user)
-            UserDefaults.standard.set(true, forKey: "managerBootstrapDone")
-            currentUser = user
-        }
     }
 
     private func upsertUserFromAuth(provider: String, fullName: String?, email: String?) async throws -> AppUser {
