@@ -1,0 +1,268 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		BEEFABCD1234000000000029 /* AppContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000001 /* AppContainer.swift */; };
+		BEEFABCD123400000000002A /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000002 /* AppDelegate.swift */; };
+		BEEFABCD123400000000002B /* StoreCheckApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000003 /* StoreCheckApp.swift */; };
+		BEEFABCD123400000000002C /* LoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000004 /* LoginView.swift */; };
+		BEEFABCD123400000000002D /* RoleSelectionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000005 /* RoleSelectionView.swift */; };
+		BEEFABCD123400000000002E /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000006 /* Theme.swift */; };
+		BEEFABCD123400000000002F /* CheckIn.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000007 /* CheckIn.swift */; };
+		BEEFABCD1234000000000030 /* LocationStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000008 /* LocationStatus.swift */; };
+		BEEFABCD1234000000000031 /* Store.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000009 /* Store.swift */; };
+		BEEFABCD1234000000000032 /* UserProfile.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD123400000000000A /* UserProfile.swift */; };
+		BEEFABCD1234000000000033 /* AuthRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD123400000000000B /* AuthRepository.swift */; };
+		BEEFABCD1234000000000034 /* CheckInRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD123400000000000C /* CheckInRepository.swift */; };
+		BEEFABCD1234000000000035 /* StoreRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD123400000000000D /* StoreRepository.swift */; };
+		BEEFABCD1234000000000036 /* UserRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD123400000000000E /* UserRepository.swift */; };
+		BEEFABCD1234000000000037 /* AuthService.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD123400000000000F /* AuthService.swift */; };
+		BEEFABCD1234000000000038 /* CSVExportService.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000010 /* CSVExportService.swift */; };
+		BEEFABCD1234000000000039 /* CheckInService.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000011 /* CheckInService.swift */; };
+		BEEFABCD123400000000003A /* DistanceCalculator.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000012 /* DistanceCalculator.swift */; };
+		BEEFABCD123400000000003B /* LocationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000013 /* LocationService.swift */; };
+		BEEFABCD123400000000003C /* OfflineCheckInQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000014 /* OfflineCheckInQueue.swift */; };
+		BEEFABCD123400000000003D /* EmployeeDashboardViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000015 /* EmployeeDashboardViewModel.swift */; };
+		BEEFABCD123400000000003E /* EmployeeHistoryViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000016 /* EmployeeHistoryViewModel.swift */; };
+		BEEFABCD123400000000003F /* EmployeeManagementViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000017 /* EmployeeManagementViewModel.swift */; };
+		BEEFABCD1234000000000040 /* LoginViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000018 /* LoginViewModel.swift */; };
+		BEEFABCD1234000000000041 /* ManagerDashboardViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000019 /* ManagerDashboardViewModel.swift */; };
+		BEEFABCD1234000000000042 /* RootViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD123400000000001A /* RootViewModel.swift */; };
+		BEEFABCD1234000000000043 /* StoreManagementViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD123400000000001B /* StoreManagementViewModel.swift */; };
+		BEEFABCD1234000000000044 /* EmployeeDashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD123400000000001C /* EmployeeDashboardView.swift */; };
+		BEEFABCD1234000000000045 /* EmployeeHistoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD123400000000001D /* EmployeeHistoryView.swift */; };
+		BEEFABCD1234000000000046 /* EmployeeTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD123400000000001E /* EmployeeTabView.swift */; };
+		BEEFABCD1234000000000047 /* ManageEmployeesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD123400000000001F /* ManageEmployeesView.swift */; };
+		BEEFABCD1234000000000048 /* ManageStoresView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000020 /* ManageStoresView.swift */; };
+		BEEFABCD1234000000000049 /* ManagerDashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000021 /* ManagerDashboardView.swift */; };
+		BEEFABCD123400000000004A /* ManagerTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000022 /* ManagerTabView.swift */; };
+		BEEFABCD123400000000004B /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000023 /* RootView.swift */; };
+		BEEFABCD123400000000004C /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000024 /* Assets.xcassets */; };
+		BEEFABCD123400000000004D /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000025 /* LaunchScreen.storyboard */; };
+		BEEFABCD123400000000004E /* InfoPlist.strings in Resources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000026 /* InfoPlist.strings */; };
+		BEEFABCD123400000000006B /* FirebaseAuth in Frameworks */ = {isa = PBXBuildFile; productRef = BEEFABCD1234000000000067 /* FirebaseAuth */; };
+		BEEFABCD123400000000006C /* FirebaseCore in Frameworks */ = {isa = PBXBuildFile; productRef = BEEFABCD1234000000000068 /* FirebaseCore */; };
+		BEEFABCD123400000000006D /* FirebaseFirestore in Frameworks */ = {isa = PBXBuildFile; productRef = BEEFABCD1234000000000069 /* FirebaseFirestore */; };
+		BEEFABCD123400000000006E /* FirebaseFirestoreSwift in Frameworks */ = {isa = PBXBuildFile; productRef = BEEFABCD123400000000006A /* FirebaseFirestoreSwift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		BEEFABCD1234000000000001 /* AppContainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppContainer.swift; sourceTree = "<group>"; };
+		BEEFABCD1234000000000002 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		BEEFABCD1234000000000003 /* StoreCheckApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoreCheckApp.swift; sourceTree = "<group>"; };
+		BEEFABCD1234000000000004 /* LoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginView.swift; sourceTree = "<group>"; };
+		BEEFABCD1234000000000005 /* RoleSelectionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoleSelectionView.swift; sourceTree = "<group>"; };
+		BEEFABCD1234000000000006 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
+		BEEFABCD1234000000000007 /* CheckIn.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CheckIn.swift; sourceTree = "<group>"; };
+		BEEFABCD1234000000000008 /* LocationStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocationStatus.swift; sourceTree = "<group>"; };
+		BEEFABCD1234000000000009 /* Store.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Store.swift; sourceTree = "<group>"; };
+		BEEFABCD123400000000000A /* UserProfile.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserProfile.swift; sourceTree = "<group>"; };
+		BEEFABCD123400000000000B /* AuthRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthRepository.swift; sourceTree = "<group>"; };
+		BEEFABCD123400000000000C /* CheckInRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CheckInRepository.swift; sourceTree = "<group>"; };
+		BEEFABCD123400000000000D /* StoreRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoreRepository.swift; sourceTree = "<group>"; };
+		BEEFABCD123400000000000E /* UserRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserRepository.swift; sourceTree = "<group>"; };
+		BEEFABCD123400000000000F /* AuthService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthService.swift; sourceTree = "<group>"; };
+		BEEFABCD1234000000000010 /* CSVExportService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CSVExportService.swift; sourceTree = "<group>"; };
+		BEEFABCD1234000000000011 /* CheckInService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CheckInService.swift; sourceTree = "<group>"; };
+		BEEFABCD1234000000000012 /* DistanceCalculator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DistanceCalculator.swift; sourceTree = "<group>"; };
+		BEEFABCD1234000000000013 /* LocationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocationService.swift; sourceTree = "<group>"; };
+		BEEFABCD1234000000000014 /* OfflineCheckInQueue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfflineCheckInQueue.swift; sourceTree = "<group>"; };
+		BEEFABCD1234000000000015 /* EmployeeDashboardViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmployeeDashboardViewModel.swift; sourceTree = "<group>"; };
+		BEEFABCD1234000000000016 /* EmployeeHistoryViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmployeeHistoryViewModel.swift; sourceTree = "<group>"; };
+		BEEFABCD1234000000000017 /* EmployeeManagementViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmployeeManagementViewModel.swift; sourceTree = "<group>"; };
+		BEEFABCD1234000000000018 /* LoginViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginViewModel.swift; sourceTree = "<group>"; };
+		BEEFABCD1234000000000019 /* ManagerDashboardViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManagerDashboardViewModel.swift; sourceTree = "<group>"; };
+		BEEFABCD123400000000001A /* RootViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootViewModel.swift; sourceTree = "<group>"; };
+		BEEFABCD123400000000001B /* StoreManagementViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoreManagementViewModel.swift; sourceTree = "<group>"; };
+		BEEFABCD123400000000001C /* EmployeeDashboardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmployeeDashboardView.swift; sourceTree = "<group>"; };
+		BEEFABCD123400000000001D /* EmployeeHistoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmployeeHistoryView.swift; sourceTree = "<group>"; };
+		BEEFABCD123400000000001E /* EmployeeTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmployeeTabView.swift; sourceTree = "<group>"; };
+		BEEFABCD123400000000001F /* ManageEmployeesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManageEmployeesView.swift; sourceTree = "<group>"; };
+		BEEFABCD1234000000000020 /* ManageStoresView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManageStoresView.swift; sourceTree = "<group>"; };
+		BEEFABCD1234000000000021 /* ManagerDashboardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManagerDashboardView.swift; sourceTree = "<group>"; };
+		BEEFABCD1234000000000022 /* ManagerTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManagerTabView.swift; sourceTree = "<group>"; };
+		BEEFABCD1234000000000023 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
+		BEEFABCD1234000000000024 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		BEEFABCD1234000000000025 /* LaunchScreen.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; path = LaunchScreen.storyboard; sourceTree = "<group>"; };
+		BEEFABCD1234000000000026 /* InfoPlist.strings */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; path = InfoPlist.strings; sourceTree = "<group>"; };
+		BEEFABCD1234000000000027 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		BEEFABCD1234000000000028 /* StoreCheck.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = StoreCheck.app; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		BEEFABCD123400000000005F /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (
+			BEEFABCD123400000000006B /* FirebaseAuth in Frameworks */,
+			BEEFABCD123400000000006C /* FirebaseCore in Frameworks */,
+			BEEFABCD123400000000006D /* FirebaseFirestore in Frameworks */,
+			BEEFABCD123400000000006E /* FirebaseFirestoreSwift in Frameworks */,
+		); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		BEEFABCD1234000000000055 = {isa = PBXGroup; children = (
+			BEEFABCD1234000000000001 /* AppContainer.swift */,
+			BEEFABCD1234000000000002 /* AppDelegate.swift */,
+			BEEFABCD1234000000000003 /* StoreCheckApp.swift */,
+		); path = App; sourceTree = "<group>"; };
+		BEEFABCD1234000000000056 = {isa = PBXGroup; children = (
+			BEEFABCD1234000000000004 /* LoginView.swift */,
+			BEEFABCD1234000000000005 /* RoleSelectionView.swift */,
+		); path = Auth; sourceTree = "<group>"; };
+		BEEFABCD1234000000000057 = {isa = PBXGroup; children = (
+			BEEFABCD1234000000000006 /* Theme.swift */,
+		); path = DesignSystem; sourceTree = "<group>"; };
+		BEEFABCD1234000000000058 = {isa = PBXGroup; children = (
+			BEEFABCD1234000000000007 /* CheckIn.swift */,
+			BEEFABCD1234000000000008 /* LocationStatus.swift */,
+			BEEFABCD1234000000000009 /* Store.swift */,
+			BEEFABCD123400000000000A /* UserProfile.swift */,
+		); path = Models; sourceTree = "<group>"; };
+		BEEFABCD1234000000000059 = {isa = PBXGroup; children = (
+			BEEFABCD123400000000000B /* AuthRepository.swift */,
+			BEEFABCD123400000000000C /* CheckInRepository.swift */,
+			BEEFABCD123400000000000D /* StoreRepository.swift */,
+			BEEFABCD123400000000000E /* UserRepository.swift */,
+		); path = Repositories; sourceTree = "<group>"; };
+		BEEFABCD123400000000005A = {isa = PBXGroup; children = (
+			BEEFABCD123400000000000F /* AuthService.swift */,
+			BEEFABCD1234000000000010 /* CSVExportService.swift */,
+			BEEFABCD1234000000000011 /* CheckInService.swift */,
+			BEEFABCD1234000000000012 /* DistanceCalculator.swift */,
+			BEEFABCD1234000000000013 /* LocationService.swift */,
+			BEEFABCD1234000000000014 /* OfflineCheckInQueue.swift */,
+		); path = Services; sourceTree = "<group>"; };
+		BEEFABCD123400000000005B = {isa = PBXGroup; children = (
+			BEEFABCD1234000000000015 /* EmployeeDashboardViewModel.swift */,
+			BEEFABCD1234000000000016 /* EmployeeHistoryViewModel.swift */,
+			BEEFABCD1234000000000017 /* EmployeeManagementViewModel.swift */,
+			BEEFABCD1234000000000018 /* LoginViewModel.swift */,
+			BEEFABCD1234000000000019 /* ManagerDashboardViewModel.swift */,
+			BEEFABCD123400000000001A /* RootViewModel.swift */,
+			BEEFABCD123400000000001B /* StoreManagementViewModel.swift */,
+		); path = ViewModels; sourceTree = "<group>"; };
+		BEEFABCD123400000000005C = {isa = PBXGroup; children = (
+			BEEFABCD123400000000001C /* EmployeeDashboardView.swift */,
+			BEEFABCD123400000000001D /* EmployeeHistoryView.swift */,
+			BEEFABCD123400000000001E /* EmployeeTabView.swift */,
+			BEEFABCD123400000000001F /* ManageEmployeesView.swift */,
+			BEEFABCD1234000000000020 /* ManageStoresView.swift */,
+			BEEFABCD1234000000000021 /* ManagerDashboardView.swift */,
+			BEEFABCD1234000000000022 /* ManagerTabView.swift */,
+			BEEFABCD1234000000000023 /* RootView.swift */,
+		); path = Views; sourceTree = "<group>"; };
+		BEEFABCD1234000000000054 = {isa = PBXGroup; children = (
+			BEEFABCD1234000000000027 /* Info.plist */,
+			BEEFABCD1234000000000026 /* InfoPlist.strings */,
+			BEEFABCD1234000000000025 /* LaunchScreen.storyboard */,
+			BEEFABCD1234000000000024 /* Assets.xcassets */,
+		); path = SupportingFiles; sourceTree = "<group>"; };
+		BEEFABCD1234000000000053 = {isa = PBXGroup; children = (
+			BEEFABCD1234000000000055 /* App */,
+			BEEFABCD1234000000000056 /* Auth */,
+			BEEFABCD1234000000000057 /* DesignSystem */,
+			BEEFABCD1234000000000058 /* Models */,
+			BEEFABCD1234000000000059 /* Repositories */,
+			BEEFABCD123400000000005A /* Services */,
+			BEEFABCD123400000000005B /* ViewModels */,
+			BEEFABCD123400000000005C /* Views */,
+			BEEFABCD1234000000000054 /* SupportingFiles */,
+		); path = StoreCheck; sourceTree = "<group>"; };
+		BEEFABCD1234000000000052 = {isa = PBXGroup; children = (
+			BEEFABCD1234000000000028 /* StoreCheck.app */,
+		); sourceTree = "<group>"; };
+		BEEFABCD1234000000000051 = {isa = PBXGroup; children = (
+			BEEFABCD1234000000000053 /* StoreCheck */,
+			BEEFABCD1234000000000052 /* Products */,
+		); sourceTree = "<group>"; };
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		BEEFABCD1234000000000050 /* StoreCheck */ = {isa = PBXNativeTarget; buildConfigurationList = BEEFABCD1234000000000061 /* Build configuration list for PBXNativeTarget "StoreCheck" */; buildPhases = (BEEFABCD123400000000005D /* Sources */, BEEFABCD123400000000005F /* Frameworks */, BEEFABCD123400000000005E /* Resources */,); buildRules = (); dependencies = (); name = StoreCheck; packageProductDependencies = (
+			BEEFABCD1234000000000067 /* FirebaseAuth */,
+			BEEFABCD1234000000000068 /* FirebaseCore */,
+			BEEFABCD1234000000000069 /* FirebaseFirestore */,
+			BEEFABCD123400000000006A /* FirebaseFirestoreSwift */,
+		); productName = StoreCheck; productReference = BEEFABCD1234000000000028 /* StoreCheck.app */; productType = "com.apple.product-type.application"; };
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		BEEFABCD123400000000004F /* Project object */ = {isa = PBXProject; attributes = {BuildIndependentTargetsInParallel = 1; LastSwiftUpdateCheck = 1600; LastUpgradeCheck = 1600; TargetAttributes = {BEEFABCD1234000000000050 = {CreatedOnToolsVersion = 16.0;};};}; buildConfigurationList = BEEFABCD1234000000000060 /* Build configuration list for PBXProject "StoreCheck" */; compatibilityVersion = "Xcode 14.0"; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en, Base,); mainGroup = BEEFABCD1234000000000051; packageReferences = (BEEFABCD1234000000000066 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */,); productRefGroup = BEEFABCD1234000000000052 /* Products */; projectDirPath = ""; projectRoot = ""; targets = (BEEFABCD1234000000000050 /* StoreCheck */,); };
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		BEEFABCD123400000000005E /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (
+			BEEFABCD123400000000004C /* Assets.xcassets in Resources */,
+			BEEFABCD123400000000004D /* LaunchScreen.storyboard in Resources */,
+			BEEFABCD123400000000004E /* InfoPlist.strings in Resources */,
+		); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		BEEFABCD123400000000005D /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (
+			BEEFABCD1234000000000029 /* AppContainer.swift in Sources */,
+			BEEFABCD123400000000002A /* AppDelegate.swift in Sources */,
+			BEEFABCD123400000000002B /* StoreCheckApp.swift in Sources */,
+			BEEFABCD123400000000002C /* LoginView.swift in Sources */,
+			BEEFABCD123400000000002D /* RoleSelectionView.swift in Sources */,
+			BEEFABCD123400000000002E /* Theme.swift in Sources */,
+			BEEFABCD123400000000002F /* CheckIn.swift in Sources */,
+			BEEFABCD1234000000000030 /* LocationStatus.swift in Sources */,
+			BEEFABCD1234000000000031 /* Store.swift in Sources */,
+			BEEFABCD1234000000000032 /* UserProfile.swift in Sources */,
+			BEEFABCD1234000000000033 /* AuthRepository.swift in Sources */,
+			BEEFABCD1234000000000034 /* CheckInRepository.swift in Sources */,
+			BEEFABCD1234000000000035 /* StoreRepository.swift in Sources */,
+			BEEFABCD1234000000000036 /* UserRepository.swift in Sources */,
+			BEEFABCD1234000000000037 /* AuthService.swift in Sources */,
+			BEEFABCD1234000000000038 /* CSVExportService.swift in Sources */,
+			BEEFABCD1234000000000039 /* CheckInService.swift in Sources */,
+			BEEFABCD123400000000003A /* DistanceCalculator.swift in Sources */,
+			BEEFABCD123400000000003B /* LocationService.swift in Sources */,
+			BEEFABCD123400000000003C /* OfflineCheckInQueue.swift in Sources */,
+			BEEFABCD123400000000003D /* EmployeeDashboardViewModel.swift in Sources */,
+			BEEFABCD123400000000003E /* EmployeeHistoryViewModel.swift in Sources */,
+			BEEFABCD123400000000003F /* EmployeeManagementViewModel.swift in Sources */,
+			BEEFABCD1234000000000040 /* LoginViewModel.swift in Sources */,
+			BEEFABCD1234000000000041 /* ManagerDashboardViewModel.swift in Sources */,
+			BEEFABCD1234000000000042 /* RootViewModel.swift in Sources */,
+			BEEFABCD1234000000000043 /* StoreManagementViewModel.swift in Sources */,
+			BEEFABCD1234000000000044 /* EmployeeDashboardView.swift in Sources */,
+			BEEFABCD1234000000000045 /* EmployeeHistoryView.swift in Sources */,
+			BEEFABCD1234000000000046 /* EmployeeTabView.swift in Sources */,
+			BEEFABCD1234000000000047 /* ManageEmployeesView.swift in Sources */,
+			BEEFABCD1234000000000048 /* ManageStoresView.swift in Sources */,
+			BEEFABCD1234000000000049 /* ManagerDashboardView.swift in Sources */,
+			BEEFABCD123400000000004A /* ManagerTabView.swift in Sources */,
+			BEEFABCD123400000000004B /* RootView.swift in Sources */,
+		); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		BEEFABCD1234000000000066 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */ = {isa = XCRemoteSwiftPackageReference; repositoryURL = "https://github.com/firebase/firebase-ios-sdk"; requirement = {kind = upToNextMajorVersion; minimumVersion = 10.0.0;}; };
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		BEEFABCD1234000000000067 /* FirebaseAuth */ = {isa = XCSwiftPackageProductDependency; package = BEEFABCD1234000000000066 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */; productName = FirebaseAuth; };
+		BEEFABCD1234000000000068 /* FirebaseCore */ = {isa = XCSwiftPackageProductDependency; package = BEEFABCD1234000000000066 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */; productName = FirebaseCore; };
+		BEEFABCD1234000000000069 /* FirebaseFirestore */ = {isa = XCSwiftPackageProductDependency; package = BEEFABCD1234000000000066 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */; productName = FirebaseFirestore; };
+		BEEFABCD123400000000006A /* FirebaseFirestoreSwift */ = {isa = XCSwiftPackageProductDependency; package = BEEFABCD1234000000000066 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */; productName = FirebaseFirestoreSwift; };
+/* End XCSwiftPackageProductDependency section */
+
+/* Begin XCBuildConfiguration section */
+		BEEFABCD1234000000000064 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; CLANG_ENABLE_MODULES = YES; GCC_C_LANGUAGE_STANDARD = gnu17; IPHONEOS_DEPLOYMENT_TARGET = 16.0; SDKROOT = iphoneos; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2";}; name = Debug; };
+		BEEFABCD1234000000000065 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; CLANG_ENABLE_MODULES = YES; GCC_C_LANGUAGE_STANDARD = gnu17; IPHONEOS_DEPLOYMENT_TARGET = 16.0; SDKROOT = iphoneos; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2";}; name = Release; };
+		BEEFABCD1234000000000062 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = StoreCheck/SupportingFiles/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 16.0; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks",); MARKETING_VERSION = 1.0; PRODUCT_BUNDLE_IDENTIFIER = com.storecheck.app; PRODUCT_NAME = "$(TARGET_NAME)"; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SWIFT_EMIT_LOC_STRINGS = YES; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2";}; name = Debug; };
+		BEEFABCD1234000000000063 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = StoreCheck/SupportingFiles/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 16.0; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks",); MARKETING_VERSION = 1.0; PRODUCT_BUNDLE_IDENTIFIER = com.storecheck.app; PRODUCT_NAME = "$(TARGET_NAME)"; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SWIFT_EMIT_LOC_STRINGS = YES; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2";}; name = Release; };
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		BEEFABCD1234000000000060 /* Build configuration list for PBXProject "StoreCheck" */ = {isa = XCConfigurationList; buildConfigurations = (BEEFABCD1234000000000064 /* Debug */, BEEFABCD1234000000000065 /* Release */,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		BEEFABCD1234000000000061 /* Build configuration list for PBXNativeTarget "StoreCheck" */ = {isa = XCConfigurationList; buildConfigurations = (BEEFABCD1234000000000062 /* Debug */, BEEFABCD1234000000000063 /* Release */,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+/* End XCConfigurationList section */
+	};
+	rootObject = BEEFABCD123400000000004F /* Project object */;
+}
