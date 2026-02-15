@@ -12,6 +12,7 @@ private struct RootContentView: View {
     enum BootState {
         case launching
         case needsLogin
+        case resolvingRole
         case authenticated(user: AppUser)
     }
 
@@ -26,32 +27,48 @@ private struct RootContentView: View {
     var body: some View {
         Group {
             switch bootState {
-            case .launching:
-                ProgressView("Restoring session")
+            case .launching, .resolvingRole:
+                ProgressView("Loading account")
                     .tint(.white)
             case .needsLogin:
                 LoginView()
             case .authenticated(let user):
-                switch user.role {
-                case .manager:
-                    ManagerTabView(container: appContainer)
-                case .employee:
-                    EmployeeTabView(container: appContainer)
+                if authViewModel.resolvedRole == nil {
+                    ProgressView("Resolving role")
+                        .tint(.white)
+                } else {
+                    switch user.role {
+                    case .manager:
+                        ManagerHomeView(container: appContainer)
+                    case .employee:
+                        EmployeeTabView(container: appContainer)
+                    }
                 }
             }
         }
         .background(DS.Colors.background.ignoresSafeArea())
         .environmentObject(authViewModel)
-        .task {
-            await boot()
-        }
-        .onChange(of: authViewModel.authState) { _, newValue in
-            guard case .signedOut = newValue else { return }
-            bootState = .needsLogin
+        .task { await boot() }
+        .onChange(of: authViewModel.authState) { _, newState in
+            if case .signedOut = newState {
+                bootState = .needsLogin
+            }
         }
         .onChange(of: authViewModel.currentUser) { _, newUser in
-            if let newUser {
+            guard let newUser else {
+                bootState = .needsLogin
+                return
+            }
+
+            if authViewModel.resolvedRole == nil {
+                bootState = .resolvingRole
+            } else {
                 bootState = .authenticated(user: newUser)
+            }
+        }
+        .onChange(of: authViewModel.resolvedRole) { _, role in
+            if role != nil, let user = authViewModel.currentUser {
+                bootState = .authenticated(user: user)
             }
         }
     }
@@ -59,25 +76,13 @@ private struct RootContentView: View {
     private func boot() async {
         guard case .launching = bootState else { return }
 
-        #if DEBUG
-        if DebugOptions.forceSignOutOnLaunch {
-            print("[RootView] Debug force sign-out is enabled")
-        }
-        print("[RootView] boot start")
-        #endif
-
         await authViewModel.restoreSession(forceSignOutOnLaunch: DebugOptions.forceSignOutOnLaunch)
 
-        if let user = authViewModel.currentUser {
-            #if DEBUG
-            print("[RootView] boot complete: authenticated uid=\(user.id), role=\(user.role.rawValue)")
-            #endif
-            bootState = .authenticated(user: user)
-        } else {
-            #if DEBUG
-            print("[RootView] boot complete: needs login")
-            #endif
+        guard let user = authViewModel.currentUser else {
             bootState = .needsLogin
+            return
         }
+
+        bootState = authViewModel.resolvedRole == nil ? .resolvingRole : .authenticated(user: user)
     }
 }
