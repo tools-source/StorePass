@@ -18,13 +18,16 @@ private struct SessionRouterView: View {
             case .signedOut:
                 LoginView()
             case .signedIn:
-                if authViewModel.resolvedRole == nil {
+                if let role = authViewModel.currentUser?.role ?? authViewModel.resolvedRole {
+                    switch role {
+                    case .manager:
+                        ManagerTabView()
+                    case .employee:
+                        EmployeeTabView()
+                    }
+                } else {
                     ProgressView("Loading account")
                         .tint(.white)
-                } else if authViewModel.resolvedRole == .manager {
-                    ManagerTabView()
-                } else {
-                    EmployeeTabView()
                 }
             }
         }

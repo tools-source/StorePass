@@ -4,14 +4,26 @@ service cloud.firestore {
     function signedIn() { return request.auth != null; }
     function myUid() { return request.auth.uid; }
     function myUser() { return get(/databases/$(database)/documents/users/$(myUid())); }
-    function manager() { return signedIn() && myUser().data.role == "manager"; }
+    function manager() {
+      return signedIn() &&
+        myUser().data.role == "manager";
+    }
 
     match /users/{uid} {
       allow read: if signedIn() && (uid == myUid() || manager());
-      allow create: if signedIn() && uid == myUid();
+      allow create: if signedIn() && (
+        manager() ||
+        (
+          uid == myUid() &&
+          request.resource.data.role == "employee"
+        )
+      );
       allow update: if signedIn() && (
         manager() ||
-        (uid == myUid() && request.resource.data.role == resource.data.role)
+        (
+          uid == myUid() &&
+          request.resource.data.role == resource.data.role
+        )
       );
       allow delete: if manager();
     }
@@ -24,7 +36,14 @@ service cloud.firestore {
     match /checkins/{checkinId} {
       allow read: if manager() || (signedIn() && resource.data.employeeId == myUid());
       allow create: if signedIn() && request.resource.data.employeeId == myUid();
-      allow update, delete: if manager();
+      allow update: if signedIn() && (
+        manager() ||
+        (
+          resource.data.employeeId == myUid() &&
+          request.resource.data.employeeId == myUid()
+        )
+      );
+      allow delete: if manager() || (signedIn() && resource.data.employeeId == myUid());
     }
   }
 }

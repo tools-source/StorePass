@@ -11,13 +11,17 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
     private let db = Firestore.firestore()
 
     func fetchStores(ids: [String]? = nil) async throws -> [Store] {
-        let snapshot: QuerySnapshot
-        if let ids, !ids.isEmpty {
-            snapshot = try await db.collection("stores").whereField(FieldPath.documentID(), in: ids).getDocuments()
-        } else {
-            snapshot = try await db.collection("stores").order(by: "name").getDocuments()
+        do {
+            let snapshot: QuerySnapshot
+            if let ids, !ids.isEmpty {
+                snapshot = try await db.collection("stores").whereField(FieldPath.documentID(), in: ids).getDocuments()
+            } else {
+                snapshot = try await db.collection("stores").order(by: "name").getDocuments()
+            }
+            return snapshot.documents.compactMap(decodeStore)
+        } catch {
+            throw mapFirestoreError(error)
         }
-        return snapshot.documents.compactMap(decodeStore)
     }
 
     func upsertStore(_ store: Store) async throws {
@@ -29,11 +33,20 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
             "radiusMeters": store.radiusMeters,
             "isActive": store.isActive
         ]
-        try await db.collection("stores").document(store.id).setData(data, merge: true)
+
+        do {
+            try await db.collection("stores").document(store.id).setData(data, merge: true)
+        } catch {
+            throw mapFirestoreError(error)
+        }
     }
 
     func deleteStore(id: String) async throws {
-        try await db.collection("stores").document(id).delete()
+        do {
+            try await db.collection("stores").document(id).delete()
+        } catch {
+            throw mapFirestoreError(error)
+        }
     }
 
     private func decodeStore(document: QueryDocumentSnapshot) -> Store? {
@@ -46,6 +59,20 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
             lng: data["lng"] as? Double ?? 0,
             radiusMeters: data["radiusMeters"] as? Int ?? 150,
             isActive: data["isActive"] as? Bool ?? true
+        )
+    }
+
+    private func mapFirestoreError(_ error: Error) -> Error {
+        let nsError = error as NSError
+        guard nsError.domain == FirestoreErrorDomain,
+              nsError.code == FirestoreErrorCode.permissionDenied.rawValue else {
+            return error
+        }
+
+        return NSError(
+            domain: "StorePass",
+            code: nsError.code,
+            userInfo: [NSLocalizedDescriptionKey: "You don't have permission for this action."]
         )
     }
 }
