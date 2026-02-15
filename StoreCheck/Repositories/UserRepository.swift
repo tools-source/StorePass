@@ -8,7 +8,7 @@ protocol UserRepositoryProtocol {
 }
 
 final class FirestoreUserRepository: UserRepositoryProtocol {
-    private let db = Firestore.firestore()
+    private var db: Firestore { Firestore.firestore() }
 
     func fetchUser(id: String) async throws -> UserProfile? {
         do {

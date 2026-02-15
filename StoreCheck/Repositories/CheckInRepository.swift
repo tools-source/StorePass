@@ -14,7 +14,7 @@ protocol CheckInRepositoryProtocol {
 }
 
 final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
-    private let db = Firestore.firestore()
+    private var db: Firestore { Firestore.firestore() }
 
     func createCheckIn(_ checkIn: CheckIn) async throws {
         do {
