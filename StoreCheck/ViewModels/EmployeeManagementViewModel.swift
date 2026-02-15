@@ -5,7 +5,7 @@ final class EmployeeManagementViewModel: ObservableObject {
     @Published var stores: [Store] = []
     @Published var employees: [EmployeeSummary] = []
     @Published var selectedStoreId: String = "all"
-    @Published var errorMessage: String?
+    @Published var employeeError: String?
     @Published var isLoading = false
 
     private let employeeRepository: EmployeeManagementRepositoryProtocol
@@ -23,7 +23,8 @@ final class EmployeeManagementViewModel: ObservableObject {
 
     func load() async {
         guard let managerId = authRepository.currentUserId else {
-            errorMessage = "Unable to resolve current manager session."
+            employeeError = "Unable to resolve current manager session."
+            print("[Employees] Session error: Unable to resolve current manager session.")
             return
         }
 
@@ -48,9 +49,10 @@ final class EmployeeManagementViewModel: ObservableObject {
             // - then sort locally
             employees = try await employeeRepository.fetchEmployeesForManagerStores(managerStores: fetchedStores)
 
-            errorMessage = nil
+            employeeError = nil
         } catch {
-            errorMessage = error.localizedDescription
+            employeeError = error.localizedDescription
+            print("[Employees] Error: \(error.localizedDescription)")
         }
     }
 
@@ -59,7 +61,8 @@ final class EmployeeManagementViewModel: ObservableObject {
             try await employeeRepository.removeEmployeeFromStore(storeId: storeId, employeeId: employeeId)
             await load()
         } catch {
-            errorMessage = error.localizedDescription
+            employeeError = error.localizedDescription
+            print("[Employees] Error: \(error.localizedDescription)")
         }
     }
 
@@ -69,7 +72,8 @@ final class EmployeeManagementViewModel: ObservableObject {
             try await employeeRepository.removeEmployeeFromAllManagerStores(employeeId: employeeId, managerId: managerId)
             await load()
         } catch {
-            errorMessage = error.localizedDescription
+            employeeError = error.localizedDescription
+            print("[Employees] Error: \(error.localizedDescription)")
         }
     }
 
@@ -78,7 +82,8 @@ final class EmployeeManagementViewModel: ObservableObject {
             try await employeeRepository.setEmployeeStoresForManager(employeeId: employeeId, storeIds: storeIds)
             await load()
         } catch {
-            errorMessage = error.localizedDescription
+            employeeError = error.localizedDescription
+            print("[Employees] Error: \(error.localizedDescription)")
         }
     }
 
@@ -87,7 +92,8 @@ final class EmployeeManagementViewModel: ObservableObject {
             try await employeeRepository.setEmployeeActive(employeeId: employeeId, isActive: isActive)
             await load()
         } catch {
-            errorMessage = error.localizedDescription
+            employeeError = error.localizedDescription
+            print("[Employees] Error: \(error.localizedDescription)")
         }
     }
 }

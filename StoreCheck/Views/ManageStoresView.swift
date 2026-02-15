@@ -63,13 +63,13 @@ struct ManageStoresView: View {
             .alert(
                 "Store tools",
                 isPresented: Binding(
-                    get: { vm.errorMessage != nil },
-                    set: { _ in vm.errorMessage = nil }
+                    get: { vm.storeError != nil },
+                    set: { _ in vm.storeError = nil }
                 )
             ) {
-                Button("OK", role: .cancel) { vm.errorMessage = nil }
+                Button("OK", role: .cancel) { vm.storeError = nil }
             } message: {
-                Text(vm.errorMessage ?? "")
+                Text(vm.storeError ?? "")
             }
             .overlay(alignment: .bottom) {
                 if let toast = vm.toastMessage {
@@ -145,7 +145,6 @@ struct ManageStoresView: View {
                     HStack {
                         Button("Copy code") {
                             Task {
-                                // ✅ FIX: avoid using `await` inside `??` (autoclosure)
                                 let cached = vm.latestJoinCodesByStoreId[store.id]
                                 let code: String?
 
@@ -159,7 +158,7 @@ struct ManageStoresView: View {
                                     UIPasteboard.general.string = code
                                     vm.toastMessage = "Code copied"
                                 } else {
-                                    vm.errorMessage = "Unable to fetch store code."
+                                    vm.storeError = "Unable to fetch store code."
                                 }
                             }
                         }
@@ -226,6 +225,7 @@ private struct AddressSearchField: View {
     @Binding var latitude: Double
     @Binding var longitude: Double
     @StateObject private var search = AddressSearchService()
+    @State private var isManualOverrideVisible = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -242,6 +242,7 @@ private struct AddressSearchField: View {
                                 longitude = resolved.1.longitude
                                 search.query = resolved.0
                                 search.suggestions = []
+                                isManualOverrideVisible = false
                             }
                         }
                     } label: {
@@ -256,8 +257,24 @@ private struct AddressSearchField: View {
                 }
             }
 
-            TextField("Address (manual override)", text: $address)
-                .textFieldStyle(.roundedBorder)
+            if isManualOverrideVisible {
+                TextField("Address (manual override)", text: $address)
+                    .textFieldStyle(.roundedBorder)
+
+                Button("Use selected address") {
+                    isManualOverrideVisible = false
+                }
+                .font(.caption)
+            } else {
+                TextField("Address", text: .constant(address.isEmpty ? "No address selected yet" : address))
+                    .textFieldStyle(.roundedBorder)
+                    .disabled(true)
+
+                Button("Edit address") {
+                    isManualOverrideVisible = true
+                }
+                .font(.caption)
+            }
 
             Text("Lat: \(latitude, specifier: "%.5f"), Lng: \(longitude, specifier: "%.5f")")
                 .font(.caption2)

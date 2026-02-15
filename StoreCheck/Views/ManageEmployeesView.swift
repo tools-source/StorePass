@@ -101,9 +101,9 @@ struct ManageEmployeesView: View {
                     }
                 }
             }
-            .alert("Error", isPresented: Binding(get: { vm.errorMessage != nil }, set: { _ in vm.errorMessage = nil })) {
-                Button("OK", role: .cancel) { vm.errorMessage = nil }
-            } message: { Text(vm.errorMessage ?? "") }
+            .alert("Error", isPresented: Binding(get: { vm.employeeError != nil }, set: { _ in vm.employeeError = nil })) {
+                Button("OK", role: .cancel) { vm.employeeError = nil }
+            } message: { Text(vm.employeeError ?? "") }
         }
     }
 }

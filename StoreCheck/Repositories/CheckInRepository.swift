@@ -8,15 +8,63 @@ struct CheckInFilter {
 }
 
 protocol CheckInRepositoryProtocol {
+    @discardableResult
+    func listenToTodaysCheckIns(
+        filter: CheckInFilter,
+        onUpdate: @escaping ([CheckIn]) -> Void,
+        onError: @escaping (Error) -> Void
+    ) -> CheckInListenerToken
+
     func createCheckIn(_ checkIn: CheckIn) async throws
     func fetchCheckIns(employeeId: String?, limit: Int) async throws -> [CheckIn]
     func fetchTodaysCheckIns(filter: CheckInFilter) async throws -> [CheckIn]
+}
+
+protocol CheckInListenerToken {
+    func cancel()
+}
+
+private final class FirestoreCheckInListenerToken: CheckInListenerToken {
+    private var registration: ListenerRegistration?
+
+    init(registration: ListenerRegistration) {
+        self.registration = registration
+    }
+
+    func cancel() {
+        registration?.remove()
+        registration = nil
+    }
 }
 
 final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
     private var db: Firestore {
         FirebaseBootstrap.assertConfigured(context: "FirestoreCheckInRepository.db")
         return Firestore.firestore()
+    }
+
+    @discardableResult
+    func listenToTodaysCheckIns(
+        filter: CheckInFilter,
+        onUpdate: @escaping ([CheckIn]) -> Void,
+        onError: @escaping (Error) -> Void
+    ) -> CheckInListenerToken {
+        let query = todaysCheckinsQuery(for: filter)
+        let registration = query.addSnapshotListener { [weak self] snapshot, error in
+            if let error {
+                onError(self?.mapFirestoreError(error) ?? error)
+                return
+            }
+
+            guard let snapshot else {
+                onError(NSError(domain: "StorePass", code: 5005, userInfo: [NSLocalizedDescriptionKey: "No check-in data was returned."]))
+                return
+            }
+
+            onUpdate(snapshot.documents.compactMap { self?.decodeCheckIn(document: $0) })
+        }
+
+        return FirestoreCheckInListenerToken(registration: registration)
     }
 
     func createCheckIn(_ checkIn: CheckIn) async throws {
@@ -41,27 +89,31 @@ final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
     }
 
     func fetchTodaysCheckIns(filter: CheckInFilter) async throws -> [CheckIn] {
-        let start = Calendar.current.startOfDay(for: filter.date)
-        let end = Calendar.current.date(byAdding: .day, value: 1, to: start) ?? Date()
-
         do {
-            var query: Query = db.collection("checkins")
-                .whereField("checkInTime", isGreaterThanOrEqualTo: Timestamp(date: start))
-                .whereField("checkInTime", isLessThan: Timestamp(date: end))
-
-            if let storeId = filter.storeId, !storeId.isEmpty {
-                query = query.whereField("storeId", isEqualTo: storeId)
-            }
-
-            if let status = filter.status {
-                query = query.whereField("status", isEqualTo: status.rawValue)
-            }
-
-            let snapshot = try await query.order(by: "checkInTime", descending: true).getDocuments()
+            let snapshot = try await todaysCheckinsQuery(for: filter).getDocuments()
             return snapshot.documents.compactMap(decodeCheckIn)
         } catch {
             throw mapFirestoreError(error)
         }
+    }
+
+    private func todaysCheckinsQuery(for filter: CheckInFilter) -> Query {
+        let start = Calendar.current.startOfDay(for: filter.date)
+        let end = Calendar.current.date(byAdding: .day, value: 1, to: start) ?? Date()
+
+        var query: Query = db.collection("checkins")
+            .whereField("checkInTime", isGreaterThanOrEqualTo: Timestamp(date: start))
+            .whereField("checkInTime", isLessThan: Timestamp(date: end))
+
+        if let storeId = filter.storeId, !storeId.isEmpty {
+            query = query.whereField("storeId", isEqualTo: storeId)
+        }
+
+        if let status = filter.status {
+            query = query.whereField("status", isEqualTo: status.rawValue)
+        }
+
+        return query.order(by: "checkInTime", descending: true)
     }
 
     private func encode(checkIn: CheckIn) -> [String: Any] {

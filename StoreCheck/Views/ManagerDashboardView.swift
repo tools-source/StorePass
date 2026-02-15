@@ -39,8 +39,16 @@ struct ManagerHomeView: View {
                     }
                 }
             }
-            .task { await viewModel.load() }
-            .refreshable { await viewModel.load() }
+            .onAppear { viewModel.startListening() }
+            .onDisappear { viewModel.stopListening() }
+            .onChange(of: viewModel.selectedStoreId) { _, _ in viewModel.refreshListener() }
+            .onChange(of: viewModel.selectedStatus) { _, _ in viewModel.refreshListener() }
+            .onChange(of: viewModel.selectedDate) { _, _ in viewModel.refreshListener() }
+            .alert("Check-ins", isPresented: Binding(get: { viewModel.checkinError != nil }, set: { _ in viewModel.checkinError = nil })) {
+                Button("OK", role: .cancel) { viewModel.checkinError = nil }
+            } message: {
+                Text(viewModel.checkinError ?? "")
+            }
         }
     }
 }
