@@ -100,8 +100,8 @@
 		BEEFABCD1234000000000028 /* StoreCheck.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = StoreCheck.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		BEEFABCD1234000000000072 /* UserRole.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserRole.swift; sourceTree = "<group>"; };
 		BEEFABCD1234000000000073 /* AuthViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthViewModel.swift; sourceTree = "<group>"; };
-		BEEFABCD1234000000000076 /* LocationPermissionStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocationPermissionStatus.swift; sourceTree = "<group>"; };
-		BEEFABCD1234000000000077 /* EmployeeSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmployeeSettingsView.swift; sourceTree = "<group>"; };
+		BEEFABCD1234000000000076 /* LocationPermissionStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoreCheck/Models/LocationPermissionStatus.swift; sourceTree = SOURCE_ROOT; };
+		BEEFABCD1234000000000077 /* EmployeeSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoreCheck/Views/Employee/EmployeeSettingsView.swift; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
