@@ -23,11 +23,12 @@ protocol AuthServiceProtocol: AnyObject {
 final class AuthService: ObservableObject, AuthServiceProtocol {
     @Published private(set) var currentUser: AppUser?
 
-    private let auth: Auth
+    private lazy var auth: Auth = authFactory()
+    private let authFactory: () -> Auth
     private let userRepository: UserRepositoryProtocol
 
-    init(auth: Auth = Auth.auth(), userRepository: UserRepositoryProtocol) {
-        self.auth = auth
+    init(authFactory: @escaping () -> Auth = { Auth.auth() }, userRepository: UserRepositoryProtocol) {
+        self.authFactory = authFactory
         self.userRepository = userRepository
     }
 

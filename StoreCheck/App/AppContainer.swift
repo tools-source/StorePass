@@ -4,39 +4,47 @@ import Foundation
 final class AppContainer: ObservableObject {
     static let shared = AppContainer()
 
-    let authRepository: AuthRepositoryProtocol
-    let userRepository: UserRepositoryProtocol
-    let storeRepository: StoreRepositoryProtocol
-    let checkInRepository: CheckInRepositoryProtocol
-    let locationService: LocationService
-    let checkInService: CheckInServiceProtocol
-    let csvExporter: CSVExportServiceProtocol
-    let offlineQueue: OfflineCheckInQueueProtocol
-    let authService: AuthService
+    private let authRepositoryFactory: () -> AuthRepositoryProtocol
+    private let userRepositoryFactory: () -> UserRepositoryProtocol
+    private let storeRepositoryFactory: () -> StoreRepositoryProtocol
+    private let checkInRepositoryFactory: () -> CheckInRepositoryProtocol
+    private let locationServiceFactory: () -> LocationService
+    private let csvExporterFactory: () -> CSVExportServiceProtocol
+    private let offlineQueueFactory: () -> OfflineCheckInQueueProtocol
+
+    lazy var authRepository: AuthRepositoryProtocol = authRepositoryFactory()
+    lazy var userRepository: UserRepositoryProtocol = userRepositoryFactory()
+    lazy var storeRepository: StoreRepositoryProtocol = storeRepositoryFactory()
+    lazy var checkInRepository: CheckInRepositoryProtocol = checkInRepositoryFactory()
+    lazy var locationService: LocationService = locationServiceFactory()
+    lazy var csvExporter: CSVExportServiceProtocol = csvExporterFactory()
+    lazy var offlineQueue: OfflineCheckInQueueProtocol = offlineQueueFactory()
+
+    lazy var authService: AuthService = AuthService(userRepository: userRepository)
+
+    lazy var checkInService: CheckInServiceProtocol = CheckInService(
+        userRepository: userRepository,
+        storeRepository: storeRepository,
+        checkInRepository: checkInRepository,
+        locationService: locationService,
+        offlineQueue: offlineQueue
+    )
 
     init(
-        authRepository: AuthRepositoryProtocol = FirebaseAuthRepository(),
-        userRepository: UserRepositoryProtocol = FirestoreUserRepository(),
-        storeRepository: StoreRepositoryProtocol = FirestoreStoreRepository(),
-        checkInRepository: CheckInRepositoryProtocol = FirestoreCheckInRepository(),
-        locationService: LocationService = LocationService(),
-        csvExporter: CSVExportServiceProtocol = CSVExportService(),
-        offlineQueue: OfflineCheckInQueueProtocol = OfflineCheckInQueue()
+        authRepositoryFactory: @escaping () -> AuthRepositoryProtocol = { FirebaseAuthRepository() },
+        userRepositoryFactory: @escaping () -> UserRepositoryProtocol = { FirestoreUserRepository() },
+        storeRepositoryFactory: @escaping () -> StoreRepositoryProtocol = { FirestoreStoreRepository() },
+        checkInRepositoryFactory: @escaping () -> CheckInRepositoryProtocol = { FirestoreCheckInRepository() },
+        locationServiceFactory: @escaping () -> LocationService = { LocationService() },
+        csvExporterFactory: @escaping () -> CSVExportServiceProtocol = { CSVExportService() },
+        offlineQueueFactory: @escaping () -> OfflineCheckInQueueProtocol = { OfflineCheckInQueue() }
     ) {
-        self.authRepository = authRepository
-        self.userRepository = userRepository
-        self.storeRepository = storeRepository
-        self.checkInRepository = checkInRepository
-        self.locationService = locationService
-        self.csvExporter = csvExporter
-        self.offlineQueue = offlineQueue
-        self.authService = AuthService(userRepository: userRepository)
-        self.checkInService = CheckInService(
-            userRepository: userRepository,
-            storeRepository: storeRepository,
-            checkInRepository: checkInRepository,
-            locationService: locationService,
-            offlineQueue: offlineQueue
-        )
+        self.authRepositoryFactory = authRepositoryFactory
+        self.userRepositoryFactory = userRepositoryFactory
+        self.storeRepositoryFactory = storeRepositoryFactory
+        self.checkInRepositoryFactory = checkInRepositoryFactory
+        self.locationServiceFactory = locationServiceFactory
+        self.csvExporterFactory = csvExporterFactory
+        self.offlineQueueFactory = offlineQueueFactory
     }
 }

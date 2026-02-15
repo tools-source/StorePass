@@ -8,7 +8,7 @@ protocol StoreRepositoryProtocol {
 }
 
 final class FirestoreStoreRepository: StoreRepositoryProtocol {
-    private let db = Firestore.firestore()
+    private var db: Firestore { Firestore.firestore() }
 
     func fetchStores(ids: [String]? = nil) async throws -> [Store] {
         do {
