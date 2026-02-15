@@ -1,18 +1,59 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    function signedIn() { return request.auth != null; }
-    function myUid() { return request.auth.uid; }
-    function myUserPath() { return /databases/$(database)/documents/users/$(myUid()); }
-    function myUser() { return get(myUserPath()); }
-    function isSelf(uid) { return signedIn() && uid == myUid(); }
-    function isManager() {
-      return signedIn() && exists(myUserPath()) && myUser().data.role == "manager" && myUser().data.isActive == true;
+    function signedIn() {
+      return request.auth != null;
     }
+
+    function myUid() {
+      return request.auth.uid;
+    }
+
+    function myUserPath() {
+      return /databases/$(database)/documents/users/$(myUid());
+    }
+
+    // Safe to call even when user doc may not exist.
+    function myUserExists() {
+      return signedIn() && exists(myUserPath());
+    }
+
+    function myUserRoleIsManager() {
+      return myUserExists() && get(myUserPath()).data.role == "manager";
+    }
+
+    function myUserIsActive() {
+      return myUserExists() && get(myUserPath()).data.isActive == true;
+    }
+
+    function isManager() {
+      return myUserRoleIsManager() && myUserIsActive();
+    }
+
+    function isSelf(uid) {
+      return signedIn() && uid == myUid();
+    }
+
+    function storePath(storeId) {
+      return /databases/$(database)/documents/stores/$(storeId);
+    }
+
+    function storeExists(storeId) {
+      return exists(storePath(storeId));
+    }
+
+    function storeOwnerUid(storeId) {
+      return get(storePath(storeId)).data.managerId;
+    }
+
     function isStoreOwner(storeId) {
-      return isManager() &&
-        exists(/databases/$(database)/documents/stores/$(storeId)) &&
-        get(/databases/$(database)/documents/stores/$(storeId)).data.managerId == myUid();
+      return signedIn() && storeExists(storeId) && storeOwnerUid(storeId) == myUid();
+    }
+
+    function managerOwnsCheckin(data) {
+      return isManager()
+        && data.storeId is string
+        && isStoreOwner(data.storeId);
     }
 
     match /users/{uid} {
@@ -27,15 +68,10 @@ service cloud.firestore {
     }
 
     match /stores/{storeId} {
-      allow get: if signedIn() && (
-        resource.data.managerId == myUid() ||
-        exists(/databases/$(database)/documents/storeMembers/$(storeId)/members/$(myUid()))
-      );
-      allow list: if signedIn();
+      allow get, list: if signedIn();
       allow create: if isManager() && request.resource.data.managerId == myUid();
       allow update, delete: if isStoreOwner(storeId)
-        && request.resource.data.managerId == resource.data.managerId
-        && request.resource.data.createdAt == resource.data.createdAt;
+        && request.resource.data.managerId == resource.data.managerId;
     }
 
     match /storeMembers/{storeId}/members/{uid} {
@@ -45,10 +81,13 @@ service cloud.firestore {
     }
 
     match /checkins/{checkinId} {
-      allow get: if isManager() || (signedIn() && resource.data.employeeId == myUid());
-      allow list: if isManager();
+      allow get: if (signedIn() && resource.data.employeeId == myUid())
+        || managerOwnsCheckin(resource.data);
+      allow list: if (signedIn() && resource.data.employeeId == myUid())
+        || managerOwnsCheckin(resource.data);
       allow create: if signedIn() && request.resource.data.employeeId == myUid();
-      allow update, delete: if isManager();
+      allow update: if false;
+      allow delete: if managerOwnsCheckin(resource.data);
     }
   }
 }
