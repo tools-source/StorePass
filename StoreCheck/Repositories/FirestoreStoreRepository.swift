@@ -201,6 +201,38 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
 
         do {
             let response = try await callable(name: "joinStoreByCode", payload: ["code": normalizedCode], responseType: JoinStorePayload.self)
+
+            guard let uid = auth.currentUser?.uid else {
+                throw NSError(
+                    domain: "StorePass",
+                    code: 4001,
+                    userInfo: [NSLocalizedDescriptionKey: "You must be signed in."]
+                )
+            }
+
+            let membershipSnapshot = try await db.collection("storeMembers")
+                .document(response.storeId)
+                .collection("members")
+                .document(uid)
+                .getDocument()
+            let userSnapshot = try await db.collection("users")
+                .document(uid)
+                .getDocument()
+
+            let hasMembership = membershipSnapshot.exists
+            let assignedStoreIds = userSnapshot.data()?["assignedStoreIds"] as? [String] ?? []
+            let hasAssignedStore = assignedStoreIds.contains(response.storeId)
+
+            print("[Stores] join verification storeId=\(response.storeId) uid=\(uid) member=\(hasMembership) assigned=\(hasAssignedStore)")
+
+            if !hasMembership || !hasAssignedStore {
+                throw NSError(
+                    domain: "StorePass",
+                    code: 4091,
+                    userInfo: [NSLocalizedDescriptionKey: "Join succeeded but membership not saved. Check server logs."]
+                )
+            }
+
             return JoinStoreResult(storeId: response.storeId, storeName: response.storeName, alreadyJoined: response.alreadyJoined ?? false)
         } catch {
             let nsError = error as NSError

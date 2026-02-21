@@ -68,9 +68,19 @@ final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
     }
 
     func createCheckIn(_ checkIn: CheckIn) async throws {
+        let payload = encode(checkIn: checkIn)
+        print("[CheckIn] write payload storeId=\(checkIn.storeId) employeeId=\(checkIn.employeeId) lat=\(checkIn.clientLat) lng=\(checkIn.clientLng) distance=\(checkIn.distanceMeters) accuracy=\(checkIn.accuracyMeters)")
+
         do {
-            try await db.collection("checkins").document(checkIn.id).setData(encode(checkIn: checkIn))
+            try await db.collection("checkins").document(checkIn.id).setData(payload)
         } catch {
+            let nsError = error as NSError
+            if nsError.domain == FirestoreErrorDomain,
+               let firestoreCode = FirestoreErrorCode(rawValue: nsError.code) {
+                print("[CheckIn] createCheckIn error domain=\(nsError.domain) code=\(nsError.code) firestoreCode=\(firestoreCode)")
+            } else {
+                print("[CheckIn] createCheckIn error domain=\(nsError.domain) code=\(nsError.code)")
+            }
             throw mapFirestoreError(error)
         }
     }
