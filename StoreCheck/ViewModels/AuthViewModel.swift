@@ -19,6 +19,7 @@ final class AuthViewModel: ObservableObject {
     @Published var showManagerAccessRequired = false
     @Published var managerAccessMessage = "This account does not have manager access. Please switch to Employee mode or ask an admin to update your role."
     @Published var showEmployeeSetupRequired = false
+    @Published private(set) var isRoleResolutionLoading = false
     @Published private(set) var currentUser: AppUser?
 
     @AppStorage("lastRequestedRole") private var lastRequestedRoleRaw: String = ""
@@ -36,7 +37,9 @@ final class AuthViewModel: ObservableObject {
 
     func restoreSession(forceSignOutOnLaunch: Bool = false) async {
         isLoading = true
+        isRoleResolutionLoading = true
         defer { isLoading = false }
+        defer { isRoleResolutionLoading = false }
 
         await authService.restoreSession(forceSignOutOnLaunch: forceSignOutOnLaunch)
 
@@ -48,6 +51,7 @@ final class AuthViewModel: ObservableObject {
         do {
             try await resolveProfileAndRoute(requestedRole: UserRole(rawValue: lastRequestedRoleRaw), isSessionRestore: true)
         } catch {
+            showEmployeeSetupRequired = true
             errorMessage = userFacingMessage(for: error)
         }
     }
@@ -55,12 +59,15 @@ final class AuthViewModel: ObservableObject {
     func signInWithGoogle(requestedRole: UserRole) async {
         guard !isResolvingProfile else { return }
         isLoading = true
+        isRoleResolutionLoading = true
         defer { isLoading = false }
+        defer { isRoleResolutionLoading = false }
 
         do {
             try await authService.signInWithGoogle()
             try await resolveProfileAndRoute(requestedRole: requestedRole, isSessionRestore: false, provider: "google")
         } catch {
+            showEmployeeSetupRequired = true
             errorMessage = userFacingMessage(for: error)
         }
     }
@@ -76,7 +83,9 @@ final class AuthViewModel: ObservableObject {
         Task {
             guard !isResolvingProfile else { return }
             isLoading = true
+            isRoleResolutionLoading = true
             defer { isLoading = false }
+            defer { isRoleResolutionLoading = false }
 
             do {
                 guard case .success(let authorization) = result,
@@ -90,6 +99,7 @@ final class AuthViewModel: ObservableObject {
                 try await authService.signInWithApple(idToken: idToken, rawNonce: nonce, fullName: credential.fullName, email: credential.email)
                 try await resolveProfileAndRoute(requestedRole: requestedRole, isSessionRestore: false, provider: "apple")
             } catch {
+                showEmployeeSetupRequired = true
                 errorMessage = userFacingMessage(for: error)
             }
         }
@@ -131,6 +141,7 @@ final class AuthViewModel: ObservableObject {
             resolvedRole = nil
             authState = .signedOut
             logAuth("role_resolution_setup_required", uid: firebaseUser.uid, requestedRole: requestedRole)
+            logAuth("routing_decision", uid: firebaseUser.uid, requestedRole: requestedRole, details: ["decision": "setupRequired"])
             return
         }
         logAuth("role_resolution_loaded", uid: firebaseUser.uid, requestedRole: requestedRole, details: ["resolvedRole": profile.role.rawValue, "isActive": profile.isActive])
@@ -160,6 +171,7 @@ final class AuthViewModel: ObservableObject {
 
         syncState(with: appUser(from: profile), role: profile.role)
         logAuth("route_signed_in", uid: firebaseUser.uid, requestedRole: requestedRole, details: ["resolvedRole": profile.role.rawValue])
+        logAuth("routing_decision", uid: firebaseUser.uid, requestedRole: requestedRole, details: ["decision": "resolved", "resolvedRole": profile.role.rawValue])
 
         if isSessionRestore {
             return
@@ -178,6 +190,7 @@ final class AuthViewModel: ObservableObject {
             resolvedRole = nil
             currentUser = nil
             authService.setCurrentUser(nil)
+            logAuth("routing_decision", uid: firebaseUser.uid, requestedRole: requestedRole, details: ["decision": "setupRequired"])
             return
         }
 
@@ -204,7 +217,9 @@ final class AuthViewModel: ObservableObject {
 
     private func signInRecovery(with role: UserRole) async {
         isLoading = true
+        isRoleResolutionLoading = true
         defer { isLoading = false }
+        defer { isRoleResolutionLoading = false }
 
         do {
             try await resolveProfileAndRoute(requestedRole: role, isSessionRestore: false)
@@ -228,6 +243,7 @@ final class AuthViewModel: ObservableObject {
         showManagerAccessRequired = false
         managerAccessMessage = "This account does not have manager access. Please switch to Employee mode or ask an admin to update your role."
         showEmployeeSetupRequired = false
+        isRoleResolutionLoading = false
     }
 
     private func logAuth(_ event: String, uid: String, requestedRole: UserRole?, details: [String: Any] = [:]) {

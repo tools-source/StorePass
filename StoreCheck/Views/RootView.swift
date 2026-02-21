@@ -30,7 +30,10 @@ private struct RootContentView: View {
                 ProgressView("Loading account")
                     .tint(.white)
             case .needsLogin:
-                if authViewModel.showManagerAccessRequired {
+                if authViewModel.isRoleResolutionLoading {
+                    ProgressView("Loading account")
+                        .tint(.white)
+                } else if authViewModel.showManagerAccessRequired {
                     ManagerAccessRequiredView()
                 } else if authViewModel.showEmployeeSetupRequired {
                     EmployeeSetupRequiredView()
