@@ -204,11 +204,13 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
             return JoinStoreResult(storeId: response.storeId, storeName: response.storeName, alreadyJoined: response.alreadyJoined ?? false)
         } catch {
             let nsError = error as NSError
+            print("[Stores] joinStoreByCode error domain=\(nsError.domain) code=\(nsError.code)")
+            print("[Stores] joinStoreByCode userInfo=\(nsError.userInfo)")
             if nsError.code == 404 || nsError.code >= 500 {
                 throw NSError(
                     domain: nsError.domain,
                     code: nsError.code,
-                    userInfo: [NSLocalizedDescriptionKey: "Join service unavailable. Please try again."]
+                    userInfo: [NSLocalizedDescriptionKey: "Join failed (status \(nsError.code)). See console logs."]
                 )
             }
             throw error
@@ -217,17 +219,29 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
 
     private func callable<T: Decodable>(name: String, payload: [String: Any], responseType: T.Type) async throws -> T {
         FirebaseBootstrap.assertConfigured(context: "FirestoreStoreRepository.callable")
+        print("🔐 Current user =", auth.currentUser?.uid ?? "nil")
 
         guard let user = auth.currentUser else {
             throw NSError(domain: "StorePass", code: 4001, userInfo: [NSLocalizedDescriptionKey: "You must be signed in."])
         }
 
         let projectID = firebaseApp.options.projectID ?? ""
+        print("🌍 ProjectID:", projectID)
         guard !projectID.isEmpty else {
             throw NSError(domain: "StorePass", code: 4002, userInfo: [NSLocalizedDescriptionKey: "Firebase project is not configured correctly."])
         }
 
-        let token = try await user.getIDToken()
+        let token: String
+        do {
+            token = try await user.getIDToken()
+            print("🔐 ID token length =", token.count)
+        } catch {
+            let nsError = error as NSError
+            print("🔐 Token retrieval failed domain=\(nsError.domain) code=\(nsError.code)")
+            print("🔐 Token retrieval userInfo=\(nsError.userInfo)")
+            throw error
+        }
+
         let functionURLs = functionEndpointURLs(projectID: projectID, name: name)
         guard !functionURLs.isEmpty else {
             throw NSError(domain: "StorePass", code: 4003, userInfo: [NSLocalizedDescriptionKey: "Unable to build backend URL."])
@@ -237,9 +251,10 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
         var lastError: NSError?
 
         for url in functionURLs {
-            #if DEBUG
-            print("[Stores] Calling function URL: \(url.absoluteString)")
-            #endif
+            print("🌍 Calling function:", name)
+            print("🌍 ProjectID:", projectID)
+            print("🌍 Final URL:", url.absoluteString)
+            print("📦 Payload:", payload)
 
             var request = URLRequest(url: url)
             request.httpMethod = "POST"
@@ -253,6 +268,8 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
             }
 
             let rawResponse = String(data: data, encoding: .utf8) ?? "<non-utf8 \(data.count) bytes>"
+            print("🌍 HTTP Status:", httpResponse.statusCode)
+            print("🌍 Raw Response:", rawResponse)
             let wrapped = try? decoder.decode(BackendEnvelope<T>.self, from: data)
             if let backendMessage = wrapped?.error?.message {
                 let message = "Backend request failed (status=\(httpResponse.statusCode)). \(backendMessage). Raw: \(rawResponse)"
@@ -299,6 +316,7 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
 
     private func functionEndpointURLs(projectID: String, name: String) -> [URL] {
         let region = ProcessInfo.processInfo.environment["FIREBASE_FUNCTIONS_REGION"] ?? "us-central1"
+        print("🌎 Using region: \(region)")
         let hosts = [
             "\(region)-\(projectID).cloudfunctions.net",
             "us-central1-\(projectID).cloudfunctions.net",
