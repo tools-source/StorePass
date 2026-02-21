@@ -70,7 +70,7 @@ service cloud.firestore {
     match /stores/{storeId} {
       allow get, list: if signedIn();
       allow create: if isManager() && request.resource.data.managerId == myUid();
-      allow update, delete: if isStoreOwner(storeId)
+      allow update, delete: if isManager()
         && request.resource.data.managerId == resource.data.managerId;
     }
 

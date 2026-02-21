@@ -206,7 +206,14 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
             let nsError = error as NSError
             print("[Stores] joinStoreByCode error domain=\(nsError.domain) code=\(nsError.code)")
             print("[Stores] joinStoreByCode userInfo=\(nsError.userInfo)")
-            if nsError.code == 404 || nsError.code >= 500 {
+            if nsError.code == 404 {
+                throw NSError(
+                    domain: nsError.domain,
+                    code: nsError.code,
+                    userInfo: [NSLocalizedDescriptionKey: "Join service not deployed or wrong region (404)."]
+                )
+            }
+            if nsError.code >= 500 {
                 throw NSError(
                     domain: nsError.domain,
                     code: nsError.code,
@@ -219,14 +226,18 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
 
     private func callable<T: Decodable>(name: String, payload: [String: Any], responseType: T.Type) async throws -> T {
         FirebaseBootstrap.assertConfigured(context: "FirestoreStoreRepository.callable")
-        print("🔐 Current user =", auth.currentUser?.uid ?? "nil")
+#if DEBUG
+        print("🔐 Current user uid =", auth.currentUser?.uid ?? "nil")
+#endif
 
         guard let user = auth.currentUser else {
             throw NSError(domain: "StorePass", code: 4001, userInfo: [NSLocalizedDescriptionKey: "You must be signed in."])
         }
 
         let projectID = firebaseApp.options.projectID ?? ""
+#if DEBUG
         print("🌍 ProjectID:", projectID)
+#endif
         guard !projectID.isEmpty else {
             throw NSError(domain: "StorePass", code: 4002, userInfo: [NSLocalizedDescriptionKey: "Firebase project is not configured correctly."])
         }
@@ -234,7 +245,9 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
         let token: String
         do {
             token = try await user.getIDToken()
+#if DEBUG
             print("🔐 ID token length =", token.count)
+#endif
         } catch {
             let nsError = error as NSError
             print("🔐 Token retrieval failed domain=\(nsError.domain) code=\(nsError.code)")
@@ -243,20 +256,20 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
         }
 
         let functionURLs = functionEndpointURLs(projectID: projectID, name: name)
-        guard !functionURLs.isEmpty else {
-            throw NSError(domain: "StorePass", code: 4003, userInfo: [NSLocalizedDescriptionKey: "Unable to build backend URL."])
-        }
 
         let decoder = JSONDecoder()
-        var lastError: NSError?
+        var saw404 = false
 
-        for url in functionURLs {
+        for endpoint in functionURLs {
+#if DEBUG
             print("🌍 Calling function:", name)
             print("🌍 ProjectID:", projectID)
-            print("🌍 Final URL:", url.absoluteString)
+            print("🌍 Region:", endpoint.region)
+            print("🌍 Final URL:", endpoint.absoluteString)
             print("📦 Payload:", payload)
+#endif
 
-            var request = URLRequest(url: url)
+            var request = URLRequest(url: endpoint.url)
             request.httpMethod = "POST"
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
@@ -268,14 +281,16 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
             }
 
             let rawResponse = String(data: data, encoding: .utf8) ?? "<non-utf8 \(data.count) bytes>"
+#if DEBUG
             print("🌍 HTTP Status:", httpResponse.statusCode)
             print("🌍 Raw Response:", rawResponse)
+#endif
             let wrapped = try? decoder.decode(BackendEnvelope<T>.self, from: data)
             if let backendMessage = wrapped?.error?.message {
                 let message = "Backend request failed (status=\(httpResponse.statusCode)). \(backendMessage). Raw: \(rawResponse)"
                 let error = NSError(domain: "StorePass", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: message])
                 if httpResponse.statusCode == 404 {
-                    lastError = error
+                    saw404 = true
                     continue
                 }
                 throw error
@@ -285,7 +300,7 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
                 let message = "Backend request failed (status=\(httpResponse.statusCode)). Raw: \(rawResponse)"
                 let error = NSError(domain: "StorePass", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: message])
                 if httpResponse.statusCode == 404 {
-                    lastError = error
+                    saw404 = true
                     continue
                 }
                 throw error
@@ -307,31 +322,32 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
             throw NSError(domain: "StorePass", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: message])
         }
 
-        if let lastError {
-            throw lastError
+        if saw404 {
+            throw NSError(
+                domain: "StorePass",
+                code: 404,
+                userInfo: [NSLocalizedDescriptionKey: "Function \(name) not deployed in \(functionRegion()) (404)."]
+            )
         }
 
         throw NSError(domain: "StorePass", code: 4003, userInfo: [NSLocalizedDescriptionKey: "Unable to build backend URL."])
     }
 
-    private func functionEndpointURLs(projectID: String, name: String) -> [URL] {
-        let region = ProcessInfo.processInfo.environment["FIREBASE_FUNCTIONS_REGION"] ?? "us-central1"
-        print("🌎 Using region: \(region)")
-        let hosts = [
-            "\(region)-\(projectID).cloudfunctions.net",
-            "us-central1-\(projectID).cloudfunctions.net",
-            "\(name)-\(region)-\(projectID).a.run.app"
+    private func functionRegion() -> String {
+        ProcessInfo.processInfo.environment["FIREBASE_FUNCTIONS_REGION"] ?? "us-central1"
+    }
+
+    private func functionEndpointURLs(projectID: String, name: String) -> [(absoluteString: String, region: String, url: URL)] {
+        let region = functionRegion()
+        let candidates: [(String, String)] = [
+            ("https://\(region)-\(projectID).cloudfunctions.net/\(name)", region),
+            ("https://\(name)-\(region)-\(projectID).a.run.app/", region)
         ]
 
-        var urls: [URL] = []
-        for host in hosts {
-            if let url = URL(string: "https://\(host)/\(name)") {
-                urls.append(url)
-            } else if host.contains(".a.run.app"), let url = URL(string: "https://\(host)") {
-                urls.append(url)
-            }
+        return candidates.compactMap { candidate, region in
+            guard let url = URL(string: candidate) else { return nil }
+            return (candidate, region, url)
         }
-        return Array(NSOrderedSet(array: urls).compactMap { $0 as? URL })
     }
 
     private static func generateJoinCode(length: Int) -> String {

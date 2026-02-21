@@ -5,6 +5,8 @@ const crypto = require('crypto');
 admin.initializeApp();
 const db = admin.firestore();
 
+// DEPLOYMENT NOTE: firebase deploy --only functions:joinStoreByCode,functions:getStoreJoinCode,functions:rotateStoreCode --project storecheck-6fdc8
+
 function normalizeCode(code) {
   return String(code || '').trim().toUpperCase();
 }
@@ -172,6 +174,7 @@ exports.joinStoreByCode = onRequest({ region: 'us-central1' }, async (req, res) 
     await memberRef.set({
       memberId: employeeUid,
       storeId,
+      storeName: storeDoc.data().name || 'Store',
       role: 'employee',
       joinedAt: admin.firestore.FieldValue.serverTimestamp(),
       userId: employeeUid,
