@@ -13,7 +13,10 @@ service cloud.firestore {
       return /databases/$(database)/documents/users/$(myUid());
     }
 
-    // Safe to call even when user doc may not exist.
+    function managerPath() {
+      return /databases/$(database)/documents/managers/$(myUid());
+    }
+
     function myUserExists() {
       return signedIn() && exists(myUserPath());
     }
@@ -26,8 +29,12 @@ service cloud.firestore {
       return myUserExists() && get(myUserPath()).data.isActive == true;
     }
 
-    function isManager() {
-      return myUserRoleIsManager() && myUserIsActive();
+    function managerDocActive() {
+      return signedIn() && exists(managerPath()) && get(managerPath()).data.isActive == true;
+    }
+
+    function activeManager() {
+      return managerDocActive() || (myUserRoleIsManager() && myUserIsActive());
     }
 
     function isSelf(uid) {
@@ -51,7 +58,7 @@ service cloud.firestore {
     }
 
     function managerOwnsCheckin(data) {
-      return isManager()
+      return activeManager()
         && data.storeId is string
         && isStoreOwner(data.storeId);
     }
@@ -69,24 +76,21 @@ service cloud.firestore {
 
     match /stores/{storeId} {
       allow get, list: if signedIn();
-      allow create: if isManager() && request.resource.data.managerId == myUid();
-      allow update, delete: if isManager()
+      allow create: if activeManager() && request.resource.data.managerId == myUid();
+      allow update, delete: if activeManager()
         && request.resource.data.managerId == resource.data.managerId;
     }
 
     match /storeMembers/{storeId}/members/{uid} {
-      allow get: if isSelf(uid) || isManager();
-      allow list: if isManager();
+      allow get: if isSelf(uid) || activeManager();
+      allow list: if activeManager();
       allow create: if isSelf(uid)
         && request.resource.id == myUid()
         && request.resource.data.memberId == myUid()
-        && request.resource.data.storeId == storeId
-        && request.resource.data.role == "employee"
-        && request.resource.data.isActive == true;
+        && request.resource.data.storeId == storeId;
       allow update: if isSelf(uid)
         && request.resource.data.memberId == resource.data.memberId
         && request.resource.data.storeId == resource.data.storeId
-        && request.resource.data.role == resource.data.role
         && request.resource.data.joinedAt == resource.data.joinedAt;
       allow delete: if false;
     }
