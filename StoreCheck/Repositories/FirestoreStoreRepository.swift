@@ -51,6 +51,8 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
     }
 
     func fetchManagerStores(managerId: String) async throws -> [Store] {
+        _ = try await logCurrentUserAccessState(context: "before store list query")
+
         let primarySnapshot = try await db.collection("stores")
             .whereField("managerId", isEqualTo: managerId)
             .getDocuments()
@@ -106,29 +108,17 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
             throw StoreCreationError.invalidName
         }
 
-        let managerDoc = try await db.collection("managers").document(user.uid).getDocument()
-        guard let managerData = managerDoc.data() else {
-            throw StoreCreationError.missingManagerProfile
+        let state = try await logCurrentUserAccessState(context: "before store create")
+        guard state.exists else {
+            throw StoreCreationError.missingUserProfile
         }
 
-        guard managerData.keys.contains("isActive") else {
-            throw StoreCreationError.missingManagerActiveState
+        guard state.role == UserRole.manager.rawValue else {
+            throw StoreCreationError.notAManager
         }
 
-        guard (managerData["isActive"] as? Bool) == true else {
-            throw StoreCreationError.managerInactive
-        }
-
-        let userDoc = try await db.collection("users").document(user.uid).getDocument()
-        if let userData = userDoc.data() {
-            let role = (userData["role"] as? String)?.lowercased()
-            if role != "manager" {
-                throw StoreCreationError.notAManager
-            }
-
-            if (userData["isActive"] as? Bool) != true {
-                throw StoreCreationError.userNotActive
-            }
+        guard state.isActive == true else {
+            throw StoreCreationError.userNotActive
         }
 
         let joinCode = Self.generateJoinCode(length: 8)
@@ -262,6 +252,20 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
             }
             throw error
         }
+    }
+
+    private func logCurrentUserAccessState(context: String) async throws -> (uid: String, exists: Bool, role: String?, isActive: Bool?) {
+        guard let uid = auth.currentUser?.uid else {
+            print("[Auth] \(context) uid=nil exists=false role=nil isActive=nil")
+            return (uid: "", exists: false, role: nil, isActive: nil)
+        }
+
+        let userDoc = try await db.collection("users").document(uid).getDocument()
+        let data = userDoc.data()
+        let role = (data?["role"] as? String)?.lowercased()
+        let isActive = data?["isActive"] as? Bool
+        print("[Auth] \(context) uid=\(uid) exists=\(userDoc.exists) role=\(role ?? "nil") isActive=\(String(describing: isActive))")
+        return (uid: uid, exists: userDoc.exists, role: role, isActive: isActive)
     }
 
     private func callable<T: Decodable>(name: String, payload: [String: Any], responseType: T.Type) async throws -> T {
@@ -433,9 +437,7 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
 private enum StoreCreationError: LocalizedError {
     case notSignedIn
     case invalidName
-    case missingManagerProfile
-    case missingManagerActiveState
-    case managerInactive
+    case missingUserProfile
     case notAManager
     case userNotActive
 
@@ -445,12 +447,8 @@ private enum StoreCreationError: LocalizedError {
             return "You must be signed in to create a store."
         case .invalidName:
             return "Store name is required."
-        case .missingManagerProfile:
-            return "Manager profile not found. Please contact support."
-        case .missingManagerActiveState:
-            return "Manager profile is missing activation status. Please contact support."
-        case .managerInactive:
-            return "Your manager account is inactive. Contact an administrator."
+        case .missingUserProfile:
+            return "User profile not found. Please sign in again."
         case .notAManager:
             return "Only active managers can create stores."
         case .userNotActive:

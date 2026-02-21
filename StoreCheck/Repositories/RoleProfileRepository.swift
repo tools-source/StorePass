@@ -20,13 +20,21 @@ struct EmployeeProfile {
     let assignedStoreIds: [String]
 }
 
+struct UserAccessProfile {
+    let id: String
+    let name: String
+    let email: String?
+    let role: UserRole
+    let isActive: Bool
+    let provider: String
+    let createdAt: Date
+    let lastLoginAt: Date
+    let assignedStoreIds: [String]
+}
+
 protocol RoleProfileRepositoryProtocol {
-    func fetchManagerProfile(uid: String) async throws -> ManagerProfile?
-    func fetchEmployeeProfile(uid: String) async throws -> EmployeeProfile?
-    func upsertManagerProfile(uid: String, name: String, email: String?) async throws
-    func upsertEmployeeProfile(uid: String, name: String, email: String?) async throws
-    func deleteManagerProfile(uid: String) async throws
-    func deleteEmployeeProfile(uid: String) async throws
+    func ensureUserProfile(uid: String, name: String, email: String?, provider: String) async throws -> UserAccessProfile
+    func fetchUserProfile(uid: String) async throws -> UserAccessProfile?
 }
 
 final class FirestoreRoleProfileRepository: RoleProfileRepositoryProtocol {
@@ -35,61 +43,49 @@ final class FirestoreRoleProfileRepository: RoleProfileRepositoryProtocol {
         return Firestore.firestore()
     }
 
-    func fetchManagerProfile(uid: String) async throws -> ManagerProfile? {
-        let doc = try await db.collection("managers").document(uid).getDocument()
-        guard let data = doc.data() else { return nil }
-        return ManagerProfile(
-            id: uid,
-            name: data["name"] as? String ?? "StorePass User",
-            email: data["email"] as? String,
-            createdAt: (data["createdAt"] as? Timestamp)?.dateValue() ?? Date(),
-            lastLoginAt: (data["lastLoginAt"] as? Timestamp)?.dateValue() ?? Date(),
-            isActive: data["isActive"] as? Bool ?? true
-        )
+    func ensureUserProfile(uid: String, name: String, email: String?, provider: String) async throws -> UserAccessProfile {
+        let userRef = db.collection("users").document(uid)
+        let userDoc = try await userRef.getDocument()
+
+        if userDoc.exists {
+            try await userRef.setData([
+                "name": name,
+                "email": email as Any,
+                "provider": provider,
+                "lastLoginAt": FieldValue.serverTimestamp()
+            ], merge: true)
+        } else {
+            try await userRef.setData([
+                "name": name,
+                "email": email as Any,
+                "role": UserRole.employee.rawValue,
+                "isActive": true,
+                "provider": provider,
+                "createdAt": FieldValue.serverTimestamp(),
+                "lastLoginAt": FieldValue.serverTimestamp(),
+                "assignedStoreIds": []
+            ], merge: true)
+        }
+
+        guard let profile = try await fetchUserProfile(uid: uid) else {
+            throw NSError(domain: "StorePass", code: 3001, userInfo: [NSLocalizedDescriptionKey: "Unable to load profile."])
+        }
+        return profile
     }
 
-    func fetchEmployeeProfile(uid: String) async throws -> EmployeeProfile? {
-        let doc = try await db.collection("employees").document(uid).getDocument()
+    func fetchUserProfile(uid: String) async throws -> UserAccessProfile? {
+        let doc = try await db.collection("users").document(uid).getDocument()
         guard let data = doc.data() else { return nil }
-        return EmployeeProfile(
+        return UserAccessProfile(
             id: uid,
             name: data["name"] as? String ?? "StorePass User",
             email: data["email"] as? String,
+            role: UserRole(rawValue: (data["role"] as? String ?? UserRole.employee.rawValue).lowercased()) ?? .employee,
+            isActive: data["isActive"] as? Bool ?? true,
+            provider: data["provider"] as? String ?? "unknown",
             createdAt: (data["createdAt"] as? Timestamp)?.dateValue() ?? Date(),
             lastLoginAt: (data["lastLoginAt"] as? Timestamp)?.dateValue() ?? Date(),
-            isActive: data["isActive"] as? Bool ?? true,
             assignedStoreIds: data["assignedStoreIds"] as? [String] ?? []
         )
-    }
-
-    func upsertManagerProfile(uid: String, name: String, email: String?) async throws {
-        let now = Date()
-        try await db.collection("managers").document(uid).setData([
-            "name": name,
-            "email": email as Any,
-            "createdAt": FieldValue.serverTimestamp(),
-            "lastLoginAt": Timestamp(date: now),
-            "isActive": true
-        ], merge: true)
-    }
-
-    func upsertEmployeeProfile(uid: String, name: String, email: String?) async throws {
-        let now = Date()
-        try await db.collection("employees").document(uid).setData([
-            "name": name,
-            "email": email as Any,
-            "createdAt": FieldValue.serverTimestamp(),
-            "lastLoginAt": Timestamp(date: now),
-            "isActive": true,
-            "assignedStoreIds": FieldValue.arrayUnion([])
-        ], merge: true)
-    }
-
-    func deleteManagerProfile(uid: String) async throws {
-        try await db.collection("managers").document(uid).delete()
-    }
-
-    func deleteEmployeeProfile(uid: String) async throws {
-        try await db.collection("employees").document(uid).delete()
     }
 }
