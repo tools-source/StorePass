@@ -108,6 +108,10 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
             throw StoreCreationError.invalidName
         }
 
+        guard radiusMeters > 0 else {
+            throw NSError(domain: "StorePass", code: 4010, userInfo: [NSLocalizedDescriptionKey: "Store radius must be greater than 0 meters."])
+        }
+
         let state = try await logCurrentUserAccessState(context: "before store create")
         guard state.exists else {
             throw StoreCreationError.missingUserProfile
@@ -215,7 +219,7 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
                 .getDocument(source: .server)
             let assignedStoreIds = userSnapshot.data()?["assignedStoreIds"] as? [String] ?? []
 
-            let membershipSnapshot = try await db.collection("storeMembers")
+            let membershipSnapshot = try await db.collection("stores")
                 .document(response.storeId)
                 .collection("members")
                 .document(uid)
@@ -233,6 +237,7 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
                 assignedStoreIds: assignedStoreIds
             )
         } catch {
+            FirestorePermissionLogger.log(operation: "joinStoreByCode", path: "stores/*/members/*", error: error)
             let nsError = error as NSError
             print("[Stores] joinStoreByCode error domain=\(nsError.domain) code=\(nsError.code)")
             print("[Stores] joinStoreByCode userInfo=\(nsError.userInfo)")
@@ -404,6 +409,7 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
     }
 
     private func logFirestoreCreateError(_ error: Error, path: String) {
+        FirestorePermissionLogger.log(operation: "setData", path: path, error: error)
         let nsError = error as NSError
         print("[Stores] Create error path=\(path)")
         print("[Stores] NSError domain=\(nsError.domain) code=\(nsError.code)")

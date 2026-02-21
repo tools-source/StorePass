@@ -68,7 +68,7 @@ export const joinStoreByCode = onRequest({ region: 'us-central1' }, async (req, 
     const storeId = storeDoc.id;
     console.log(`[JOIN] resolved uid=${uid} storeId=${storeId} joinCodeLast4=${joinCodeLast4}`);
 
-    const memberPath = `storeMembers/${storeId}/members/${uid}`;
+    const memberPath = `stores/${storeId}/members/${uid}`;
     const userPath = `users/${uid}`;
     const memberRef = db.doc(memberPath);
     const userRef = db.doc(userPath);

@@ -1,6 +1,5 @@
 import FirebaseAuth
 import FirebaseCore
-import FirebaseFirestore
 import SwiftUI
 
 struct AccountSettingsView: View {
@@ -67,11 +66,6 @@ final class AccountSettingsViewModel: ObservableObject {
         return Auth.auth()
     }
 
-    private var db: Firestore {
-        FirebaseBootstrap.assertConfigured(context: "AccountSettingsViewModel.db")
-        return Firestore.firestore()
-    }
-
     private var firebaseApp: FirebaseApp {
         FirebaseBootstrap.assertConfigured(context: "AccountSettingsViewModel.firebaseApp")
         guard let app = FirebaseApp.app() else {
@@ -87,13 +81,7 @@ final class AccountSettingsViewModel: ObservableObject {
         }
 
         do {
-            if role == .manager {
-                try await db.collection("managers").document(currentUser.uid).delete()
-            } else {
-                try await db.collection("employees").document(currentUser.uid).delete()
-            }
-
-            _ = try? await callable(name: "deleteMyAccount", payload: ["mode": "cleanup_memberships"])
+            _ = try? await callable(name: "deleteMyAccount", payload: ["mode": "cleanup_memberships", "role": role?.rawValue as Any])
 
             if auth.currentUser != nil {
                 do {
