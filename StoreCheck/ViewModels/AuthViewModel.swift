@@ -17,6 +17,7 @@ final class AuthViewModel: ObservableObject {
     @Published var isLoading = false
     @Published var errorMessage: String?
     @Published var showManagerAccessRequired = false
+    @Published var managerAccessMessage = "This account is not provisioned in /managers. Sign in as Employee or ask an admin for manager access."
     @Published var showEmployeeSetupRequired = false
     @Published private(set) var currentUser: AppUser?
 
@@ -111,23 +112,45 @@ final class AuthViewModel: ObservableObject {
 
         let managerProfile = try await roleProfileRepository.fetchManagerProfile(uid: firebaseUser.uid)
         var employeeProfile = try await roleProfileRepository.fetchEmployeeProfile(uid: firebaseUser.uid)
+        let hasAnyRoleProfile = managerProfile != nil || employeeProfile != nil
 
         showManagerAccessRequired = false
         showEmployeeSetupRequired = false
 
         switch requestedRole {
         case .manager:
-            guard let managerProfile else {
+            if managerProfile == nil, !hasAnyRoleProfile {
+                try await roleProfileRepository.upsertManagerProfile(
+                    uid: firebaseUser.uid,
+                    name: firebaseUser.displayName ?? "StorePass User",
+                    email: firebaseUser.email
+                )
+            }
+
+            let resolvedManagerProfile = try await roleProfileRepository.fetchManagerProfile(uid: firebaseUser.uid)
+
+            guard let resolvedManagerProfile else {
+                managerAccessMessage = "This account is not provisioned in /managers. Sign in as Employee or ask an admin for manager access."
                 showManagerAccessRequired = true
                 resolvedRole = nil
                 currentUser = nil
                 authState = .signedOut
                 return
             }
-            syncState(with: appUser(from: managerProfile, fallbackEmail: firebaseUser.email), role: .manager)
+
+            guard resolvedManagerProfile.isActive else {
+                managerAccessMessage = "Your manager account exists but is currently inactive. Contact an admin to reactivate access."
+                showManagerAccessRequired = true
+                resolvedRole = nil
+                currentUser = nil
+                authState = .signedOut
+                return
+            }
+
+            syncState(with: appUser(from: resolvedManagerProfile, fallbackEmail: firebaseUser.email), role: .manager)
 
         case .employee:
-            if employeeProfile == nil {
+            if employeeProfile == nil, !hasAnyRoleProfile {
                 try await roleProfileRepository.upsertEmployeeProfile(
                     uid: firebaseUser.uid,
                     name: firebaseUser.displayName ?? "StorePass User",
@@ -192,6 +215,7 @@ final class AuthViewModel: ObservableObject {
         currentUser = nil
         authService.setCurrentUser(nil)
         showManagerAccessRequired = false
+        managerAccessMessage = "This account is not provisioned in /managers. Sign in as Employee or ask an admin for manager access."
         showEmployeeSetupRequired = false
     }
 
