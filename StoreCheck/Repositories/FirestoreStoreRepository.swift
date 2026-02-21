@@ -1,7 +1,6 @@
 import FirebaseAuth
 import FirebaseCore
 import FirebaseFirestore
-import FirebaseFirestoreSwift
 import Foundation
 
 final class FirestoreStoreRepository: StoreRepositoryProtocol {
@@ -75,6 +74,7 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
 
     func upsertStore(_ store: Store) async throws {
         try await db.collection("stores").document(store.id).setData([
+            "id": store.id, // ✅ keep id in doc data for Codable Store decoding
             "name": store.name,
             "address": store.address,
             "latitude": store.latitude,
@@ -90,7 +90,13 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
         try await db.collection("stores").document(id).delete()
     }
 
-    func createStore(name: String, address: String, latitude: Double, longitude: Double, radiusMeters: Int) async throws -> StoreCreationResult {
+    func createStore(
+        name: String,
+        address: String,
+        latitude: Double,
+        longitude: Double,
+        radiusMeters: Int
+    ) async throws -> StoreCreationResult {
         guard let user = auth.currentUser else {
             throw StoreCreationError.notSignedIn
         }
@@ -129,6 +135,7 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
         let storeRef = db.collection("stores").document()
 
         var payload: [String: Any] = [
+            "id": storeRef.documentID, // ✅ FIX: required by Store decoding if Store has `id`
             "name": trimmedName,
             "managerId": user.uid,
             "ownerId": user.uid,
@@ -165,12 +172,20 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
     }
 
     func rotateStoreCode(storeId: String) async throws -> String {
-        let response = try await callable(name: "rotateStoreCode", payload: ["storeId": storeId], responseType: JoinCodePayload.self)
+        let response = try await callable(
+            name: "rotateStoreCode",
+            payload: ["storeId": storeId],
+            responseType: JoinCodePayload.self
+        )
         return response.joinCode
     }
 
     func getStoreJoinCode(storeId: String) async throws -> String {
-        let response = try await callable(name: "getStoreJoinCode", payload: ["storeId": storeId], responseType: JoinCodePayload.self)
+        let response = try await callable(
+            name: "getStoreJoinCode",
+            payload: ["storeId": storeId],
+            responseType: JoinCodePayload.self
+        )
         return response.joinCode
     }
 
@@ -273,9 +288,11 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
         print("[Stores] NSError domain=\(nsError.domain) code=\(nsError.code)")
         print("[Stores] NSError userInfo=\(nsError.userInfo)")
 
+        // ✅ FIX: correct Firestore error decode for your Firebase version
         if nsError.domain == FirestoreErrorDomain,
-           let firestoreCode = FirestoreErrorCode(rawValue: nsError.code) {
-            print("[Stores] FirestoreErrorCode=\(firestoreCode)")
+           let code = FirestoreErrorCode.Code(rawValue: nsError.code) {
+            let firestoreCode = FirestoreErrorCode(code)
+            print("[Stores] FirestoreErrorCode=\(firestoreCode) (code=\(code))")
         }
     }
 
@@ -284,9 +301,12 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
         var userInfo = nsError.userInfo
         userInfo["path"] = path
 
+        // ✅ FIX: correct Firestore error decode for your Firebase version
         if nsError.domain == FirestoreErrorDomain,
-           let firestoreCode = FirestoreErrorCode(rawValue: nsError.code) {
+           let code = FirestoreErrorCode.Code(rawValue: nsError.code) {
+            let firestoreCode = FirestoreErrorCode(code)
             userInfo["firestoreCode"] = String(describing: firestoreCode)
+            userInfo["firestoreCodeRaw"] = code.rawValue
         }
 
         return NSError(domain: nsError.domain, code: nsError.code, userInfo: userInfo)
@@ -380,6 +400,12 @@ private extension KeyedDecodingContainer {
             }
         }
 
-        throw DecodingError.keyNotFound(keys[0], DecodingError.Context(codingPath: codingPath, debugDescription: "Expected one of keys: \(keys)"))
+        throw DecodingError.keyNotFound(
+            keys[0],
+            DecodingError.Context(
+                codingPath: codingPath,
+                debugDescription: "Expected one of keys: \(keys)"
+            )
+        )
     }
 }
