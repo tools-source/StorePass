@@ -140,12 +140,17 @@ struct ManageStoresView: View {
                     HStack {
                         Button("Copy code") {
                             Task {
-                                let joinCode = viewModel.latestJoinCodesByStoreId[store.id] ?? await viewModel.fetchJoinCode(storeId: store.id)
-                                if let joinCode {
-                                    UIPasteboard.general.string = joinCode
+                                if let cached = viewModel.latestJoinCodesByStoreId[store.id] {
+                                    UIPasteboard.general.string = cached
                                     viewModel.showToast("Code copied")
                                 } else {
-                                    viewModel.storeError = "Unable to fetch store code."
+                                    let fetched = await viewModel.fetchJoinCode(storeId: store.id)
+                                    if let fetched {
+                                        UIPasteboard.general.string = fetched
+                                        viewModel.showToast("Code copied")
+                                    } else {
+                                        viewModel.storeError = "Unable to fetch store code."
+                                    }
                                 }
                             }
                         }
