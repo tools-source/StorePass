@@ -111,6 +111,7 @@ exports.createStore = onCall(async (request) => {
     longitude: Number(longitude),
     radiusMeters: Number(radiusMeters) || 150,
     managerId: request.auth.uid,
+    joinCode,
     joinCodeHash: hashCode(normalizeCode(joinCode)),
     joinCodeLast4: joinCode.slice(-4),
     joinCodeCiphertext: joinCode,
@@ -144,9 +145,15 @@ exports.joinStoreByCode = onRequest({ region: 'us-central1' }, async (req, res) 
       throw new HttpsError('invalid-argument', 'code is required.');
     }
 
+    let storeDoc;
     const byJoinCode = await db.collection('stores').where('joinCode', '==', code).limit(1).get();
-    if (byJoinCode.empty) throw new HttpsError('not-found', 'Invalid join code');
-    const storeDoc = byJoinCode.docs[0];
+    if (!byJoinCode.empty) {
+      storeDoc = byJoinCode.docs[0];
+    } else {
+      const byJoinCodeCiphertext = await db.collection('stores').where('joinCodeCiphertext', '==', code).limit(1).get();
+      if (byJoinCodeCiphertext.empty) throw new HttpsError('not-found', 'Invalid join code');
+      storeDoc = byJoinCodeCiphertext.docs[0];
+    }
 
     const storeId = storeDoc.id;
     const employeeUid = decodedToken.uid;
@@ -155,10 +162,13 @@ exports.joinStoreByCode = onRequest({ region: 'us-central1' }, async (req, res) 
     const alreadyJoined = existingMembership.exists;
 
     await memberRef.set({
-      memberId: employeeUid,
+      userId: employeeUid,
+      role: 'employee',
+      joinedAt: admin.firestore.FieldValue.serverTimestamp(),
+      isActive: true,
+      addedBy: 'join_code',
       storeId,
       storeName: storeDoc.data().name || 'Store',
-      joinedAt: admin.firestore.FieldValue.serverTimestamp(),
     }, { merge: true });
 
     res.status(200).json({ result: { storeId, storeName: storeDoc.data().name || 'Store', alreadyJoined } });
