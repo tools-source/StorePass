@@ -33,20 +33,23 @@ struct LoginView: View {
 
             VStack(spacing: 12) {
                 Button("Continue with Google") {
-                    Task { await viewModel.signInWithGoogle(requestedRole: viewModel.requestedRole ?? .employee) }
+                    guard let requestedRole = viewModel.requestedRole else { return }
+                    Task { await viewModel.signInWithGoogle(requestedRole: requestedRole) }
                 }
                 .buttonStyle(PrimaryButtonStyle())
-                .disabled(viewModel.isLoading)
+                .disabled(viewModel.isLoading || viewModel.requestedRole == nil)
 
                 SignInWithAppleButton(.signIn) { request in
                     viewModel.prepareAppleSignInRequest(request)
                 } onCompletion: { result in
-                    viewModel.handleAppleSignInResult(result, requestedRole: viewModel.requestedRole ?? .employee)
+                    guard let requestedRole = viewModel.requestedRole else { return }
+                    viewModel.handleAppleSignInResult(result, requestedRole: requestedRole)
                 }
                 .signInWithAppleButtonStyle(.white)
                 .frame(maxWidth: 375)
                 .frame(height: 52)
                 .clipShape(RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous))
+                .disabled(viewModel.isLoading || viewModel.requestedRole == nil)
             }
             .frame(maxWidth: 420)
 
@@ -59,11 +62,6 @@ struct LoginView: View {
             Button("OK", role: .cancel) { viewModel.errorMessage = nil }
         } message: {
             Text(viewModel.errorMessage ?? "Unknown error")
-        }
-        .onAppear {
-            if viewModel.requestedRole == nil {
-                viewModel.requestedRole = .employee
-            }
         }
         .onChange(of: viewModel.errorMessage) { _, newValue in
             showError = newValue != nil

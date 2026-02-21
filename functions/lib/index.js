@@ -33,7 +33,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.getStoreJoinCode = exports.rotateStoreCode = exports.joinStoreByCode = void 0;
+exports.setUserRole = exports.getStoreJoinCode = exports.rotateStoreCode = exports.joinStoreByCode = void 0;
 const https_1 = require("firebase-functions/v2/https");
 const admin = __importStar(require("firebase-admin"));
 const helpers_1 = require("./helpers");
@@ -249,6 +249,62 @@ exports.getStoreJoinCode = (0, https_1.onRequest)({ region: 'us-central1' }, asy
     }
     catch (error) {
         console.error('[CODE] request failed', error);
+        const err = (0, helpers_1.toErrorResponse)(error);
+        res.status(err.status).json(err.body);
+    }
+});
+exports.setUserRole = (0, https_1.onRequest)({ region: 'us-central1' }, async (req, res) => {
+    if (req.method !== 'POST') {
+        res.status(405).json({ error: { message: 'Method not allowed' } });
+        return;
+    }
+    try {
+        const decodedToken = await (0, helpers_1.verifyBearerToken)(req);
+        const uid = decodedToken.uid;
+        const data = (0, helpers_1.extractDataPayload)(req.body);
+        const requestedRoleRaw = String(data.requestedRole ?? '').toLowerCase();
+        const requestedRole = requestedRoleRaw === 'manager' ? 'manager' : requestedRoleRaw === 'employee' ? 'employee' : null;
+        const name = String(data.name ?? 'StorePass User');
+        const email = typeof data.email === 'string' ? data.email : null;
+        const provider = String(data.provider ?? 'unknown');
+        if (!requestedRole) {
+            throw new https_1.HttpsError('invalid-argument', 'requestedRole must be manager or employee');
+        }
+        const userRef = db.collection('users').doc(uid);
+        const result = await db.runTransaction(async (transaction) => {
+            const userSnap = await transaction.get(userRef);
+            const existingRole = typeof userSnap.data()?.role === 'string' ? String(userSnap.data()?.role).toLowerCase() : null;
+            if (existingRole === 'manager' || existingRole === 'employee') {
+                return { created: false, role: existingRole, changed: false };
+            }
+            if (!userSnap.exists) {
+                transaction.set(userRef, {
+                    name,
+                    email,
+                    role: requestedRole,
+                    isActive: true,
+                    provider,
+                    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+                    lastLoginAt: admin.firestore.FieldValue.serverTimestamp(),
+                    assignedStoreIds: [],
+                }, { merge: true });
+                return { created: true, role: requestedRole, changed: true };
+            }
+            transaction.set(userRef, {
+                name,
+                email,
+                provider,
+                role: requestedRole,
+                isActive: true,
+                lastLoginAt: admin.firestore.FieldValue.serverTimestamp(),
+            }, { merge: true });
+            return { created: false, role: requestedRole, changed: true };
+        });
+        console.log(`[SET_ROLE] uid=${uid} requestedRole=${requestedRole} created=${result.created} changed=${result.changed} role=${result.role}`);
+        res.status(200).json({ result });
+    }
+    catch (error) {
+        console.error('[SET_ROLE] request failed', error);
         const err = (0, helpers_1.toErrorResponse)(error);
         res.status(err.status).json(err.body);
     }
