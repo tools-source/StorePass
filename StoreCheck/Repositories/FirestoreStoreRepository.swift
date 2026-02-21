@@ -36,7 +36,19 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
                 .getDocuments()
         }
 
-        return try snapshot.documents.map { try $0.data(as: Store.self) }
+        var stores: [Store] = []
+        stores.reserveCapacity(snapshot.documents.count)
+
+        for document in snapshot.documents {
+            do {
+                let store = try document.data(as: Store.self)
+                stores.append(store)
+            } catch {
+                print("[Stores] Skipping invalid store document id=\(document.documentID). Error: \(error)")
+            }
+        }
+
+        return stores
     }
 
     func fetchManagerStores(managerId: String) async throws -> [Store] {
@@ -50,7 +62,12 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
 
         var byId: [String: Store] = [:]
         for document in primarySnapshot.documents + fallbackSnapshot.documents {
-            byId[document.documentID] = try document.data(as: Store.self)
+            do {
+                let store = try document.data(as: Store.self)
+                byId[document.documentID] = store
+            } catch {
+                print("[Stores] Skipping invalid manager store document id=\(document.documentID). Error: \(error)")
+            }
         }
 
         return byId.values.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
