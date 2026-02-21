@@ -1,3 +1,4 @@
+import FirebaseFirestore
 import Foundation
 
 @MainActor
@@ -6,6 +7,7 @@ final class StoreManagementViewModel: ObservableObject {
     @Published var latestJoinCodesByStoreId: [String: String] = [:]
     @Published var storeError: String?
     @Published var toastMessage: String?
+    @Published var isCreatingStore = false
 
     private let repository: StoreRepositoryProtocol
     private var toastClearTask: Task<Void, Never>?
@@ -28,15 +30,21 @@ final class StoreManagementViewModel: ObservableObject {
         }
     }
 
-    func createStore(name: String, address: String, latitude: Double, longitude: Double, radiusMeters: Int) async {
+    func createStore(name: String, address: String, latitude: Double, longitude: Double, radiusMeters: Int) async -> Bool {
+        guard !isCreatingStore else { return false }
+        isCreatingStore = true
+        defer { isCreatingStore = false }
+
         do {
             let result = try await repository.createStore(name: name, address: address, latitude: latitude, longitude: longitude, radiusMeters: radiusMeters)
             latestJoinCodesByStoreId[result.store.id] = result.joinCode
             showToast("Store created. Code: \(result.joinCode)")
             storeError = nil
+            return true
         } catch {
             storeError = error.localizedDescription
-            print("[Stores] Create error: \(error.localizedDescription)")
+            logCreateError(error)
+            return false
         }
     }
 
@@ -87,6 +95,14 @@ final class StoreManagementViewModel: ObservableObject {
         }
     }
 
+    func presentStoreError(_ message: String) {
+        storeError = message
+    }
+
+    func clearStoreError() {
+        storeError = nil
+    }
+
     func showToast(_ message: String) {
         toastMessage = message
         toastClearTask?.cancel()
@@ -96,6 +112,22 @@ final class StoreManagementViewModel: ObservableObject {
             await MainActor.run {
                 self?.toastMessage = nil
             }
+        }
+    }
+
+    private func logCreateError(_ error: Error) {
+        let nsError = error as NSError
+        print("[Stores] Create error: \(error.localizedDescription)")
+        print("[Stores] Create NSError domain=\(nsError.domain) code=\(nsError.code)")
+        print("[Stores] Create NSError userInfo=\(nsError.userInfo)")
+
+        if nsError.domain == FirestoreErrorDomain,
+           let firestoreCode = FirestoreErrorCode(rawValue: nsError.code) {
+            print("[Stores] Create FirestoreErrorCode=\(firestoreCode)")
+        }
+
+        if let path = nsError.userInfo["path"] as? String {
+            print("[Stores] Create write path=\(path)")
         }
     }
 }

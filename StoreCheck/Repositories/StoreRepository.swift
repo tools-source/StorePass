@@ -60,12 +60,20 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
     }
 
     func fetchManagerStores(managerId: String) async throws -> [Store] {
-        let snapshot = try await db.collection("stores")
+        let ownerSnapshot = try await db.collection("stores")
+            .whereField("ownerId", isEqualTo: managerId)
+            .getDocuments()
+
+        let legacySnapshot = try await db.collection("stores")
             .whereField("managerId", isEqualTo: managerId)
             .getDocuments()
 
-        let stores = snapshot.documents.map(decodeStore)
-        return stores.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        var byId: [String: Store] = [:]
+        for document in ownerSnapshot.documents + legacySnapshot.documents {
+            byId[document.documentID] = decodeStore(document)
+        }
+
+        return byId.values.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
     func upsertStore(_ store: Store) async throws {
@@ -85,33 +93,93 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
     }
 
     func createStore(name: String, address: String, latitude: Double, longitude: Double, radiusMeters: Int) async throws -> StoreCreationResult {
-        let payload = try await callable(
-            name: "createStore",
-            payload: [
-                "name": name,
-                "address": address,
-                "latitude": latitude,
-                "longitude": longitude,
-                "radiusMeters": radiusMeters
-            ],
-            responseType: CreateStorePayload.self
-        )
+        guard let user = auth.currentUser else {
+            throw StoreCreationError.notSignedIn
+        }
+
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty else {
+            throw StoreCreationError.invalidName
+        }
+
+        let managerDoc = try await db.collection("managers").document(user.uid).getDocument()
+        guard let managerData = managerDoc.data() else {
+            throw StoreCreationError.missingManagerProfile
+        }
+
+        guard managerData.keys.contains("isActive") else {
+            throw StoreCreationError.missingManagerActiveState
+        }
+
+        guard (managerData["isActive"] as? Bool) == true else {
+            throw StoreCreationError.managerInactive
+        }
+
+        let userDoc = try await db.collection("users").document(user.uid).getDocument()
+        if let userData = userDoc.data() {
+            let role = (userData["role"] as? String)?.lowercased()
+            if role != "manager" {
+                throw StoreCreationError.notAManager
+            }
+
+            if (userData["isActive"] as? Bool) != true {
+                throw StoreCreationError.userNotActive
+            }
+        }
+
+        let joinCode = Self.generateJoinCode(length: 8)
+        let storeRef = db.collection("stores").document()
+        let storePath = storeRef.path
+
+        var payload: [String: Any] = [
+            "name": trimmedName,
+            "ownerId": user.uid,
+            "managerId": user.uid,
+            "createdAt": FieldValue.serverTimestamp(),
+            "updatedAt": FieldValue.serverTimestamp(),
+            "joinCode": joinCode,
+            "joinCodeLast4": String(joinCode.suffix(4)),
+            "isActive": true
+        ]
+
+        let trimmedAddress = address.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedAddress.isEmpty {
+            payload["address"] = trimmedAddress
+        }
+
+        if Self.isValidCoordinate(latitude: latitude, longitude: longitude) {
+            payload["location"] = GeoPoint(latitude: latitude, longitude: longitude)
+            payload["latitude"] = latitude
+            payload["longitude"] = longitude
+            if radiusMeters > 0 {
+                payload["radiusMeters"] = radiusMeters
+            }
+        }
+
+        print("[Stores] Attempting create at path: \(storePath)")
+
+        do {
+            try await storeRef.setData(payload)
+        } catch {
+            logFirestoreCreateError(error, path: storePath)
+            throw wrapCreateError(error, path: storePath)
+        }
 
         let store = Store(
-            id: payload.storeId,
-            name: name,
-            address: address,
+            id: storeRef.documentID,
+            name: trimmedName,
+            address: trimmedAddress,
             latitude: latitude,
             longitude: longitude,
             radiusMeters: radiusMeters,
             isActive: true,
-            managerId: auth.currentUser?.uid,
+            managerId: user.uid,
             createdAt: Date(),
             updatedAt: Date(),
-            joinCodeLast4: String(payload.joinCode.suffix(4))
+            joinCodeLast4: String(joinCode.suffix(4))
         )
 
-        return StoreCreationResult(store: store, joinCode: payload.joinCode)
+        return StoreCreationResult(store: store, joinCode: joinCode)
     }
 
     func rotateStoreCode(storeId: String) async throws -> String {
@@ -135,11 +203,11 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
             id: document.documentID,
             name: stringValue(from: data, keys: ["name"]) ?? "Unnamed Store",
             address: stringValue(from: data, keys: ["address"]) ?? "",
-            latitude: doubleValue(from: data, keys: ["latitude", "lat"]) ?? 0,
-            longitude: doubleValue(from: data, keys: ["longitude", "lng", "lon"]) ?? 0,
+            latitude: doubleValue(from: data, keys: ["latitude", "lat", "location.latitude"]) ?? 0,
+            longitude: doubleValue(from: data, keys: ["longitude", "lng", "lon", "location.longitude"]) ?? 0,
             radiusMeters: intValue(from: data, keys: ["radiusMeters", "radius"]) ?? 150,
             isActive: boolValue(from: data, keys: ["isActive"]) ?? true,
-            managerId: stringValue(from: data, keys: ["managerId"]),
+            managerId: stringValue(from: data, keys: ["managerId", "ownerId"]),
             createdAt: (data["createdAt"] as? Timestamp)?.dateValue(),
             updatedAt: (data["updatedAt"] as? Timestamp)?.dateValue(),
             joinCodeLast4: stringValue(from: data, keys: ["joinCodeLast4"])
@@ -209,6 +277,12 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
 
     private func stringValue(from data: [String: Any], keys: [String]) -> String? {
         for key in keys {
+            if key == "location.latitude" || key == "location.longitude" {
+                if let location = data["location"] as? GeoPoint {
+                    if key.hasSuffix("latitude") { return String(location.latitude) }
+                    return String(location.longitude)
+                }
+            }
             if let string = data[key] as? String, !string.isEmpty { return string }
             if let number = data[key] as? NSNumber { return number.stringValue }
         }
@@ -217,6 +291,12 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
 
     private func doubleValue(from data: [String: Any], keys: [String]) -> Double? {
         for key in keys {
+            if key == "location.latitude", let location = data["location"] as? GeoPoint {
+                return location.latitude
+            }
+            if key == "location.longitude", let location = data["location"] as? GeoPoint {
+                return location.longitude
+            }
             if let value = data[key] as? Double { return value }
             if let value = data[key] as? Int { return Double(value) }
             if let value = data[key] as? NSNumber { return value.doubleValue }
@@ -242,6 +322,69 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
             if let value = data[key] as? String { return ["1", "true", "yes"].contains(value.lowercased()) }
         }
         return nil
+    }
+
+    private static func generateJoinCode(length: Int) -> String {
+        let charset = Array("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
+        return String((0 ..< max(6, min(10, length))).compactMap { _ in charset.randomElement() })
+    }
+
+    private static func isValidCoordinate(latitude: Double, longitude: Double) -> Bool {
+        (-90 ... 90).contains(latitude) && (-180 ... 180).contains(longitude)
+    }
+
+    private func logFirestoreCreateError(_ error: Error, path: String) {
+        let nsError = error as NSError
+        print("[Stores] Create error path=\(path)")
+        print("[Stores] NSError domain=\(nsError.domain) code=\(nsError.code)")
+        print("[Stores] NSError userInfo=\(nsError.userInfo)")
+
+        if nsError.domain == FirestoreErrorDomain,
+           let firestoreCode = FirestoreErrorCode(rawValue: nsError.code) {
+            print("[Stores] FirestoreErrorCode=\(firestoreCode)")
+        }
+    }
+
+    private func wrapCreateError(_ error: Error, path: String) -> Error {
+        let nsError = error as NSError
+        var userInfo = nsError.userInfo
+        userInfo["path"] = path
+
+        if nsError.domain == FirestoreErrorDomain,
+           let firestoreCode = FirestoreErrorCode(rawValue: nsError.code) {
+            userInfo["firestoreCode"] = String(describing: firestoreCode)
+        }
+
+        return NSError(domain: nsError.domain, code: nsError.code, userInfo: userInfo)
+    }
+}
+
+private enum StoreCreationError: LocalizedError {
+    case notSignedIn
+    case invalidName
+    case missingManagerProfile
+    case missingManagerActiveState
+    case managerInactive
+    case notAManager
+    case userNotActive
+
+    var errorDescription: String? {
+        switch self {
+        case .notSignedIn:
+            return "You must be signed in to create a store."
+        case .invalidName:
+            return "Store name is required."
+        case .missingManagerProfile:
+            return "Manager profile not found. Please contact support."
+        case .missingManagerActiveState:
+            return "Manager profile is missing activation status. Please contact support."
+        case .managerInactive:
+            return "Your manager account is inactive. Contact an administrator."
+        case .notAManager:
+            return "Only active managers can create stores."
+        case .userNotActive:
+            return "Your account is not active. Contact an administrator."
+        }
     }
 }
 
