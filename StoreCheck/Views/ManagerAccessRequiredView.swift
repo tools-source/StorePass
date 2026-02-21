@@ -1,6 +1,8 @@
 import SwiftUI
 
 struct ManagerAccessRequiredView: View {
+    @EnvironmentObject private var authViewModel: AuthViewModel
+
     var body: some View {
         VStack(spacing: 16) {
             Image(systemName: "lock.trianglebadge.exclamationmark")
@@ -9,7 +11,7 @@ struct ManagerAccessRequiredView: View {
             Text("Manager Access Required")
                 .font(.title3.bold())
                 .foregroundStyle(.white)
-            Text("This account is not provisioned in /managers. Sign in as Employee or ask an admin for manager access.")
+            Text(authViewModel.managerAccessMessage)
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
         }
