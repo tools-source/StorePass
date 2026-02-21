@@ -20,13 +20,9 @@ struct LoginView: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 
-            Picker("Mode", selection: Binding(get: {
-                viewModel.requestedRole ?? .employee
-            }, set: { newRole in
-                viewModel.requestedRole = newRole
-            })) {
-                Text("Employee").tag(UserRole.employee)
-                Text("Manager").tag(UserRole.manager)
+            Picker("Mode", selection: $viewModel.requestedRole) {
+                Text("Employee").tag(Optional(UserRole.employee))
+                Text("Manager").tag(Optional(UserRole.manager))
             }
             .pickerStyle(.segmented)
             .frame(maxWidth: 420)

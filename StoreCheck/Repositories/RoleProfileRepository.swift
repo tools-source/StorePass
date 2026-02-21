@@ -135,6 +135,10 @@ final class FirestoreRoleProfileRepository: RoleProfileRepositoryProtocol {
                 NSLocalizedDescriptionKey: "Unable to load profile."
             ])
         }
+        log(event: "ensure_post_fetch", uid: uid, requestedRole: requestedRole, fields: [
+            "role": fetched.role?.rawValue ?? "nil",
+            "isActive": fetched.isActive
+        ])
 
         if let role = fetched.role {
             log(event: "ensure_resolved", uid: uid, requestedRole: requestedRole, fields: [
@@ -224,6 +228,9 @@ final class FirestoreRoleProfileRepository: RoleProfileRepositoryProtocol {
                 NSLocalizedDescriptionKey: "Unable to build backend URL."
             ])
         }
+        log(event: "set_user_role_request", uid: user.uid, requestedRole: requestedRole, fields: [
+            "url": url.absoluteString
+        ])
 
         let payload: [String: Any] = [
             "requestedRole": requestedRole.rawValue,
@@ -246,9 +253,20 @@ final class FirestoreRoleProfileRepository: RoleProfileRepositoryProtocol {
         }
 
         let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+        let jsonKeys = Array(object.keys).sorted()
+        log(event: "set_user_role_response", uid: user.uid, requestedRole: requestedRole, fields: [
+            "statusCode": httpResponse.statusCode,
+            "jsonKeys": jsonKeys
+        ])
 
         if let errorObj = object["error"] as? [String: Any] {
             let message = errorObj["message"] as? String ?? "Backend error"
+            let errorCode = errorObj["code"] as? String ?? "unknown"
+            log(event: "set_user_role_backend_error", uid: user.uid, requestedRole: requestedRole, fields: [
+                "statusCode": httpResponse.statusCode,
+                "errorMessage": message,
+                "errorCode": errorCode
+            ])
             throw NSError(domain: "StorePass", code: httpResponse.statusCode, userInfo: [
                 NSLocalizedDescriptionKey: message
             ])
