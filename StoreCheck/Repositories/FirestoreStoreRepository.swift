@@ -191,11 +191,11 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
 
     func joinStoreByCode(code: String) async throws -> JoinStoreResult {
         let normalizedCode = code.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
-        guard normalizedCode.count >= 6 else {
+        guard normalizedCode.count >= 4 else {
             throw NSError(
                 domain: "StorePass",
                 code: 4005,
-                userInfo: [NSLocalizedDescriptionKey: "Enter a valid join code (at least 6 characters)."]
+                userInfo: [NSLocalizedDescriptionKey: "Enter a valid join code (at least 4 characters)."]
             )
         }
 
@@ -228,49 +228,92 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
         }
 
         let token = try await user.getIDToken()
-        guard let url = URL(string: "https://us-central1-\(projectID).cloudfunctions.net/\(name)") else {
+        let functionURLs = functionEndpointURLs(projectID: projectID, name: name)
+        guard !functionURLs.isEmpty else {
             throw NSError(domain: "StorePass", code: 4003, userInfo: [NSLocalizedDescriptionKey: "Unable to build backend URL."])
         }
 
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        request.httpBody = try JSONSerialization.data(withJSONObject: ["data": payload])
-
-        let (data, response) = try await URLSession.shared.data(for: request)
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw NSError(domain: "StorePass", code: 4004, userInfo: [NSLocalizedDescriptionKey: "Unexpected backend response."])
-        }
-
-        let rawResponse = String(data: data, encoding: .utf8) ?? "<non-utf8 \(data.count) bytes>"
         let decoder = JSONDecoder()
+        var lastError: NSError?
 
-        let wrapped = try? decoder.decode(BackendEnvelope<T>.self, from: data)
-        if let backendMessage = wrapped?.error?.message {
-            let message = "Backend request failed (status=\(httpResponse.statusCode)). \(backendMessage). Raw: \(rawResponse)"
+        for url in functionURLs {
+            #if DEBUG
+            print("[Stores] Calling function URL: \(url.absoluteString)")
+            #endif
+
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            request.httpBody = try JSONSerialization.data(withJSONObject: ["data": payload])
+
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse else {
+                throw NSError(domain: "StorePass", code: 4004, userInfo: [NSLocalizedDescriptionKey: "Unexpected backend response."])
+            }
+
+            let rawResponse = String(data: data, encoding: .utf8) ?? "<non-utf8 \(data.count) bytes>"
+            let wrapped = try? decoder.decode(BackendEnvelope<T>.self, from: data)
+            if let backendMessage = wrapped?.error?.message {
+                let message = "Backend request failed (status=\(httpResponse.statusCode)). \(backendMessage). Raw: \(rawResponse)"
+                let error = NSError(domain: "StorePass", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: message])
+                if httpResponse.statusCode == 404 {
+                    lastError = error
+                    continue
+                }
+                throw error
+            }
+
+            guard (200 ... 299).contains(httpResponse.statusCode) else {
+                let message = "Backend request failed (status=\(httpResponse.statusCode)). Raw: \(rawResponse)"
+                let error = NSError(domain: "StorePass", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: message])
+                if httpResponse.statusCode == 404 {
+                    lastError = error
+                    continue
+                }
+                throw error
+            }
+
+            if let payload = wrapped?.result ?? wrapped?.data {
+                return payload
+            }
+
+            if let directPayload = try? decoder.decode(T.self, from: data) {
+                return directPayload
+            }
+
+            #if DEBUG
+            let message = "Backend returned invalid JSON shape for \(name). Raw: \(rawResponse)"
+            #else
+            let message = "Backend returned invalid JSON."
+            #endif
             throw NSError(domain: "StorePass", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: message])
         }
 
-        guard (200 ... 299).contains(httpResponse.statusCode) else {
-            let message = "Backend request failed (status=\(httpResponse.statusCode)). Raw: \(rawResponse)"
-            throw NSError(domain: "StorePass", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: message])
+        if let lastError {
+            throw lastError
         }
 
-        if let payload = wrapped?.result ?? wrapped?.data {
-            return payload
-        }
+        throw NSError(domain: "StorePass", code: 4003, userInfo: [NSLocalizedDescriptionKey: "Unable to build backend URL."])
+    }
 
-        if let directPayload = try? decoder.decode(T.self, from: data) {
-            return directPayload
-        }
+    private func functionEndpointURLs(projectID: String, name: String) -> [URL] {
+        let region = ProcessInfo.processInfo.environment["FIREBASE_FUNCTIONS_REGION"] ?? "us-central1"
+        let hosts = [
+            "\(region)-\(projectID).cloudfunctions.net",
+            "us-central1-\(projectID).cloudfunctions.net",
+            "\(name)-\(region)-\(projectID).a.run.app"
+        ]
 
-        #if DEBUG
-        let message = "Backend returned invalid JSON shape for \(name). Raw: \(rawResponse)"
-        #else
-        let message = "Backend returned invalid JSON."
-        #endif
-        throw NSError(domain: "StorePass", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: message])
+        var urls: [URL] = []
+        for host in hosts {
+            if let url = URL(string: "https://\(host)/\(name)") {
+                urls.append(url)
+            } else if host.contains(".a.run.app"), let url = URL(string: "https://\(host)") {
+                urls.append(url)
+            }
+        }
+        return Array(NSOrderedSet(array: urls).compactMap { $0 as? URL })
     }
 
     private static func generateJoinCode(length: Int) -> String {

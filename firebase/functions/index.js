@@ -1,4 +1,4 @@
-const { onCall, HttpsError } = require('firebase-functions/v2/https');
+const { onCall, onRequest, HttpsError } = require('firebase-functions/v2/https');
 const admin = require('firebase-admin');
 const crypto = require('crypto');
 
@@ -35,6 +35,60 @@ async function requireManager(uid) {
   const user = await requireActiveUser(uid);
   if (user.role !== 'manager') throw new HttpsError('permission-denied', 'Manager access required.');
   return user;
+}
+
+async function requireActiveManagerProfile(uid) {
+  const managerSnap = await db.collection('managers').doc(uid).get();
+  if (!managerSnap.exists) throw new HttpsError('permission-denied', 'Manager profile not found.');
+  const manager = managerSnap.data() || {};
+  if (manager.isActive !== true) throw new HttpsError('permission-denied', 'Manager account is inactive.');
+  return manager;
+}
+
+async function authenticateRequest(req) {
+  const authHeader = req.headers.authorization || '';
+  if (!authHeader.startsWith('Bearer ')) {
+    throw new HttpsError('unauthenticated', 'Missing Authorization bearer token.');
+  }
+
+  const idToken = authHeader.slice('Bearer '.length).trim();
+  if (!idToken) {
+    throw new HttpsError('unauthenticated', 'Missing Firebase ID token.');
+  }
+
+  try {
+    return await admin.auth().verifyIdToken(idToken);
+  } catch (error) {
+    throw new HttpsError('unauthenticated', 'Invalid Firebase ID token.');
+  }
+}
+
+function extractDataPayload(req) {
+  if (req.body && typeof req.body === 'object') {
+    if (req.body.data && typeof req.body.data === 'object') {
+      return req.body.data;
+    }
+    return req.body;
+  }
+  return {};
+}
+
+function sendHttpsError(res, error) {
+  const statusMap = {
+    'invalid-argument': 400,
+    unauthenticated: 401,
+    'permission-denied': 403,
+    'not-found': 404,
+    'failed-precondition': 412,
+  };
+
+  if (error instanceof HttpsError) {
+    res.status(statusMap[error.code] || 500).json({ error: { message: error.message, status: error.code } });
+    return;
+  }
+
+  console.error('[Functions] Unexpected error:', error);
+  res.status(500).json({ error: { message: 'Internal server error.', status: 'internal' } });
 }
 
 exports.createStore = onCall(async (request) => {
@@ -74,80 +128,128 @@ exports.createStore = onCall(async (request) => {
   return { storeId: storeRef.id, joinCode, joinCodeLast4: joinCode.slice(-4) };
 });
 
-exports.joinStoreByCode = onCall(async (request) => {
-  if (!request.auth) throw new HttpsError('unauthenticated', 'You must be signed in.');
-
-  const code = normalizeCode(request.data.code);
-  if (!code || code.length < 6) {
-    throw new HttpsError('invalid-argument', 'Please enter a valid join code.');
+exports.joinStoreByCode = onRequest({ region: 'us-central1' }, async (req, res) => {
+  if (req.method !== 'POST') {
+    res.status(405).json({ error: { message: 'Method not allowed.' } });
+    return;
   }
 
-  const user = await requireActiveUser(request.auth.uid);
-  if (user.role !== 'employee') throw new HttpsError('permission-denied', 'Only employees can join by code.');
+  try {
+    const decodedToken = await authenticateRequest(req);
+    const data = extractDataPayload(req);
+    const code = normalizeCode(data.code);
+    if (!code || code.length < 4) {
+      throw new HttpsError('invalid-argument', 'Please enter a valid join code.');
+    }
 
-  const storeQuery = await db.collection('stores')
-    .where('joinCodeHash', '==', hashCode(code))
-    .where('isActive', '==', true)
-    .limit(1)
-    .get();
-  if (storeQuery.empty) throw new HttpsError('not-found', 'Invalid join code.');
+    const user = await requireActiveUser(decodedToken.uid);
+    if (user.role !== 'employee') throw new HttpsError('permission-denied', 'Only employees can join by code.');
 
-  const storeDoc = storeQuery.docs[0];
-  const storeId = storeDoc.id;
-  const employeeUid = request.auth.uid;
-  const memberRef = db.collection('storeMembers').doc(storeId).collection('members').doc(employeeUid);
-  const existingMembership = await memberRef.get();
-  const alreadyJoined = existingMembership.exists;
+    let storeDoc = null;
+    const byJoinCode = await db.collection('stores').where('joinCode', '==', code).where('isActive', '==', true).limit(1).get();
+    if (!byJoinCode.empty) {
+      storeDoc = byJoinCode.docs[0];
+    }
 
-  await memberRef.set({
-    userId: employeeUid,
-    memberId: employeeUid,
-    role: 'employee',
-    joinedAt: admin.firestore.FieldValue.serverTimestamp(),
-    isActive: true,
-    addedBy: 'self_join',
-  }, { merge: true });
+    if (!storeDoc) {
+      const byHash = await db.collection('stores').where('joinCodeHash', '==', hashCode(code)).where('isActive', '==', true).limit(1).get();
+      if (!byHash.empty) storeDoc = byHash.docs[0];
+    }
 
-  return {
-    storeId,
-    storeName: storeDoc.data().name || 'Store',
-    alreadyJoined,
-  };
+    if (!storeDoc && code.length <= 4) {
+      const byLast4 = await db.collection('stores').where('joinCodeLast4', '==', code).where('isActive', '==', true).limit(1).get();
+      if (!byLast4.empty) storeDoc = byLast4.docs[0];
+    }
+
+    if (!storeDoc) throw new HttpsError('not-found', 'Invalid join code.');
+
+    const storeId = storeDoc.id;
+    const employeeUid = decodedToken.uid;
+    const memberRef = db.collection('storeMembers').doc(storeId).collection('members').doc(employeeUid);
+    const existingMembership = await memberRef.get();
+    const alreadyJoined = existingMembership.exists;
+
+    await memberRef.set({
+      memberId: employeeUid,
+      storeId,
+      role: 'employee',
+      joinedAt: admin.firestore.FieldValue.serverTimestamp(),
+      userId: employeeUid,
+      isActive: true,
+    }, { merge: true });
+
+    res.status(200).json({
+      storeId,
+      storeName: storeDoc.data().name || 'Store',
+      alreadyJoined,
+    });
+  } catch (error) {
+    sendHttpsError(res, error);
+  }
 });
 
-exports.rotateStoreCode = onCall(async (request) => {
-  if (!request.auth) throw new HttpsError('unauthenticated', 'You must be signed in.');
-  await requireManager(request.auth.uid);
+exports.rotateStoreCode = onRequest({ region: 'us-central1' }, async (req, res) => {
+  if (req.method !== 'POST') {
+    res.status(405).json({ error: { message: 'Method not allowed.' } });
+    return;
+  }
 
-  const { storeId } = request.data;
-  const storeRef = db.collection('stores').doc(storeId);
-  const storeSnap = await storeRef.get();
-  if (!storeSnap.exists) throw new HttpsError('not-found', 'Store not found.');
-  if (storeSnap.data().managerId !== request.auth.uid) throw new HttpsError('permission-denied', 'Not store owner.');
+  try {
+    const decodedToken = await authenticateRequest(req);
+    await requireActiveManagerProfile(decodedToken.uid);
+    await requireManager(decodedToken.uid);
 
-  const joinCode = generateJoinCode();
-  await storeRef.set({
-    joinCodeHash: hashCode(normalizeCode(joinCode)),
-    joinCodeLast4: joinCode.slice(-4),
-    joinCodeCiphertext: joinCode,
-    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-  }, { merge: true });
+    const data = extractDataPayload(req);
+    const { storeId } = data;
+    if (!storeId || typeof storeId !== 'string') throw new HttpsError('invalid-argument', 'storeId is required.');
 
-  return { storeId, joinCode, joinCodeLast4: joinCode.slice(-4) };
+    const storeRef = db.collection('stores').doc(storeId);
+    const storeSnap = await storeRef.get();
+    if (!storeSnap.exists) throw new HttpsError('not-found', 'Store not found.');
+    if (storeSnap.data().managerId !== decodedToken.uid) throw new HttpsError('permission-denied', 'Not store owner.');
+
+    const joinCode = generateJoinCode();
+    await storeRef.set({
+      joinCode,
+      joinCodeHash: hashCode(normalizeCode(joinCode)),
+      joinCodeLast4: joinCode.slice(-4),
+      joinCodeCiphertext: joinCode,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+
+    res.status(200).json({ joinCode });
+  } catch (error) {
+    sendHttpsError(res, error);
+  }
 });
 
-exports.getStoreJoinCode = onCall(async (request) => {
-  if (!request.auth) throw new HttpsError('unauthenticated', 'You must be signed in.');
-  await requireManager(request.auth.uid);
+exports.getStoreJoinCode = onRequest({ region: 'us-central1' }, async (req, res) => {
+  if (req.method !== 'POST') {
+    res.status(405).json({ error: { message: 'Method not allowed.' } });
+    return;
+  }
 
-  const { storeId } = request.data;
-  const snap = await db.collection('stores').doc(storeId).get();
-  if (!snap.exists) throw new HttpsError('not-found', 'Store not found.');
-  const store = snap.data();
-  if (store.managerId !== request.auth.uid) throw new HttpsError('permission-denied', 'Not store owner.');
-  if (!store.joinCodeCiphertext) throw new HttpsError('failed-precondition', 'Rotate code to reveal latest code.');
+  try {
+    const decodedToken = await authenticateRequest(req);
+    await requireActiveManagerProfile(decodedToken.uid);
+    await requireManager(decodedToken.uid);
 
-  return { storeId, joinCode: store.joinCodeCiphertext };
+    const data = extractDataPayload(req);
+    const { storeId } = data;
+    if (!storeId || typeof storeId !== 'string') throw new HttpsError('invalid-argument', 'storeId is required.');
+
+    const snap = await db.collection('stores').doc(storeId).get();
+    if (!snap.exists) throw new HttpsError('not-found', 'Store not found.');
+    const store = snap.data();
+    if (store.managerId !== decodedToken.uid) throw new HttpsError('permission-denied', 'Not store owner.');
+
+    const joinCode = store.joinCodeCiphertext || store.joinCode;
+    if (!joinCode) throw new HttpsError('failed-precondition', 'Rotate code to reveal latest code.');
+
+    res.status(200).json({ joinCode });
+  } catch (error) {
+    sendHttpsError(res, error);
+  }
 });
 
 exports.removeEmployeeFromStore = onCall(async (request) => {
