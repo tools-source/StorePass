@@ -78,9 +78,10 @@ exports.joinStoreByCode = onCall(async (request) => {
   if (!request.auth) throw new HttpsError('unauthenticated', 'You must be signed in.');
 
   const code = normalizeCode(request.data.code);
-  if (!code) throw new HttpsError('invalid-argument', 'Please enter a join code.');
+  if (!code || code.length < 6) {
+    throw new HttpsError('invalid-argument', 'Please enter a valid join code.');
+  }
 
-  const userRef = db.collection('users').doc(request.auth.uid);
   const user = await requireActiveUser(request.auth.uid);
   if (user.role !== 'employee') throw new HttpsError('permission-denied', 'Only employees can join by code.');
 
@@ -93,25 +94,25 @@ exports.joinStoreByCode = onCall(async (request) => {
 
   const storeDoc = storeQuery.docs[0];
   const storeId = storeDoc.id;
-  const memberRef = db.collection('storeMembers').doc(storeId).collection('members').doc(request.auth.uid);
-  const alreadyJoined = Array.isArray(user.assignedStoreIds) && user.assignedStoreIds.includes(storeId);
+  const employeeUid = request.auth.uid;
+  const memberRef = db.collection('storeMembers').doc(storeId).collection('members').doc(employeeUid);
+  const existingMembership = await memberRef.get();
+  const alreadyJoined = existingMembership.exists;
 
-  await db.runTransaction(async (tx) => {
-    tx.set(memberRef, {
-      userId: request.auth.uid,
-      role: 'employee',
-      joinedAt: admin.firestore.FieldValue.serverTimestamp(),
-      isActive: true,
-      addedBy: 'self_join',
-    }, { merge: true });
+  await memberRef.set({
+    userId: employeeUid,
+    memberId: employeeUid,
+    role: 'employee',
+    joinedAt: admin.firestore.FieldValue.serverTimestamp(),
+    isActive: true,
+    addedBy: 'self_join',
+  }, { merge: true });
 
-    tx.set(userRef, {
-      assignedStoreIds: admin.firestore.FieldValue.arrayUnion(storeId),
-      lastLoginAt: admin.firestore.FieldValue.serverTimestamp(),
-    }, { merge: true });
-  });
-
-  return { storeId, storeName: storeDoc.data().name || 'Store', alreadyJoined };
+  return {
+    storeId,
+    storeName: storeDoc.data().name || 'Store',
+    alreadyJoined,
+  };
 });
 
 exports.rotateStoreCode = onCall(async (request) => {
