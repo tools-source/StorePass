@@ -1,3 +1,4 @@
+import FirebaseAuth
 import FirebaseFirestore
 import Foundation
 
@@ -68,6 +69,18 @@ final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
     }
 
     func createCheckIn(_ checkIn: CheckIn) async throws {
+        guard let uid = Auth.auth().currentUser?.uid else {
+            throw NSError(domain: "StorePass", code: 4001, userInfo: [NSLocalizedDescriptionKey: "You must be signed in."])
+        }
+
+        guard checkIn.employeeId == uid else {
+            throw NSError(domain: "StorePass", code: 4008, userInfo: [NSLocalizedDescriptionKey: "Check-in employeeId must match the signed-in user."])
+        }
+
+        guard !checkIn.storeId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw NSError(domain: "StorePass", code: 4009, userInfo: [NSLocalizedDescriptionKey: "A valid storeId is required for check-in."])
+        }
+
         let payload = encode(checkIn: checkIn)
         print("[CheckIn] write payload storeId=\(checkIn.storeId) employeeId=\(checkIn.employeeId) lat=\(checkIn.clientLat) lng=\(checkIn.clientLng) distance=\(checkIn.distanceMeters) accuracy=\(checkIn.accuracyMeters)")
 
@@ -75,6 +88,7 @@ final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
             try await db.collection("checkins").document(checkIn.id).setData(payload)
         } catch {
             logFirestoreError(prefix: "[CheckIn] createCheckIn", error: error)
+            FirestorePermissionLogger.log(operation: "setData", path: "checkins/\(checkIn.id)", error: error, uid: uid)
             throw mapFirestoreError(error)
         }
     }

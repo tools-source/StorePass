@@ -34,13 +34,24 @@ final class FirestoreUserRepository: UserRepositoryProtocol {
     }
 
     func fetchUser(id: String) async throws -> UserProfile? {
-        let doc = try await db.collection("employees").document(id).getDocument()
-        guard let data = doc.data() else { return nil }
-        return decodeUser(id: doc.documentID, data: data)
+        do {
+            let doc = try await db.collection("users").document(id).getDocument()
+            guard let data = doc.data() else { return nil }
+            return decodeUser(id: doc.documentID, data: data)
+        } catch {
+            FirestorePermissionLogger.log(operation: "getDocument", path: "users/\(id)", error: error)
+            throw error
+        }
     }
 
     func upsertUser(_ user: UserProfile) async throws {
-        try await db.collection("employees").document(user.id).setData(encode(user: user), merge: true)
+        let payload = encode(user: user)
+        do {
+            try await db.collection("users").document(user.id).setData(payload, merge: true)
+        } catch {
+            FirestorePermissionLogger.log(operation: "setData", path: "users/\(user.id)", error: error)
+            throw error
+        }
     }
 
     fileprivate func decodeUser(id: String, data: [String: Any]) -> UserProfile {
@@ -61,11 +72,9 @@ final class FirestoreUserRepository: UserRepositoryProtocol {
         [
             "name": user.name,
             "email": user.email as Any,
-                        "createdAt": Timestamp(date: user.createdAt),
             "lastLoginAt": Timestamp(date: user.lastLoginAt),
             "provider": user.provider,
-            "assignedStoreIds": user.assignedStoreIds,
-            "isActive": user.isActive
+            "assignedStoreIds": user.assignedStoreIds
         ]
     }
 }
@@ -103,7 +112,7 @@ final class FirestoreEmployeeManagementRepository: EmployeeManagementRepositoryP
 
     // ✅ NEW: Index-free approach used by the ViewModel
     // Strategy:
-    // 1) For each store: read storeMembers/{storeId}/members (no orderBy)
+    // 1) For each store: read stores/{storeId}/members (no orderBy)
     // 2) Filter employees in Swift
     // 3) Fetch user profiles in chunks of 10 with documentID IN query
     // 4) Sort locally
@@ -119,10 +128,16 @@ final class FirestoreEmployeeManagementRepository: EmployeeManagementRepositoryP
 
         // 1) Members per store (no orderBy, no where)
         for storeId in storeIds {
-            let membersSnap = try await db.collection("storeMembers")
-                .document(storeId)
-                .collection("members")
-                .getDocuments()
+            let membersSnap: QuerySnapshot
+            do {
+                membersSnap = try await db.collection("stores")
+                    .document(storeId)
+                    .collection("members")
+                    .getDocuments()
+            } catch {
+                FirestorePermissionLogger.log(operation: "getDocuments", path: "stores/\(storeId)/members", error: error)
+                throw error
+            }
 
             for doc in membersSnap.documents {
                 let data = doc.data()
@@ -147,9 +162,15 @@ final class FirestoreEmployeeManagementRepository: EmployeeManagementRepositoryP
         // 2) Fetch user profiles in chunks of 10 (Firestore "in" limit)
         var userDataById: [String: [String: Any]] = [:]
         for chunk in employeeIds.chunked(into: 10) {
-            let usersSnap = try await db.collection("employees")
-                .whereField(FieldPath.documentID(), in: chunk)
-                .getDocuments()
+            let usersSnap: QuerySnapshot
+            do {
+                usersSnap = try await db.collection("users")
+                    .whereField(FieldPath.documentID(), in: chunk)
+                    .getDocuments()
+            } catch {
+                FirestorePermissionLogger.log(operation: "query", path: "users", error: error)
+                throw error
+            }
 
             for doc in usersSnap.documents {
                 userDataById[doc.documentID] = doc.data()
