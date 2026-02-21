@@ -10,6 +10,14 @@ const HTTPS_STATUS_BY_ERROR_CODE: Record<string, number> = {
   'failed-precondition': 412,
 };
 
+export type ManagerAuthLookup = {
+  managerDocExists: boolean;
+  managerDocActive: boolean;
+  userDocExists: boolean;
+  userRole: string | null;
+  userIsActive: boolean;
+};
+
 export function normalizeCode(code: unknown): string {
   return String(code ?? '').trim().toUpperCase();
 }
@@ -74,17 +82,29 @@ export function toErrorResponse(error: unknown): { status: number; body: { error
   };
 }
 
-export async function requireActiveManager(db: admin.firestore.Firestore, uid: string): Promise<void> {
+export async function requireActiveManager(db: admin.firestore.Firestore, uid: string): Promise<ManagerAuthLookup> {
   const [managerSnap, userSnap] = await Promise.all([
     db.collection('managers').doc(uid).get(),
     db.collection('users').doc(uid).get(),
   ]);
 
-  const managerActive = managerSnap.exists && managerSnap.data()?.isActive === true;
+  const managerDocExists = managerSnap.exists;
+  const managerDocActive = managerSnap.exists && managerSnap.data()?.isActive === true;
   const userData = userSnap.data();
-  const activeManagerUser = userSnap.exists && userData?.role === 'manager' && userData?.isActive === true;
+  const userDocExists = userSnap.exists;
+  const userRole = typeof userData?.role === 'string' ? userData.role : null;
+  const userIsActive = userData?.isActive === true;
+  const activeManagerUser = userDocExists && userRole === 'manager' && userIsActive;
 
-  if (!managerActive && !activeManagerUser) {
+  if (!managerDocActive && !activeManagerUser) {
     throw new HttpsError('permission-denied', 'Manager access required');
   }
+
+  return {
+    managerDocExists,
+    managerDocActive,
+    userDocExists,
+    userRole,
+    userIsActive,
+  };
 }
