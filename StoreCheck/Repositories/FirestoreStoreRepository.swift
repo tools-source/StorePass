@@ -202,6 +202,14 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
         do {
             let response = try await callable(name: "joinStoreByCode", payload: ["code": normalizedCode], responseType: JoinStorePayload.self)
 
+            if response.debug?.membershipExists == false || response.debug?.assignedStoreIdsContainsStoreId == false {
+                throw NSError(
+                    domain: "StorePass",
+                    code: 4091,
+                    userInfo: [NSLocalizedDescriptionKey: "Join write verification failed on server. Please retry."]
+                )
+            }
+
             guard let uid = auth.currentUser?.uid else {
                 throw NSError(
                     domain: "StorePass",
@@ -210,30 +218,19 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
                 )
             }
 
-            let membershipSnapshot = try await db.collection("storeMembers")
-                .document(response.storeId)
-                .collection("members")
-                .document(uid)
-                .getDocument()
             let userSnapshot = try await db.collection("users")
                 .document(uid)
-                .getDocument()
-
-            let hasMembership = membershipSnapshot.exists
+                .getDocument(source: .server)
             let assignedStoreIds = userSnapshot.data()?["assignedStoreIds"] as? [String] ?? []
-            let hasAssignedStore = assignedStoreIds.contains(response.storeId)
 
-            print("[Stores] join verification storeId=\(response.storeId) uid=\(uid) member=\(hasMembership) assigned=\(hasAssignedStore)")
+            print("[Stores] join response storeId=\(response.storeId) uid=\(uid) membership=\(response.debug?.membershipExists ?? false) assigned=\(response.debug?.assignedStoreIdsContainsStoreId ?? false) assignedCount=\(assignedStoreIds.count)")
 
-            if !hasMembership || !hasAssignedStore {
-                throw NSError(
-                    domain: "StorePass",
-                    code: 4091,
-                    userInfo: [NSLocalizedDescriptionKey: "Join succeeded but membership not saved. Check server logs."]
-                )
-            }
-
-            return JoinStoreResult(storeId: response.storeId, storeName: response.storeName, alreadyJoined: response.alreadyJoined ?? false)
+            return JoinStoreResult(
+                storeId: response.storeId,
+                storeName: response.storeName,
+                alreadyJoined: response.alreadyJoined ?? false,
+                assignedStoreIds: assignedStoreIds
+            )
         } catch {
             let nsError = error as NSError
             print("[Stores] joinStoreByCode error domain=\(nsError.domain) code=\(nsError.code)")
@@ -476,10 +473,16 @@ private struct JoinCodePayload: Decodable {
     }
 }
 
+private struct JoinStoreDebugPayload: Decodable {
+    let membershipExists: Bool?
+    let assignedStoreIdsContainsStoreId: Bool?
+}
+
 private struct JoinStorePayload: Decodable {
     let storeId: String
     let storeName: String
     let alreadyJoined: Bool?
+    let debug: JoinStoreDebugPayload?
 
     enum CodingKeys: String, CodingKey {
         case storeId
@@ -487,6 +490,7 @@ private struct JoinStorePayload: Decodable {
         case store_id
         case storeName
         case alreadyJoined
+        case debug
     }
 
     init(from decoder: Decoder) throws {
@@ -494,6 +498,7 @@ private struct JoinStorePayload: Decodable {
         storeId = try container.decodeFirstString(forKeys: [.storeId, .storeID, .store_id])
         storeName = try container.decode(String.self, forKey: .storeName)
         alreadyJoined = try container.decodeIfPresent(Bool.self, forKey: .alreadyJoined)
+        debug = try container.decodeIfPresent(JoinStoreDebugPayload.self, forKey: .debug)
     }
 }
 

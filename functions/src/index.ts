@@ -40,7 +40,8 @@ export const joinStoreByCode = onRequest({ region: 'us-central1' }, async (req, 
 
     const data = extractDataPayload(req.body);
     const code = normalizeCode(data.code);
-    console.log(`[JOIN] code received masked=${maskCode(code)}`);
+    const joinCodeLast4 = code.slice(-4);
+    console.log(`[JOIN] code received masked=${maskCode(code)} joinCodeLast4=${joinCodeLast4}`);
 
     if (!code) {
       throw new HttpsError('invalid-argument', 'code is required');
@@ -65,44 +66,69 @@ export const joinStoreByCode = onRequest({ region: 'us-central1' }, async (req, 
 
     const store = storeDoc.data();
     const storeId = storeDoc.id;
-    console.log(`[JOIN] resolved storeId=${storeId}`);
+    console.log(`[JOIN] resolved uid=${uid} storeId=${storeId} joinCodeLast4=${joinCodeLast4}`);
 
     const memberPath = `storeMembers/${storeId}/members/${uid}`;
     const userPath = `users/${uid}`;
     const memberRef = db.doc(memberPath);
     const userRef = db.doc(userPath);
-    const existingMember = await memberRef.get();
+    console.log(`[JOIN] firestore write paths membershipDocPath=${memberPath} userDocPath=${userPath}`);
 
-    console.log(`[JOIN] firestore write attempt path=${memberPath}`);
+    const existingMember = await memberRef.get();
+    const existingUser = await userRef.get();
+    const beforeAssignedStoreIds = (existingUser.data()?.assignedStoreIds as string[] | undefined) ?? [];
+    const beforeContains = beforeAssignedStoreIds.includes(storeId);
+    console.log(
+      `[JOIN] before uid=${uid} storeId=${storeId} assignedStoreIdsLength=${beforeAssignedStoreIds.length} containsStore=${beforeContains}`,
+    );
+
     try {
-      await memberRef.set(
-        {
-          employeeId: uid,
-          storeId,
-          joinedAt: admin.firestore.FieldValue.serverTimestamp(),
-          storeName: String(store.name ?? 'Store'),
-        },
-        { merge: true },
-      );
-      console.log(`[JOIN] firestore write success path=${memberPath}`);
+      await db.runTransaction(async (transaction) => {
+        transaction.set(
+          memberRef,
+          {
+            userId: uid,
+            employeeId: uid,
+            storeId,
+            role: 'employee',
+            joinedAt: admin.firestore.FieldValue.serverTimestamp(),
+            isActive: true,
+            storeName: String(store.name ?? 'Store'),
+          },
+          { merge: true },
+        );
+
+        transaction.set(
+          userRef,
+          {
+            role: 'employee',
+            isActive: true,
+            assignedStoreIds: admin.firestore.FieldValue.arrayUnion(storeId),
+            lastJoinAt: admin.firestore.FieldValue.serverTimestamp(),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true },
+        );
+      });
+      console.log(`[JOIN] atomic commit success uid=${uid} storeId=${storeId}`);
     } catch (error) {
-      console.error(`[JOIN] firestore write failure path=${memberPath}`, error);
-      throw new HttpsError('internal', `Join failed: write to ${memberPath} failed`);
+      console.error(`[JOIN] atomic commit failure uid=${uid} storeId=${storeId}`, error);
+      throw new HttpsError('internal', 'Join failed: atomic membership + user profile update failed');
     }
 
-    console.log(`[JOIN] firestore write attempt path=${userPath}`);
-    try {
-      await userRef.set(
-        {
-          assignedStoreIds: admin.firestore.FieldValue.arrayUnion(storeId),
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        },
-        { merge: true },
+    const [memberAfter, userAfter] = await Promise.all([memberRef.get(), userRef.get()]);
+    const assignedStoreIdsAfter = (userAfter.data()?.assignedStoreIds as string[] | undefined) ?? [];
+    const assignedStoreIdsContainsStoreId = assignedStoreIdsAfter.includes(storeId);
+    const membershipExists = memberAfter.exists;
+    console.log(
+      `[JOIN] after uid=${uid} storeId=${storeId} assignedStoreIdsLength=${assignedStoreIdsAfter.length} containsStore=${assignedStoreIdsContainsStoreId} membershipExists=${membershipExists}`,
+    );
+
+    if (membershipExists && !assignedStoreIdsContainsStoreId) {
+      throw new HttpsError(
+        'internal',
+        'Join membership write succeeded but user profile assignedStoreIds update failed',
       );
-      console.log(`[JOIN] firestore write success path=${userPath}`);
-    } catch (error) {
-      console.error(`[JOIN] firestore write failure path=${userPath}`, error);
-      throw new HttpsError('internal', `Join failed: write to ${userPath} failed`);
     }
 
     const payload = {
@@ -110,13 +136,21 @@ export const joinStoreByCode = onRequest({ region: 'us-central1' }, async (req, 
         storeId,
         storeName: String(store.name ?? 'Store'),
         alreadyJoined: existingMember.exists,
+        debug: {
+          membershipExists,
+          assignedStoreIdsContainsStoreId,
+        },
       },
     };
 
     console.log(`[JOIN] final response payload=${JSON.stringify(payload)}`);
     res.status(200).json(payload);
   } catch (error) {
+    const errorWithStack = error as { stack?: string };
     console.error('[JOIN] request failed', error);
+    if (errorWithStack?.stack) {
+      console.error('[JOIN] request failed stack', errorWithStack.stack);
+    }
     const err = toErrorResponse(error);
     res.status(err.status).json(err.body);
   }
