@@ -91,6 +91,21 @@ firebase use <project>
 firebase deploy --only functions
 ```
 
+## Verify Functions Deployed
+After deploying, verify the HTTP endpoints exist in `us-central1`:
+
+```bash
+PROJECT_ID=<projectId>
+curl -i https://us-central1-$PROJECT_ID.cloudfunctions.net/joinStoreByCode
+curl -i https://us-central1-$PROJECT_ID.cloudfunctions.net/getStoreJoinCode
+curl -i https://us-central1-$PROJECT_ID.cloudfunctions.net/rotateStoreCode
+```
+
+Expected behavior:
+- `401 Unauthorized` is **OK** for these checks (function exists, auth token missing).
+- `404 Not Found` means the function is missing/not deployed to the selected project or region.
+- `405 Method Not Allowed` is also acceptable for GET checks on POST-only functions.
+
 ## Required Firestore Composite Indexes
 Defined in `firebase/firestore.indexes.json`:
 1. `checkins`: `storeId ASC`, `checkInTime DESC`
@@ -147,6 +162,9 @@ All other users should keep `role = "employee"`.
   - Grant When In Use permission, enable Precise Location, retry outdoors.
 - **Firestore index required error**
   - Deploy `firebase/firestore.indexes.json`.
+- **Cloud Function endpoint returns 404**
+  - Ensure you deployed functions to the same project and region (`us-central1`).
+  - Run the verification `curl -i` commands in the "Verify Functions Deployed" section.
 
 
 ## Migration Notes
