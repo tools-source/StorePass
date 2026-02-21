@@ -84,6 +84,8 @@ export const joinStoreByCode = onRequest({ region: 'us-central1' }, async (req, 
 
     try {
       await db.runTransaction(async (transaction) => {
+        const userBefore = await transaction.get(userRef);
+
         transaction.set(
           memberRef,
           {
@@ -98,12 +100,30 @@ export const joinStoreByCode = onRequest({ region: 'us-central1' }, async (req, 
           { merge: true },
         );
 
+        if (!userBefore.exists) {
+          transaction.set(
+            userRef,
+            {
+              role: 'employee',
+              isActive: true,
+              assignedStoreIds: [storeId],
+              createdAt: admin.firestore.FieldValue.serverTimestamp(),
+              lastLoginAt: admin.firestore.FieldValue.serverTimestamp(),
+              lastJoinAt: admin.firestore.FieldValue.serverTimestamp(),
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            },
+            { merge: true },
+          );
+          return;
+        }
+
         transaction.set(
           userRef,
           {
             role: 'employee',
             isActive: true,
             assignedStoreIds: admin.firestore.FieldValue.arrayUnion(storeId),
+            lastLoginAt: admin.firestore.FieldValue.serverTimestamp(),
             lastJoinAt: admin.firestore.FieldValue.serverTimestamp(),
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           },
@@ -131,14 +151,19 @@ export const joinStoreByCode = onRequest({ region: 'us-central1' }, async (req, 
       );
     }
 
+    const membershipSaved = membershipExists;
+    const assignedSaved = assignedStoreIdsContainsStoreId;
+
     const payload = {
       result: {
         storeId,
         storeName: String(store.name ?? 'Store'),
         alreadyJoined: existingMember.exists,
+        membershipSaved,
+        assignedSaved,
         debug: {
-          membershipExists,
-          assignedStoreIdsContainsStoreId,
+          membershipExists: membershipSaved,
+          assignedStoreIdsContainsStoreId: assignedSaved,
         },
       },
     };

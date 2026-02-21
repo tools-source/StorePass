@@ -202,14 +202,6 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
         do {
             let response = try await callable(name: "joinStoreByCode", payload: ["code": normalizedCode], responseType: JoinStorePayload.self)
 
-            if response.debug?.membershipExists == false || response.debug?.assignedStoreIdsContainsStoreId == false {
-                throw NSError(
-                    domain: "StorePass",
-                    code: 4091,
-                    userInfo: [NSLocalizedDescriptionKey: "Join write verification failed on server. Please retry."]
-                )
-            }
-
             guard let uid = auth.currentUser?.uid else {
                 throw NSError(
                     domain: "StorePass",
@@ -218,12 +210,31 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
                 )
             }
 
+            print("[Stores] join call result storeId=\(response.storeId) uid=\(uid) membershipSaved=\(response.membershipSaved ?? response.debug?.membershipExists ?? false) assignedSaved=\(response.assignedSaved ?? response.debug?.assignedStoreIdsContainsStoreId ?? false)")
+
+            if response.membershipSaved == false || response.assignedSaved == false || response.debug?.membershipExists == false || response.debug?.assignedStoreIdsContainsStoreId == false {
+                throw NSError(
+                    domain: "StorePass",
+                    code: 4091,
+                    userInfo: [NSLocalizedDescriptionKey: "Join succeeded but membership not saved"]
+                )
+            }
+
             let userSnapshot = try await db.collection("users")
                 .document(uid)
                 .getDocument(source: .server)
             let assignedStoreIds = userSnapshot.data()?["assignedStoreIds"] as? [String] ?? []
 
-            print("[Stores] join response storeId=\(response.storeId) uid=\(uid) membership=\(response.debug?.membershipExists ?? false) assigned=\(response.debug?.assignedStoreIdsContainsStoreId ?? false) assignedCount=\(assignedStoreIds.count)")
+            let membershipSnapshot = try await db.collection("storeMembers")
+                .document(response.storeId)
+                .collection("members")
+                .document(uid)
+                .getDocument(source: .server)
+
+            let userContainsStore = assignedStoreIds.contains(response.storeId)
+            print("[Stores] join verify storeId=\(response.storeId) uid=\(uid) userDocExists=\(userSnapshot.exists) userContainsStore=\(userContainsStore) membershipDocExists=\(membershipSnapshot.exists) assignedCount=\(assignedStoreIds.count)")
+
+            print("[Stores] join response storeId=\(response.storeId) uid=\(uid) membership=\(response.membershipSaved ?? response.debug?.membershipExists ?? false) assigned=\(response.assignedSaved ?? response.debug?.assignedStoreIdsContainsStoreId ?? false) assignedCount=\(assignedStoreIds.count)")
 
             return JoinStoreResult(
                 storeId: response.storeId,
@@ -482,6 +493,8 @@ private struct JoinStorePayload: Decodable {
     let storeId: String
     let storeName: String
     let alreadyJoined: Bool?
+    let membershipSaved: Bool?
+    let assignedSaved: Bool?
     let debug: JoinStoreDebugPayload?
 
     enum CodingKeys: String, CodingKey {
@@ -490,6 +503,8 @@ private struct JoinStorePayload: Decodable {
         case store_id
         case storeName
         case alreadyJoined
+        case membershipSaved
+        case assignedSaved
         case debug
     }
 
@@ -498,6 +513,8 @@ private struct JoinStorePayload: Decodable {
         storeId = try container.decodeFirstString(forKeys: [.storeId, .storeID, .store_id])
         storeName = try container.decode(String.self, forKey: .storeName)
         alreadyJoined = try container.decodeIfPresent(Bool.self, forKey: .alreadyJoined)
+        membershipSaved = try container.decodeIfPresent(Bool.self, forKey: .membershipSaved)
+        assignedSaved = try container.decodeIfPresent(Bool.self, forKey: .assignedSaved)
         debug = try container.decodeIfPresent(JoinStoreDebugPayload.self, forKey: .debug)
     }
 }
