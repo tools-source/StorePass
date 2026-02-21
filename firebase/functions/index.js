@@ -5,7 +5,7 @@ const crypto = require('crypto');
 admin.initializeApp();
 const db = admin.firestore();
 
-// DEPLOYMENT NOTE: firebase deploy --only functions:joinStoreByCode,functions:getStoreJoinCode,functions:rotateStoreCode --project storecheck-6fdc8
+// README snippet: deploy all Cloud Functions with `firebase deploy --only functions`
 
 function normalizeCode(code) {
   return String(code || '').trim().toUpperCase();
@@ -16,7 +16,7 @@ function hashCode(normalizedCode) {
 }
 
 function generateJoinCode(length = 8) {
-  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
   const bytes = crypto.randomBytes(length);
   let code = '';
   for (let i = 0; i < length; i += 1) {
@@ -140,30 +140,13 @@ exports.joinStoreByCode = onRequest({ region: 'us-central1' }, async (req, res) 
     const decodedToken = await authenticateRequest(req);
     const data = extractDataPayload(req);
     const code = normalizeCode(data.code);
-    if (!code || code.length < 4) {
-      throw new HttpsError('invalid-argument', 'Please enter a valid join code.');
+    if (!code) {
+      throw new HttpsError('invalid-argument', 'code is required.');
     }
 
-    const user = await requireActiveUser(decodedToken.uid);
-    if (user.role !== 'employee') throw new HttpsError('permission-denied', 'Only employees can join by code.');
-
-    let storeDoc = null;
-    const byJoinCode = await db.collection('stores').where('joinCode', '==', code).where('isActive', '==', true).limit(1).get();
-    if (!byJoinCode.empty) {
-      storeDoc = byJoinCode.docs[0];
-    }
-
-    if (!storeDoc) {
-      const byHash = await db.collection('stores').where('joinCodeHash', '==', hashCode(code)).where('isActive', '==', true).limit(1).get();
-      if (!byHash.empty) storeDoc = byHash.docs[0];
-    }
-
-    if (!storeDoc && code.length <= 4) {
-      const byLast4 = await db.collection('stores').where('joinCodeLast4', '==', code).where('isActive', '==', true).limit(1).get();
-      if (!byLast4.empty) storeDoc = byLast4.docs[0];
-    }
-
-    if (!storeDoc) throw new HttpsError('not-found', 'Invalid join code.');
+    const byJoinCode = await db.collection('stores').where('joinCode', '==', code).limit(1).get();
+    if (byJoinCode.empty) throw new HttpsError('not-found', 'Invalid join code');
+    const storeDoc = byJoinCode.docs[0];
 
     const storeId = storeDoc.id;
     const employeeUid = decodedToken.uid;
@@ -175,17 +158,10 @@ exports.joinStoreByCode = onRequest({ region: 'us-central1' }, async (req, res) 
       memberId: employeeUid,
       storeId,
       storeName: storeDoc.data().name || 'Store',
-      role: 'employee',
       joinedAt: admin.firestore.FieldValue.serverTimestamp(),
-      userId: employeeUid,
-      isActive: true,
     }, { merge: true });
 
-    res.status(200).json({
-      storeId,
-      storeName: storeDoc.data().name || 'Store',
-      alreadyJoined,
-    });
+    res.status(200).json({ result: { storeId, storeName: storeDoc.data().name || 'Store', alreadyJoined } });
   } catch (error) {
     sendHttpsError(res, error);
   }
@@ -200,7 +176,6 @@ exports.rotateStoreCode = onRequest({ region: 'us-central1' }, async (req, res) 
   try {
     const decodedToken = await authenticateRequest(req);
     await requireActiveManagerProfile(decodedToken.uid);
-    await requireManager(decodedToken.uid);
 
     const data = extractDataPayload(req);
     const { storeId } = data;
@@ -220,7 +195,7 @@ exports.rotateStoreCode = onRequest({ region: 'us-central1' }, async (req, res) 
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     }, { merge: true });
 
-    res.status(200).json({ joinCode });
+    res.status(200).json({ result: { joinCode } });
   } catch (error) {
     sendHttpsError(res, error);
   }
@@ -235,7 +210,6 @@ exports.getStoreJoinCode = onRequest({ region: 'us-central1' }, async (req, res)
   try {
     const decodedToken = await authenticateRequest(req);
     await requireActiveManagerProfile(decodedToken.uid);
-    await requireManager(decodedToken.uid);
 
     const data = extractDataPayload(req);
     const { storeId } = data;
@@ -249,7 +223,7 @@ exports.getStoreJoinCode = onRequest({ region: 'us-central1' }, async (req, res)
     const joinCode = store.joinCodeCiphertext || store.joinCode;
     if (!joinCode) throw new HttpsError('failed-precondition', 'Rotate code to reveal latest code.');
 
-    res.status(200).json({ joinCode });
+    res.status(200).json({ result: { joinCode } });
   } catch (error) {
     sendHttpsError(res, error);
   }

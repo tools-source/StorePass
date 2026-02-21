@@ -78,6 +78,10 @@ StorePass is a SwiftUI + MVVM employee attendance app with Firebase Auth, Firest
    ```bash
    firebase deploy --only firestore:indexes
    ```
+7. Deploy Cloud Functions in `us-central1`:
+   ```bash
+   firebase deploy --only functions
+   ```
 
 ## Required Firestore Composite Indexes
 Defined in `firebase/firestore.indexes.json`:
