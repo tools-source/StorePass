@@ -74,23 +74,21 @@ final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
         do {
             try await db.collection("checkins").document(checkIn.id).setData(payload)
         } catch {
-            let nsError = error as NSError
-            if nsError.domain == FirestoreErrorDomain,
-               let firestoreCode = FirestoreErrorCode(rawValue: nsError.code) {
-                print("[CheckIn] createCheckIn error domain=\(nsError.domain) code=\(nsError.code) firestoreCode=\(firestoreCode)")
-            } else {
-                print("[CheckIn] createCheckIn error domain=\(nsError.domain) code=\(nsError.code)")
-            }
+            logFirestoreError(prefix: "[CheckIn] createCheckIn", error: error)
             throw mapFirestoreError(error)
         }
     }
 
     func fetchCheckIns(employeeId: String? = nil, limit: Int = 30) async throws -> [CheckIn] {
         do {
-            var query: Query = db.collection("checkins").order(by: "checkInTime", descending: true).limit(to: limit)
+            var query: Query = db.collection("checkins")
+                .order(by: "checkInTime", descending: true)
+                .limit(to: limit)
+
             if let employeeId {
                 query = query.whereField("employeeId", isEqualTo: employeeId)
             }
+
             let snap = try await query.getDocuments()
             return snap.documents.compactMap(decodeCheckIn)
         } catch {
@@ -168,15 +166,29 @@ final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
 
     private func mapFirestoreError(_ error: Error) -> Error {
         let nsError = error as NSError
-        guard nsError.domain == FirestoreErrorDomain,
-              nsError.code == FirestoreErrorCode.permissionDenied.rawValue else {
-            return error
+
+        // Only map permission denied into a friendly app error
+        if nsError.domain == FirestoreErrorDomain,
+           let code = FirestoreErrorCode.Code(rawValue: nsError.code),
+           code == .permissionDenied {
+            return NSError(
+                domain: "StorePass",
+                code: nsError.code,
+                userInfo: [NSLocalizedDescriptionKey: "You don't have permission for this action."]
+            )
         }
 
-        return NSError(
-            domain: "StorePass",
-            code: nsError.code,
-            userInfo: [NSLocalizedDescriptionKey: "You don't have permission for this action."]
-        )
+        return error
+    }
+
+    private func logFirestoreError(prefix: String, error: Error) {
+        let nsError = error as NSError
+        print("\(prefix) error domain=\(nsError.domain) code=\(nsError.code)")
+        print("\(prefix) userInfo=\(nsError.userInfo)")
+
+        if nsError.domain == FirestoreErrorDomain,
+           let code = FirestoreErrorCode.Code(rawValue: nsError.code) {
+            print("\(prefix) firestoreCode=\(code)")
+        }
     }
 }
