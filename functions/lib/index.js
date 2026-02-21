@@ -95,6 +95,7 @@ exports.joinStoreByCode = (0, https_1.onRequest)({ region: 'us-central1' }, asyn
         console.log(`[JOIN] before uid=${uid} storeId=${storeId} assignedStoreIdsLength=${beforeAssignedStoreIds.length} containsStore=${beforeContains}`);
         try {
             await db.runTransaction(async (transaction) => {
+                const userBefore = await transaction.get(userRef);
                 transaction.set(memberRef, {
                     userId: uid,
                     employeeId: uid,
@@ -104,10 +105,23 @@ exports.joinStoreByCode = (0, https_1.onRequest)({ region: 'us-central1' }, asyn
                     isActive: true,
                     storeName: String(store.name ?? 'Store'),
                 }, { merge: true });
+                if (!userBefore.exists) {
+                    transaction.set(userRef, {
+                        role: 'employee',
+                        isActive: true,
+                        assignedStoreIds: [storeId],
+                        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+                        lastLoginAt: admin.firestore.FieldValue.serverTimestamp(),
+                        lastJoinAt: admin.firestore.FieldValue.serverTimestamp(),
+                        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                    }, { merge: true });
+                    return;
+                }
                 transaction.set(userRef, {
                     role: 'employee',
                     isActive: true,
                     assignedStoreIds: admin.firestore.FieldValue.arrayUnion(storeId),
+                    lastLoginAt: admin.firestore.FieldValue.serverTimestamp(),
                     lastJoinAt: admin.firestore.FieldValue.serverTimestamp(),
                     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
                 }, { merge: true });
@@ -126,14 +140,18 @@ exports.joinStoreByCode = (0, https_1.onRequest)({ region: 'us-central1' }, asyn
         if (membershipExists && !assignedStoreIdsContainsStoreId) {
             throw new https_1.HttpsError('internal', 'Join membership write succeeded but user profile assignedStoreIds update failed');
         }
+        const membershipSaved = membershipExists;
+        const assignedSaved = assignedStoreIdsContainsStoreId;
         const payload = {
             result: {
                 storeId,
                 storeName: String(store.name ?? 'Store'),
                 alreadyJoined: existingMember.exists,
+                membershipSaved,
+                assignedSaved,
                 debug: {
-                    membershipExists,
-                    assignedStoreIdsContainsStoreId,
+                    membershipExists: membershipSaved,
+                    assignedStoreIdsContainsStoreId: assignedSaved,
                 },
             },
         };
