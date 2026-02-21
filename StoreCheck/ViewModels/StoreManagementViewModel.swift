@@ -30,13 +30,25 @@ final class StoreManagementViewModel: ObservableObject {
         }
     }
 
-    func createStore(name: String, address: String, latitude: Double, longitude: Double, radiusMeters: Int) async -> Bool {
+    func createStore(
+        name: String,
+        address: String,
+        latitude: Double,
+        longitude: Double,
+        radiusMeters: Int
+    ) async -> Bool {
         guard !isCreatingStore else { return false }
         isCreatingStore = true
         defer { isCreatingStore = false }
 
         do {
-            let result = try await repository.createStore(name: name, address: address, latitude: latitude, longitude: longitude, radiusMeters: radiusMeters)
+            let result = try await repository.createStore(
+                name: name,
+                address: address,
+                latitude: latitude,
+                longitude: longitude,
+                radiusMeters: radiusMeters
+            )
             latestJoinCodesByStoreId[result.store.id] = result.joinCode
             showToast("Store created. Code: \(result.joinCode)")
             storeError = nil
@@ -121,9 +133,11 @@ final class StoreManagementViewModel: ObservableObject {
         print("[Stores] Create NSError domain=\(nsError.domain) code=\(nsError.code)")
         print("[Stores] Create NSError userInfo=\(nsError.userInfo)")
 
+        // ✅ Correct way to decode Firestore error code
         if nsError.domain == FirestoreErrorDomain,
-           let firestoreCode = FirestoreErrorCode(rawValue: nsError.code) {
-            print("[Stores] Create FirestoreErrorCode=\(firestoreCode)")
+           let code = FirestoreErrorCode.Code(rawValue: nsError.code) {
+            let firestoreCode = FirestoreErrorCode(code)
+            print("[Stores] Create FirestoreErrorCode=\(firestoreCode) (code=\(code))")
         }
 
         if let path = nsError.userInfo["path"] as? String {

@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		0B6BDCF12F49726000996928 /* FirestoreStoreRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B6BDCF02F49720B00996928 /* FirestoreStoreRepository.swift */; };
 		0B885E2D2F41905D0011D606 /* FirebaseAuth in Frameworks */ = {isa = PBXBuildFile; productRef = 0B885E2C2F41905D0011D606 /* FirebaseAuth */; };
 		0B885E2F2F41905D0011D606 /* FirebaseCore in Frameworks */ = {isa = PBXBuildFile; productRef = 0B885E2E2F41905D0011D606 /* FirebaseCore */; };
 		0B885E312F41905D0011D606 /* FirebaseFirestore in Frameworks */ = {isa = PBXBuildFile; productRef = 0B885E302F41905D0011D606 /* FirebaseFirestore */; };
@@ -14,11 +15,6 @@
 		BEEFABCD1234000000000029 /* AppContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000001 /* AppContainer.swift */; };
 		BEEFABCD123400000000002A /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000002 /* AppDelegate.swift */; };
 		BEEFABCD123400000000002B /* StoreCheckApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000003 /* StoreCheckApp.swift */; };
-		BEEFABCD123400000000007B /* FirebaseBootstrap.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD123400000000007A /* FirebaseBootstrap.swift */; };
-		BEEFABCD123400000000007D /* DebugOptions.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD123400000000007C /* DebugOptions.swift */; };
-		BEEFABCD1234000000000087 /* RoleProfileRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000081 /* RoleProfileRepository.swift */; };
-		BEEFABCD1234000000000088 /* ManagerAccessRequiredView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000082 /* ManagerAccessRequiredView.swift */; };
-		BEEFABCD1234000000000089 /* EmployeeSetupRequiredView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000083 /* EmployeeSetupRequiredView.swift */; };
 		BEEFABCD123400000000002C /* LoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000004 /* LoginView.swift */; };
 		BEEFABCD123400000000002D /* RoleSelectionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000005 /* RoleSelectionView.swift */; };
 		BEEFABCD123400000000002E /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000006 /* Theme.swift */; };
@@ -54,20 +50,24 @@
 		BEEFABCD123400000000004C /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000024 /* Assets.xcassets */; };
 		BEEFABCD123400000000004D /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000025 /* LaunchScreen.storyboard */; };
 		BEEFABCD123400000000004E /* InfoPlist.strings in Resources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000026 /* InfoPlist.strings */; };
+		BEEFABCD123400000000006F /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = BEEFABCD1234000000000071 /* GoogleSignIn */; };
 		BEEFABCD1234000000000074 /* UserRole.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000072 /* UserRole.swift */; };
 		BEEFABCD1234000000000075 /* AuthViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000073 /* AuthViewModel.swift */; };
-		BEEFABCD1234000000000078 /* LocationPermissionStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000076 /* LocationPermissionStatus.swift */; };
-		BEEFABCD1234000000000079 /* EmployeeSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000077 /* EmployeeSettingsView.swift */; };
-		BEEFABCD123400000000006F /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = BEEFABCD1234000000000071 /* GoogleSignIn */; };
+		BEEFABCD1234000000000078 /* StoreCheck/Models/LocationPermissionStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000076 /* StoreCheck/Models/LocationPermissionStatus.swift */; };
+		BEEFABCD1234000000000079 /* StoreCheck/Views/Employee/EmployeeSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000077 /* StoreCheck/Views/Employee/EmployeeSettingsView.swift */; };
+		BEEFABCD123400000000007B /* FirebaseBootstrap.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD123400000000007A /* FirebaseBootstrap.swift */; };
+		BEEFABCD123400000000007D /* DebugOptions.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD123400000000007C /* DebugOptions.swift */; };
+		BEEFABCD1234000000000087 /* RoleProfileRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000081 /* RoleProfileRepository.swift */; };
+		BEEFABCD1234000000000088 /* ManagerAccessRequiredView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000082 /* ManagerAccessRequiredView.swift */; };
+		BEEFABCD1234000000000089 /* EmployeeSetupRequiredView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000083 /* EmployeeSetupRequiredView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		0B6BDCF02F49720B00996928 /* FirestoreStoreRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FirestoreStoreRepository.swift; sourceTree = "<group>"; };
 		0B885E3A2F419CF50011D606 /* GoogleService-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "GoogleService-Info.plist"; sourceTree = "<group>"; };
 		BEEFABCD1234000000000001 /* AppContainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppContainer.swift; sourceTree = "<group>"; };
 		BEEFABCD1234000000000002 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		BEEFABCD1234000000000003 /* StoreCheckApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoreCheckApp.swift; sourceTree = "<group>"; };
-		BEEFABCD123400000000007A /* FirebaseBootstrap.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FirebaseBootstrap.swift; sourceTree = "<group>"; };
-		BEEFABCD123400000000007C /* DebugOptions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugOptions.swift; sourceTree = "<group>"; };
 		BEEFABCD1234000000000004 /* LoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginView.swift; sourceTree = "<group>"; };
 		BEEFABCD1234000000000005 /* RoleSelectionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoleSelectionView.swift; sourceTree = "<group>"; };
 		BEEFABCD1234000000000006 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
@@ -107,8 +107,10 @@
 		BEEFABCD1234000000000028 /* StoreCheck.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = StoreCheck.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		BEEFABCD1234000000000072 /* UserRole.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserRole.swift; sourceTree = "<group>"; };
 		BEEFABCD1234000000000073 /* AuthViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthViewModel.swift; sourceTree = "<group>"; };
-		BEEFABCD1234000000000076 /* LocationPermissionStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoreCheck/Models/LocationPermissionStatus.swift; sourceTree = SOURCE_ROOT; };
-		BEEFABCD1234000000000077 /* EmployeeSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoreCheck/Views/Employee/EmployeeSettingsView.swift; sourceTree = SOURCE_ROOT; };
+		BEEFABCD1234000000000076 /* StoreCheck/Models/LocationPermissionStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoreCheck/Models/LocationPermissionStatus.swift; sourceTree = SOURCE_ROOT; };
+		BEEFABCD1234000000000077 /* StoreCheck/Views/Employee/EmployeeSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoreCheck/Views/Employee/EmployeeSettingsView.swift; sourceTree = SOURCE_ROOT; };
+		BEEFABCD123400000000007A /* FirebaseBootstrap.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FirebaseBootstrap.swift; sourceTree = "<group>"; };
+		BEEFABCD123400000000007C /* DebugOptions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugOptions.swift; sourceTree = "<group>"; };
 		BEEFABCD1234000000000081 /* RoleProfileRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoleProfileRepository.swift; sourceTree = "<group>"; };
 		BEEFABCD1234000000000082 /* ManagerAccessRequiredView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManagerAccessRequiredView.swift; sourceTree = "<group>"; };
 		BEEFABCD1234000000000083 /* EmployeeSetupRequiredView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmployeeSetupRequiredView.swift; sourceTree = "<group>"; };
@@ -213,7 +215,7 @@
 			isa = PBXGroup;
 			children = (
 				BEEFABCD1234000000000007 /* CheckIn.swift */,
-				BEEFABCD1234000000000076 /* LocationPermissionStatus.swift */,
+				BEEFABCD1234000000000076 /* StoreCheck/Models/LocationPermissionStatus.swift */,
 				BEEFABCD1234000000000008 /* LocationStatus.swift */,
 				BEEFABCD1234000000000009 /* Store.swift */,
 				BEEFABCD123400000000000A /* UserProfile.swift */,
@@ -225,6 +227,7 @@
 		BEEFABCD1234000000000059 /* Repositories */ = {
 			isa = PBXGroup;
 			children = (
+				0B6BDCF02F49720B00996928 /* FirestoreStoreRepository.swift */,
 				BEEFABCD123400000000000B /* AuthRepository.swift */,
 				BEEFABCD123400000000000C /* CheckInRepository.swift */,
 				BEEFABCD123400000000000D /* StoreRepository.swift */,
@@ -283,7 +286,7 @@
 		BEEFABCD1234000000000080 /* Employee */ = {
 			isa = PBXGroup;
 			children = (
-				BEEFABCD1234000000000077 /* EmployeeSettingsView.swift */,
+				BEEFABCD1234000000000077 /* StoreCheck/Views/Employee/EmployeeSettingsView.swift */,
 			);
 			path = Employee;
 			sourceTree = "<group>";
@@ -379,10 +382,11 @@
 				BEEFABCD123400000000002D /* RoleSelectionView.swift in Sources */,
 				BEEFABCD123400000000002E /* Theme.swift in Sources */,
 				BEEFABCD123400000000002F /* CheckIn.swift in Sources */,
-				BEEFABCD1234000000000078 /* LocationPermissionStatus.swift in Sources */,
+				BEEFABCD1234000000000078 /* StoreCheck/Models/LocationPermissionStatus.swift in Sources */,
 				BEEFABCD1234000000000030 /* LocationStatus.swift in Sources */,
 				BEEFABCD1234000000000031 /* Store.swift in Sources */,
 				BEEFABCD1234000000000032 /* UserProfile.swift in Sources */,
+				0B6BDCF12F49726000996928 /* FirestoreStoreRepository.swift in Sources */,
 				BEEFABCD1234000000000074 /* UserRole.swift in Sources */,
 				BEEFABCD1234000000000033 /* AuthRepository.swift in Sources */,
 				BEEFABCD1234000000000034 /* CheckInRepository.swift in Sources */,
@@ -406,7 +410,7 @@
 				BEEFABCD1234000000000044 /* EmployeeDashboardView.swift in Sources */,
 				BEEFABCD1234000000000045 /* EmployeeHistoryView.swift in Sources */,
 				BEEFABCD1234000000000046 /* EmployeeTabView.swift in Sources */,
-				BEEFABCD1234000000000079 /* EmployeeSettingsView.swift in Sources */,
+				BEEFABCD1234000000000079 /* StoreCheck/Views/Employee/EmployeeSettingsView.swift in Sources */,
 				BEEFABCD1234000000000047 /* ManageEmployeesView.swift in Sources */,
 				BEEFABCD1234000000000048 /* ManageStoresView.swift in Sources */,
 				BEEFABCD1234000000000049 /* ManagerDashboardView.swift in Sources */,
