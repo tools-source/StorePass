@@ -1,6 +1,6 @@
 import Foundation
 
-enum UserRole: String, Codable, CaseIterable {
-    case employee
+enum UserRole: String, Codable, CaseIterable, Equatable {
     case manager
+    case employee
 }
