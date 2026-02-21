@@ -175,8 +175,29 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
     }
 
     func joinStoreByCode(code: String) async throws -> JoinStoreResult {
-        let response = try await callable(name: "joinStoreByCode", payload: ["code": code], responseType: JoinStorePayload.self)
-        return JoinStoreResult(storeId: response.storeId, storeName: response.storeName, alreadyJoined: response.alreadyJoined ?? false)
+        let normalizedCode = code.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        guard normalizedCode.count >= 6 else {
+            throw NSError(
+                domain: "StorePass",
+                code: 4005,
+                userInfo: [NSLocalizedDescriptionKey: "Enter a valid join code (at least 6 characters)."]
+            )
+        }
+
+        do {
+            let response = try await callable(name: "joinStoreByCode", payload: ["code": normalizedCode], responseType: JoinStorePayload.self)
+            return JoinStoreResult(storeId: response.storeId, storeName: response.storeName, alreadyJoined: response.alreadyJoined ?? false)
+        } catch {
+            let nsError = error as NSError
+            if nsError.code == 404 || nsError.code >= 500 {
+                throw NSError(
+                    domain: nsError.domain,
+                    code: nsError.code,
+                    userInfo: [NSLocalizedDescriptionKey: "Join service unavailable. Please try again."]
+                )
+            }
+            throw error
+        }
     }
 
     private func callable<T: Decodable>(name: String, payload: [String: Any], responseType: T.Type) async throws -> T {
@@ -212,15 +233,12 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
 
         let wrapped = try? decoder.decode(BackendEnvelope<T>.self, from: data)
         if let backendMessage = wrapped?.error?.message {
-            throw NSError(domain: "StorePass", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: backendMessage])
+            let message = "Backend request failed (status=\(httpResponse.statusCode)). \(backendMessage). Raw: \(rawResponse)"
+            throw NSError(domain: "StorePass", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: message])
         }
 
         guard (200 ... 299).contains(httpResponse.statusCode) else {
-            #if DEBUG
             let message = "Backend request failed (status=\(httpResponse.statusCode)). Raw: \(rawResponse)"
-            #else
-            let message = "Backend request failed."
-            #endif
             throw NSError(domain: "StorePass", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: message])
         }
 

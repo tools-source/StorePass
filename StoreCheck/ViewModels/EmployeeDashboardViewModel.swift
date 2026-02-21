@@ -72,6 +72,7 @@ final class EmployeeDashboardViewModel: ObservableObject {
 
     func joinStoreByCode() async {
         do {
+            errorMessage = nil
             let result = try await storeRepository.joinStoreByCode(code: joinCodeInput)
             let joinedStore = try await storeRepository.fetchStores(ids: [result.storeId]).first
             if let joinedStore, stores.contains(where: { $0.id == joinedStore.id }) == false {
@@ -85,7 +86,9 @@ final class EmployeeDashboardViewModel: ObservableObject {
                 : "Joined \(result.storeName) successfully."
             joinCodeInput = ""
         } catch {
+            joinStatusMessage = nil
             errorMessage = error.localizedDescription
+            print("[Stores] Join-by-code error: \(error.localizedDescription)")
         }
     }
 }

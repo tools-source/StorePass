@@ -75,9 +75,20 @@ service cloud.firestore {
     }
 
     match /storeMembers/{storeId}/members/{uid} {
-      allow get: if isSelf(uid) || isStoreOwner(storeId);
-      allow list: if isStoreOwner(storeId);
-      allow create, update, delete: if false;
+      allow get: if isSelf(uid) || (isManager() && isStoreOwner(storeId));
+      allow list: if isManager() && isStoreOwner(storeId);
+      allow create: if isSelf(uid)
+        && request.resource.id == myUid()
+        && request.resource.data.userId == myUid()
+        && request.resource.data.memberId == myUid()
+        && request.resource.data.role == "employee"
+        && request.resource.data.isActive == true;
+      allow update: if isSelf(uid)
+        && request.resource.data.userId == resource.data.userId
+        && request.resource.data.memberId == resource.data.memberId
+        && request.resource.data.role == resource.data.role
+        && request.resource.data.joinedAt == resource.data.joinedAt;
+      allow delete: if false;
     }
 
     match /checkins/{checkinId} {
