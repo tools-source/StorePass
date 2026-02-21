@@ -83,6 +83,14 @@ StorePass is a SwiftUI + MVVM employee attendance app with Firebase Auth, Firest
    firebase deploy --only functions
    ```
 
+## DEPLOY (Cloud Functions)
+Use the same Firebase project as the iOS app and deploy functions from this repository root:
+
+```bash
+firebase use <project>
+firebase deploy --only functions
+```
+
 ## Required Firestore Composite Indexes
 Defined in `firebase/firestore.indexes.json`:
 1. `checkins`: `storeId ASC`, `checkInTime DESC`
