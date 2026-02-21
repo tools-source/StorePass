@@ -14,6 +14,7 @@ struct ManageStoresView: View {
 
     @State private var editingStore: Store?
     @State private var deletingStore: Store?
+    @State private var errorMessage: String?
 
     init(repository: StoreRepositoryProtocol) {
         _viewModel = StateObject(wrappedValue: StoreManagementViewModel(repository: repository))
@@ -56,10 +57,23 @@ struct ManageStoresView: View {
             } message: {
                 Text("This store and its member links will be removed.")
             }
-            .alert("Stores", isPresented: Binding(get: { viewModel.storeError != nil }, set: { _ in viewModel.storeError = nil })) {
-                Button("OK", role: .cancel) { viewModel.storeError = nil }
+            .alert("Stores", isPresented: Binding(get: { errorMessage != nil }, set: { isPresented in
+                if !isPresented {
+                    errorMessage = nil
+                    viewModel.clearStoreError()
+                }
+            })) {
+                Button("OK", role: .cancel) {
+                    errorMessage = nil
+                    viewModel.clearStoreError()
+                }
             } message: {
-                Text(viewModel.storeError ?? "")
+                Text(errorMessage ?? "")
+            }
+            .onChange(of: viewModel.storeError) { _, newValue in
+                if let newValue, !newValue.isEmpty {
+                    errorMessage = newValue
+                }
             }
             .overlay(alignment: .bottom) {
                 if let toast = viewModel.toastMessage {
@@ -86,12 +100,12 @@ struct ManageStoresView: View {
 
             VStack(alignment: .leading) {
                 Text("Radius: \(Int(radius))m")
-                Slider(value: $radius, in: 50...500, step: 10)
+                Slider(value: $radius, in: 50 ... 500, step: 10)
             }
 
-            Button("Create") {
+            Button(viewModel.isCreatingStore ? "Creating..." : "Create") {
                 Task {
-                    await viewModel.createStore(
+                    let didCreate = await viewModel.createStore(
                         name: name,
                         address: address,
                         latitude: latitude,
@@ -99,17 +113,22 @@ struct ManageStoresView: View {
                         radiusMeters: Int(radius)
                     )
                     await viewModel.load(managerId: container.authRepository.currentUserId)
-                    await MainActor.run {
-                        name = ""
-                        address = ""
-                        latitude = 0
-                        longitude = 0
-                        radius = 150
+                    if didCreate {
+                        await MainActor.run {
+                            name = ""
+                            address = ""
+                            latitude = 0
+                            longitude = 0
+                            radius = 150
+                        }
                     }
                 }
             }
             .buttonStyle(PrimaryButtonStyle())
-            .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || address.isEmpty)
+            .disabled(
+                viewModel.isCreatingStore ||
+                    name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            )
         }
         .cardStyle()
     }
@@ -149,7 +168,9 @@ struct ManageStoresView: View {
                                         UIPasteboard.general.string = fetched
                                         viewModel.showToast("Code copied")
                                     } else {
-                                        viewModel.storeError = "Unable to fetch store code."
+                                        await MainActor.run {
+                                            viewModel.presentStoreError("Unable to fetch store code.")
+                                        }
                                     }
                                 }
                             }
@@ -295,7 +316,7 @@ private struct EditStoreView: View {
                     AddressSearchField(address: $address, latitude: $latitude, longitude: $longitude)
                     TextField("Latitude", value: $latitude, format: .number)
                     TextField("Longitude", value: $longitude, format: .number)
-                    Stepper("Radius \(store.radiusMeters)m", value: $store.radiusMeters, in: 50...600, step: 10)
+                    Stepper("Radius \(store.radiusMeters)m", value: $store.radiusMeters, in: 50 ... 600, step: 10)
                 }
             }
             .navigationTitle("Edit Store")
