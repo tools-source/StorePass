@@ -9,6 +9,7 @@ struct JoinStoreResult {
     let storeId: String
     let storeName: String
     let alreadyJoined: Bool
+    let assignedStoreIds: [String]
 }
 
 protocol StoreRepositoryProtocol {

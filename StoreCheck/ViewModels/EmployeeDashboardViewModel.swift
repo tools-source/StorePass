@@ -74,6 +74,12 @@ final class EmployeeDashboardViewModel: ObservableObject {
         do {
             errorMessage = nil
             let result = try await storeRepository.joinStoreByCode(code: joinCodeInput)
+
+            if var currentUser = authService.currentUser {
+                currentUser.assignedStoreIds = result.assignedStoreIds
+                authService.setCurrentUser(currentUser)
+            }
+
             let joinedStore = try await storeRepository.fetchStores(ids: [result.storeId]).first
             if let joinedStore, stores.contains(where: { $0.id == joinedStore.id }) == false {
                 stores.append(joinedStore)

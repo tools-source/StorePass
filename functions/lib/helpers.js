@@ -107,10 +107,21 @@ async function requireActiveManager(db, uid) {
         db.collection('managers').doc(uid).get(),
         db.collection('users').doc(uid).get(),
     ]);
-    const managerActive = managerSnap.exists && managerSnap.data()?.isActive === true;
+    const managerDocExists = managerSnap.exists;
+    const managerDocActive = managerSnap.exists && managerSnap.data()?.isActive === true;
     const userData = userSnap.data();
-    const activeManagerUser = userSnap.exists && userData?.role === 'manager' && userData?.isActive === true;
-    if (!managerActive && !activeManagerUser) {
+    const userDocExists = userSnap.exists;
+    const userRole = typeof userData?.role === 'string' ? userData.role : null;
+    const userIsActive = userData?.isActive === true;
+    const activeManagerUser = userDocExists && userRole === 'manager' && userIsActive;
+    if (!managerDocActive && !activeManagerUser) {
         throw new https_1.HttpsError('permission-denied', 'Manager access required');
     }
+    return {
+        managerDocExists,
+        managerDocActive,
+        userDocExists,
+        userRole,
+        userIsActive,
+    };
 }
