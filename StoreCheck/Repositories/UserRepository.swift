@@ -59,7 +59,7 @@ final class FirestoreUserRepository: UserRepositoryProtocol {
             id: id,
             name: data["name"] as? String ?? "StorePass User",
             email: data["email"] as? String,
-            role: .employee,
+            role: UserRole(rawValue: (data["role"] as? String ?? UserRole.employee.rawValue).lowercased()) ?? .employee,
             createdAt: (data["createdAt"] as? Timestamp)?.dateValue() ?? Date(),
             lastLoginAt: (data["lastLoginAt"] as? Timestamp)?.dateValue() ?? Date(),
             provider: data["provider"] as? String ?? "unknown",
