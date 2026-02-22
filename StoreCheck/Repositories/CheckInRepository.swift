@@ -20,7 +20,9 @@ protocol CheckInRepositoryProtocol {
     func checkout(checkinId: String, storeId: String, managerId: String?, checkoutLat: Double, checkoutLng: Double, distanceMeters: Double, accuracyMeters: Double) async throws
     func updateCheckIn(_ checkIn: CheckIn) async throws
     func deleteCheckIn(checkinId: String, employeeId: String, storeId: String, managerId: String?) async throws
+    func deleteCheckIn(checkinId: String, storeId: String, managerId: String) async throws
     func clearAllCheckIns(isManagerScope: Bool, storeId: String?, managerId: String?) async throws
+    func clearAllCheckIns(storeId: String, managerId: String, limit: Int) async throws
     func fetchCheckIns(employeeId: String?, limit: Int) async throws -> [CheckIn]
     func fetchEmployeeCheckIns(employeeId: String, limit: Int) async throws -> [CheckIn]
     func fetchManagerStoreCheckIns(managerId: String, storeId: String, limit: Int) async throws -> [CheckIn]
@@ -249,6 +251,26 @@ final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
         try await batch.commit()
     }
 
+    func deleteCheckIn(checkinId: String, storeId: String, managerId: String) async throws {
+        let managerMirrorRef = db.collection("managerCheckins")
+            .document(managerId)
+            .collection("stores")
+            .document(storeId)
+            .collection("checkins")
+            .document(checkinId)
+
+        let managerMirror = try await managerMirrorRef.getDocument()
+        let employeeId = managerMirror.data()?["employeeId"] as? String
+
+        let batch = db.batch()
+        batch.deleteDocument(db.collection("checkins").document(checkinId))
+        if let employeeId, !employeeId.isEmpty {
+            batch.deleteDocument(db.collection("employeeCheckins").document(employeeId).collection("checkins").document(checkinId))
+        }
+        batch.deleteDocument(managerMirrorRef)
+        try await batch.commit()
+    }
+
     func clearAllCheckIns(isManagerScope: Bool, storeId: String?, managerId: String?) async throws {
         guard let uid = Auth.auth().currentUser?.uid else {
             throw NSError(domain: "StorePass", code: 4001, userInfo: [NSLocalizedDescriptionKey: "You must be signed in."])
@@ -257,12 +279,7 @@ final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
         if isManagerScope {
             guard let storeId else { return }
             let manager = try await resolveManagerId(storeId: storeId, preferredManagerId: managerId)
-            let snap = try await db.collection("managerCheckins").document(manager).collection("stores").document(storeId).collection("checkins").getDocuments()
-            for document in snap.documents {
-                let data = document.data()
-                let employeeId = data["employeeId"] as? String ?? ""
-                try await deleteCheckIn(checkinId: document.documentID, employeeId: employeeId, storeId: storeId, managerId: manager)
-            }
+            try await clearAllCheckIns(storeId: storeId, managerId: manager, limit: 500)
         } else {
             let snap = try await db.collection("employeeCheckins").document(uid).collection("checkins").getDocuments()
             for document in snap.documents {
@@ -271,6 +288,35 @@ final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
                 let manager = data["managerId"] as? String
                 try await deleteCheckIn(checkinId: document.documentID, employeeId: uid, storeId: storeId, managerId: manager)
             }
+        }
+    }
+
+    func clearAllCheckIns(storeId: String, managerId: String, limit: Int = 500) async throws {
+        let queryLimit = max(1, min(limit, 500))
+        let managerSnapshot = try await db.collection("managerCheckins")
+            .document(managerId)
+            .collection("stores")
+            .document(storeId)
+            .collection("checkins")
+            .limit(to: queryLimit)
+            .getDocuments()
+
+        if managerSnapshot.documents.isEmpty { return }
+
+        let chunks = managerSnapshot.documents.chunked(into: 150)
+        for chunk in chunks {
+            let batch = db.batch()
+            for document in chunk {
+                let checkinId = document.documentID
+                let employeeId = document.data()["employeeId"] as? String
+
+                batch.deleteDocument(db.collection("checkins").document(checkinId))
+                if let employeeId, !employeeId.isEmpty {
+                    batch.deleteDocument(db.collection("employeeCheckins").document(employeeId).collection("checkins").document(checkinId))
+                }
+                batch.deleteDocument(db.collection("managerCheckins").document(managerId).collection("stores").document(storeId).collection("checkins").document(checkinId))
+            }
+            try await batch.commit()
         }
     }
 

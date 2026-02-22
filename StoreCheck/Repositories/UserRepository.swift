@@ -124,7 +124,7 @@ final class FirestoreEmployeeManagementRepository: EmployeeManagementRepositoryP
         var storeIdsByEmployee: [String: Set<String>] = [:]
         var inactiveMemberByEmployee: [String: Bool] = [:]
         var membershipNameByEmployee: [String: String] = [:]
-        var membershipEmailByEmployee: [String: String?] = [:]
+        var membershipEmailByEmployee: [String: String] = [:]
 
         for store in managerStores {
             let storeId = store.id
@@ -192,7 +192,7 @@ final class FirestoreEmployeeManagementRepository: EmployeeManagementRepositoryP
                     if let email = data["employeeEmail"] as? String, !email.isEmpty {
                         membershipEmailByEmployee[employeeId] = email
                     } else if data.keys.contains("employeeEmail") {
-                        membershipEmailByEmployee[employeeId] = nil
+                        membershipEmailByEmployee[employeeId] = ""
                     }
                 }
             }
@@ -205,36 +205,17 @@ final class FirestoreEmployeeManagementRepository: EmployeeManagementRepositoryP
 
         let employeeIds = Array(storeIdsByEmployee.keys)
 
-        // Best effort: manager may not have permission to read /users docs.
-        var userDataById: [String: [String: Any]] = [:]
-        for employeeId in employeeIds {
-            do {
-                let userDoc = try await db.collection("users").document(employeeId).getDocument()
-                if let data = userDoc.data() {
-                    userDataById[employeeId] = data
-                }
-            } catch {
-                let nsError = error as NSError
-                let firestoreCode = FirestoreErrorCode.Code(rawValue: nsError.code)
-                print("[Employees][QUERY] userLookupFailed path=users/\(employeeId) employeeId=\(employeeId) domain=\(nsError.domain) code=\(nsError.code) firestoreCode=\(String(describing: firestoreCode))")
-                print("[Employees][QUERY] userLookupFailed userInfo=\(nsError.userInfo)")
-            }
-        }
-
         var rows: [EmployeeSummary] = []
         rows.reserveCapacity(employeeIds.count)
 
         for employeeId in employeeIds {
-            let userData = userDataById[employeeId]
             let storeIdsForEmployee = Array(storeIdsByEmployee[employeeId] ?? []).sorted()
             let storeNames = storeIdsForEmployee.compactMap { storesById[$0]?.name }
             let membershipName = membershipNameByEmployee[employeeId]
             let membershipEmail = membershipEmailByEmployee[employeeId]
             let resolvedName = membershipName
-                ?? (userData?["name"] as? String)
                 ?? "Employee \(employeeId.prefix(6))"
-            let resolvedEmail = membershipEmail
-                ?? (userData?["email"] as? String)
+            let resolvedEmail = (membershipEmail?.isEmpty == false) ? membershipEmail : nil
 
             if membershipName == nil || membershipEmail == nil {
                 print("[Employees][MEMBERSHIP] missingFields employeeId=\(employeeId) missingName=\(membershipName == nil) missingEmail=\(membershipEmail == nil)")
@@ -247,7 +228,7 @@ final class FirestoreEmployeeManagementRepository: EmployeeManagementRepositoryP
                     email: resolvedEmail,
                     storeIds: storeIdsForEmployee,
                     storeNames: storeNames,
-                    userIsActive: (userData?["isActive"] as? Bool) ?? true,
+                    userIsActive: !(inactiveMemberByEmployee[employeeId] ?? false),
                     hasInactiveMembership: inactiveMemberByEmployee[employeeId] ?? false
                 )
             )

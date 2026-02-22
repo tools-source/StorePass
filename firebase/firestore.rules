@@ -75,6 +75,12 @@ service cloud.firestore {
       );
     }
 
+    function managerOwnsStore(storeId) {
+      return activeManager()
+        && exists(/databases/$(database)/documents/stores/$(storeId))
+        && get(/databases/$(database)/documents/stores/$(storeId)).data.managerId == myUid();
+    }
+
     match /users/{uid} {
       allow get: if isSelf(uid) || activeManager();
       allow list: if false;
@@ -114,7 +120,9 @@ service cloud.firestore {
         && request.resource.data.employeeId == request.auth.uid
         && request.resource.data.storeId is string;
 
-      allow update, delete: if false;
+      allow update: if false;
+      allow delete: if isSelf(employeeUid)
+        || (managerOwnsStore(resource.data.storeId));
     }
 
     match /managerCheckins/{managerUid}/stores/{storeId}/checkins/{checkinId} {
@@ -132,7 +140,8 @@ service cloud.firestore {
         && exists(/databases/$(database)/documents/stores/$(storeId))
         && get(/databases/$(database)/documents/stores/$(storeId)).data.managerId == managerUid;
 
-      allow update, delete: if false;
+      allow update: if false;
+      allow delete: if isSelf(managerUid) && managerOwnsStore(storeId);
     }
 
     match /stores/{storeId} {

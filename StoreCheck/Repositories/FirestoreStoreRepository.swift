@@ -257,6 +257,8 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
 
             print("[Stores] join call result storeId=\(response.storeId) uid=\(uid) membershipSaved=\(response.membershipSaved ?? response.debug?.membershipExists ?? false) assignedSaved=\(response.assignedSaved ?? response.debug?.assignedStoreIdsContainsStoreId ?? false)")
 
+            try await upsertMembershipProfileFields(storeId: response.storeId, uid: uid)
+
             if response.membershipSaved == false || response.assignedSaved == false || response.debug?.membershipExists == false || response.debug?.assignedStoreIdsContainsStoreId == false {
                 throw NSError(
                     domain: "StorePass",
@@ -318,6 +320,34 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
             }
             throw error
         }
+    }
+
+    private func upsertMembershipProfileFields(storeId: String, uid: String) async throws {
+        let membershipRef = db.collection("stores")
+            .document(storeId)
+            .collection("members")
+            .document(uid)
+
+        let membershipSnapshot = try await membershipRef.getDocument(source: .server)
+        guard membershipSnapshot.exists else { return }
+
+        let userSnapshot = try await db.collection("users")
+            .document(uid)
+            .getDocument(source: .server)
+        let userData = userSnapshot.data() ?? [:]
+
+        let profileName = (userData["name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let authName = auth.currentUser?.displayName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedName = profileName?.isEmpty == false
+            ? profileName!
+            : (authName?.isEmpty == false ? authName! : "Employee \(uid.prefix(6))")
+
+        let resolvedEmail = auth.currentUser?.email ?? ""
+
+        try await membershipRef.setData([
+            "employeeName": resolvedName,
+            "employeeEmail": resolvedEmail
+        ], merge: true)
     }
 
     private func logCurrentUserAccessState(context: String) async throws -> (uid: String, exists: Bool, role: String?, isActive: Bool?) {
