@@ -124,6 +124,7 @@ final class FirestoreEmployeeManagementRepository: EmployeeManagementRepositoryP
         var storeIdsByEmployee: [String: Set<String>] = [:]
         var inactiveMemberByEmployee: [String: Bool] = [:]
         var membershipNameByEmployee: [String: String] = [:]
+        var membershipEmailByEmployee: [String: String?] = [:]
 
         for store in managerStores {
             let storeId = store.id
@@ -163,6 +164,9 @@ final class FirestoreEmployeeManagementRepository: EmployeeManagementRepositoryP
             for doc in membersSnap.documents {
                 let data = doc.data()
                 let employeeId = (data["userId"] as? String) ?? doc.documentID
+                let keys = data.keys.sorted().joined(separator: ",")
+                let hasJoinedAt = data["joinedAt"] != nil
+                print("[Employees][MEMBERSHIP] storeId=\(storeId) employeeId=\(employeeId) keys=[\(keys)] hasJoinedAt=\(hasJoinedAt)")
 
                 // keep role filtering permissive for legacy memberships that omit role
                 let role = (data["role"] as? String)?.lowercased()
@@ -177,10 +181,18 @@ final class FirestoreEmployeeManagementRepository: EmployeeManagementRepositoryP
                 }
 
                 if membershipNameByEmployee[employeeId] == nil {
-                    if let name = data["name"] as? String, !name.isEmpty {
+                    if let name = data["employeeName"] as? String, !name.isEmpty {
                         membershipNameByEmployee[employeeId] = name
-                    } else if let name = data["employeeName"] as? String, !name.isEmpty {
+                    } else if let name = data["name"] as? String, !name.isEmpty {
                         membershipNameByEmployee[employeeId] = name
+                    }
+                }
+
+                if membershipEmailByEmployee[employeeId] == nil {
+                    if let email = data["employeeEmail"] as? String, !email.isEmpty {
+                        membershipEmailByEmployee[employeeId] = email
+                    } else if data.keys.contains("employeeEmail") {
+                        membershipEmailByEmployee[employeeId] = nil
                     }
                 }
             }
@@ -215,15 +227,17 @@ final class FirestoreEmployeeManagementRepository: EmployeeManagementRepositoryP
             let userData = userDataById[employeeId]
             let storeIdsForEmployee = Array(storeIdsByEmployee[employeeId] ?? []).sorted()
             let storeNames = storeIdsForEmployee.compactMap { storesById[$0]?.name }
-            let resolvedName = (userData?["name"] as? String)
-                ?? membershipNameByEmployee[employeeId]
+            let resolvedName = membershipNameByEmployee[employeeId]
+                ?? (userData?["name"] as? String)
                 ?? "Employee \(employeeId.prefix(6))"
+            let resolvedEmail = membershipEmailByEmployee[employeeId]
+                ?? (userData?["email"] as? String)
 
             rows.append(
                 EmployeeSummary(
                     id: employeeId,
                     name: resolvedName,
-                    email: userData?["email"] as? String,
+                    email: resolvedEmail,
                     storeIds: storeIdsForEmployee,
                     storeNames: storeNames,
                     userIsActive: (userData?["isActive"] as? Bool) ?? true,

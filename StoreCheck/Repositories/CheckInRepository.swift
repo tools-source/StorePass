@@ -185,7 +185,7 @@ final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
         let data = document.data()
         guard let employeeId = data["employeeId"] as? String,
               let storeId = data["storeId"] as? String,
-              let checkInTime = (data["checkInTime"] as? Timestamp)?.dateValue() else {
+              let checkInTime = decodeDate(data["checkInTime"]) else {
             return nil
         }
 
@@ -203,6 +203,18 @@ final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
             employeeName: data["employeeName"] as? String ?? "Employee",
             storeName: data["storeName"] as? String ?? "Store"
         )
+    }
+
+    private func decodeDate(_ raw: Any?) -> Date? {
+        if let ts = raw as? Timestamp {
+            return ts.dateValue()
+        }
+
+        if let date = raw as? Date {
+            return date
+        }
+
+        return nil
     }
 
     private func mapFirestoreError(_ error: Error) -> Error {
