@@ -111,91 +111,122 @@ final class FirestoreEmployeeManagementRepository: EmployeeManagementRepositoryP
         return stores.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
-    // ✅ NEW: Index-free approach used by the ViewModel
-    // Strategy:
-    // 1) For each store: read stores/{storeId}/members (no orderBy)
-    // 2) Filter employees in Swift
-    // 3) Fetch user profiles in chunks of 10 with documentID IN query
-    // 4) Sort locally
+    // Debugging notes:
+    // - Expected query shape: stores/{storeId}/members ordered by joinedAt desc when available.
+    // - No composite index is required for subcollection-only orderBy(joinedAt).
     func fetchEmployeesForManagerStores(managerStores: [Store]) async throws -> [EmployeeSummary] {
         if managerStores.isEmpty { return [] }
 
+        let managerUid = auth.currentUser?.uid ?? "nil"
         let storesById = Dictionary(uniqueKeysWithValues: managerStores.map { ($0.id, $0) })
-        let storeIds = managerStores.map(\.id)
 
-        // employeeId -> set(storeId)
+        // employeeId -> aggregate membership metadata
         var storeIdsByEmployee: [String: Set<String>] = [:]
         var inactiveMemberByEmployee: [String: Bool] = [:]
+        var membershipNameByEmployee: [String: String] = [:]
 
-        // 1) Members per store (no orderBy, no where)
-        for storeId in storeIds {
-            let membersSnap: QuerySnapshot
+        for store in managerStores {
+            let storeId = store.id
+            let membersPath = "stores/\(storeId)/members"
+            print("[Employees][QUERY] managerUid=\(managerUid) storeId=\(storeId) path=\(membersPath) orderBy=joinedAt DESC")
+
+            var membersSnap: QuerySnapshot
             do {
                 membersSnap = try await db.collection("stores")
                     .document(storeId)
                     .collection("members")
+                    .order(by: "joinedAt", descending: true)
                     .getDocuments()
             } catch {
-                FirestorePermissionLogger.log(operation: "getDocuments", path: "stores/\(storeId)/members", error: error)
-                throw error
+                let nsError = error as NSError
+                if nsError.domain == FirestoreErrorDomain,
+                   let code = FirestoreErrorCode.Code(rawValue: nsError.code),
+                   code == .failedPrecondition {
+                    print("[Employees][QUERY] managerUid=\(managerUid) storeId=\(storeId) missingIndexOnJoinedAt=true fallback=noOrder")
+                    membersSnap = try await db.collection("stores")
+                        .document(storeId)
+                        .collection("members")
+                        .getDocuments()
+                } else {
+                    FirestorePermissionLogger.log(operation: "getDocuments", path: membersPath, error: error)
+                    throw error
+                }
+            }
+
+            print("[Employees][QUERY] managerUid=\(managerUid) storeId=\(storeId) docsCount=\(membersSnap.documents.count)")
+
+            if membersSnap.documents.isEmpty {
+                let ownsStore = store.managerId == auth.currentUser?.uid
+                print("[Employees][QUERY] emptyMembers managerUid=\(managerUid) storeId=\(storeId) managerOwnsStore=\(ownsStore)")
             }
 
             for doc in membersSnap.documents {
                 let data = doc.data()
-
-                // Filter to employees locally
-                let role = data["role"] as? String ?? ""
-                guard role == UserRole.employee.rawValue else { continue }
-
                 let employeeId = (data["userId"] as? String) ?? doc.documentID
+
+                // keep role filtering permissive for legacy memberships that omit role
+                let role = (data["role"] as? String)?.lowercased()
+                if let role, role != UserRole.employee.rawValue {
+                    continue
+                }
+
                 storeIdsByEmployee[employeeId, default: []].insert(storeId)
 
                 if let memberActive = data["isActive"] as? Bool, memberActive == false {
                     inactiveMemberByEmployee[employeeId] = true
                 }
+
+                if membershipNameByEmployee[employeeId] == nil {
+                    if let name = data["name"] as? String, !name.isEmpty {
+                        membershipNameByEmployee[employeeId] = name
+                    } else if let name = data["employeeName"] as? String, !name.isEmpty {
+                        membershipNameByEmployee[employeeId] = name
+                    }
+                }
             }
         }
 
-        if storeIdsByEmployee.isEmpty { return [] }
+        if storeIdsByEmployee.isEmpty {
+            print("[Employees][QUERY] managerUid=\(managerUid) result=emptyAcrossStores storeCount=\(managerStores.count)")
+            return []
+        }
 
         let employeeIds = Array(storeIdsByEmployee.keys)
 
-        // 2) Fetch user profiles in chunks of 10 (Firestore "in" limit)
+        // Best effort: manager may not have permission to read /users docs.
         var userDataById: [String: [String: Any]] = [:]
-        for chunk in employeeIds.chunked(into: 10) {
-            let usersSnap: QuerySnapshot
+        for employeeId in employeeIds {
             do {
-                usersSnap = try await db.collection("users")
-                    .whereField(FieldPath.documentID(), in: chunk)
-                    .getDocuments()
+                let userDoc = try await db.collection("users").document(employeeId).getDocument()
+                if let data = userDoc.data() {
+                    userDataById[employeeId] = data
+                }
             } catch {
-                FirestorePermissionLogger.log(operation: "query", path: "users", error: error)
-                throw error
-            }
-
-            for doc in usersSnap.documents {
-                userDataById[doc.documentID] = doc.data()
+                let nsError = error as NSError
+                let firestoreCode = FirestoreErrorCode.Code(rawValue: nsError.code)
+                print("[Employees][QUERY] userLookupSkipped employeeId=\(employeeId) domain=\(nsError.domain) code=\(nsError.code) firestoreCode=\(String(describing: firestoreCode))")
             }
         }
 
-        // 3) Build summaries
         var rows: [EmployeeSummary] = []
         rows.reserveCapacity(employeeIds.count)
 
         for employeeId in employeeIds {
-            guard let data = userDataById[employeeId] else { continue }
-
+            let userData = userDataById[employeeId]
             let storeIdsForEmployee = Array(storeIdsByEmployee[employeeId] ?? []).sorted()
             let storeNames = storeIdsForEmployee.compactMap { storesById[$0]?.name }
+            let resolvedName = (userData?["name"] as? String)
+                ?? membershipNameByEmployee[employeeId]
+                ?? "Employee \(employeeId.prefix(6))"
 
             rows.append(
                 EmployeeSummary(
                     id: employeeId,
-                    name: data["name"] as? String ?? "Employee",
-                    email: data["email"] as? String,
+                    name: resolvedName,
+                    email: userData?["email"] as? String,
                     storeIds: storeIdsForEmployee,
                     storeNames: storeNames,
-                    userIsActive: data["isActive"] as? Bool ?? true,
+                    userIsActive: (userData?["isActive"] as? Bool) ?? true,
                     hasInactiveMembership: inactiveMemberByEmployee[employeeId] ?? false
                 )
             )
