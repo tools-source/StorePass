@@ -55,6 +55,18 @@ service cloud.firestore {
         && exists(/databases/$(database)/documents/employeeStores/$(myUid())/stores/$(storeId));
     }
 
+    function assignedViaUserProfile(storeId) {
+      return myUserExists()
+        && myUserData().assignedStoreIds is list
+        && myUserData().assignedStoreIds.hasAny([storeId]);
+    }
+
+    function employeeCanCheckInToStore(storeId) {
+      return isStoreMember(storeId)
+        || employeeAssignedToStore(storeId)
+        || assignedViaUserProfile(storeId);
+    }
+
     function canReadStore(storeId, data) {
       return signedIn() && (
         isManagerStoreDoc(data)
@@ -167,7 +179,7 @@ service cloud.firestore {
         || activeManager();
       allow create: if signedIn()
         && request.resource.data.employeeId == myUid()
-        && employeeAssignedToStore(request.resource.data.storeId);
+        && employeeCanCheckInToStore(request.resource.data.storeId);
       allow update: if false;
       allow delete: if activeManager();
     }
