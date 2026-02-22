@@ -101,7 +101,7 @@ final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
             throw NSError(domain: "StorePass", code: 4010, userInfo: [NSLocalizedDescriptionKey: "Store manager could not be resolved for this check-in."])
         }
 
-        let payload = encode(checkIn: checkIn, storeData: storeData)
+        let payload = encode(checkIn: checkIn, storeData: storeData, includeCheckoutFields: false)
         let rootPath = "checkins/\(checkIn.id)"
         let employeeMirrorPath = "employeeCheckins/\(checkIn.employeeId)/checkins/\(checkIn.id)"
         let managerMirrorPath = "managerCheckins/\(managerId)/stores/\(checkIn.storeId)/checkins/\(checkIn.id)"
@@ -116,6 +116,21 @@ final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
         print("[CheckIn][WRITE] create semantics: setData without merge on root /checkins/{id}")
 
         do {
+#if DEBUG
+            let assignment = try await resolveAssignmentDebug(storeId: checkIn.storeId, employeeId: checkIn.employeeId)
+            logRulesDebugBundle(uid: uid, path: rootPath, payload: payload, storeId: checkIn.storeId, employeeId: checkIn.employeeId, managerId: managerId, assignment: assignment)
+            try await debugCreateCheckInOneByOne(
+                uid: uid,
+                checkinId: checkIn.id,
+                rootPath: rootPath,
+                employeeMirrorPath: employeeMirrorPath,
+                managerMirrorPath: managerMirrorPath,
+                storeId: checkIn.storeId,
+                employeeId: checkIn.employeeId,
+                managerId: managerId,
+                payload: payload
+            )
+#else
             let batch = db.batch()
             batch.setData(payload, forDocument: db.collection("checkins").document(checkIn.id))
             batch.setData(payload, forDocument: db.collection("employeeCheckins").document(checkIn.employeeId).collection("checkins").document(checkIn.id))
@@ -123,6 +138,7 @@ final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
 
             try await batch.commit()
             print("[CheckIn][WRITE] batchCommitSuccess checkinId=\(checkIn.id)")
+#endif
         } catch {
             logFirestoreError(prefix: "[CheckIn] createCheckIn", error: error)
             FirestorePermissionLogger.log(operation: "setData", path: "checkins/\(checkIn.id)", error: error, uid: uid)
@@ -373,16 +389,15 @@ final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
         return query.order(by: "checkInTime", descending: true)
     }
 
-    private func encode(checkIn: CheckIn, storeData: [String: Any]? = nil) -> [String: Any] {
+    private func encode(checkIn: CheckIn, storeData: [String: Any]? = nil, includeCheckoutFields: Bool) -> [String: Any] {
         let resolvedStoreName = checkIn.storeName.isEmpty
             ? (storeData?["name"] as? String ?? "Store")
             : checkIn.storeName
 
-        return [
+        var payload: [String: Any] = [
             "employeeId": checkIn.employeeId,
             "storeId": checkIn.storeId,
             "checkInTime": Timestamp(date: checkIn.checkInTime),
-            "checkOutTime": checkIn.checkOutTime.map { Timestamp(date: $0) } as Any,
             "createdAt": FieldValue.serverTimestamp(),
             "latitude": checkIn.clientLat,
             "longitude": checkIn.clientLng,
@@ -390,11 +405,6 @@ final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
             "clientLng": checkIn.clientLng,
             "distanceMeters": checkIn.distanceMeters,
             "accuracyMeters": checkIn.accuracyMeters,
-            "checkOutLat": checkIn.checkOutLat as Any,
-            "checkOutLng": checkIn.checkOutLng as Any,
-            "checkOutDistanceMeters": checkIn.checkOutDistanceMeters as Any,
-            "checkOutAccuracyMeters": checkIn.checkOutAccuracyMeters as Any,
-            "durationSeconds": checkIn.durationSeconds as Any,
             "status": checkIn.status.rawValue,
             "rejectReason": checkIn.rejectReason as Any,
             "employeeName": checkIn.employeeName,
@@ -402,7 +412,93 @@ final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
             "storeName": resolvedStoreName,
             "managerId": storeData?["managerId"] as Any
         ]
+
+        if includeCheckoutFields {
+            if let checkOutTime = checkIn.checkOutTime {
+                payload["checkOutTime"] = Timestamp(date: checkOutTime)
+            }
+            if let checkOutLat = checkIn.checkOutLat {
+                payload["checkOutLat"] = checkOutLat
+            }
+            if let checkOutLng = checkIn.checkOutLng {
+                payload["checkOutLng"] = checkOutLng
+            }
+            if let checkOutDistanceMeters = checkIn.checkOutDistanceMeters {
+                payload["checkOutDistanceMeters"] = checkOutDistanceMeters
+            }
+            if let checkOutAccuracyMeters = checkIn.checkOutAccuracyMeters {
+                payload["checkOutAccuracyMeters"] = checkOutAccuracyMeters
+            }
+            if let durationSeconds = checkIn.durationSeconds {
+                payload["durationSeconds"] = durationSeconds
+            }
+        }
+
+        return payload
     }
+
+#if DEBUG
+    private func debugCreateCheckInOneByOne(
+        uid: String,
+        checkinId: String,
+        rootPath: String,
+        employeeMirrorPath: String,
+        managerMirrorPath: String,
+        storeId: String,
+        employeeId: String,
+        managerId: String,
+        payload: [String: Any]
+    ) async throws {
+        let writes: [(path: String, docRef: DocumentReference)] = [
+            (rootPath, db.collection("checkins").document(checkinId)),
+            (employeeMirrorPath, db.collection("employeeCheckins").document(employeeId).collection("checkins").document(checkinId)),
+            (managerMirrorPath, db.collection("managerCheckins").document(managerId).collection("stores").document(storeId).collection("checkins").document(checkinId))
+        ]
+
+        for write in writes {
+            do {
+                print("[CheckIn][DEBUG_WRITE] attempt path=\(write.path) uid=\(uid) storeId=\(storeId) employeeId=\(employeeId) managerId=\(managerId) payloadKeys=\(payload.keys.sorted())")
+                try await write.docRef.setData(payload)
+                print("[CheckIn][DEBUG_WRITE] success path=\(write.path)")
+            } catch {
+                let nsError = error as NSError
+                print("[CheckIn][DEBUG_WRITE] failed path=\(write.path) uid=\(uid) storeId=\(storeId) employeeId=\(employeeId) managerId=\(managerId)")
+                print("[CheckIn][DEBUG_WRITE] failed payloadKeys=\(payload.keys.sorted())")
+                print("[CheckIn][DEBUG_WRITE] error domain=\(nsError.domain) code=\(nsError.code) userInfo=\(nsError.userInfo)")
+                throw error
+            }
+        }
+    }
+
+    private func resolveAssignmentDebug(storeId: String, employeeId: String) async throws -> (membership: Bool, employeeStoreMirror: Bool, usersAssignedStoreIds: Bool) {
+        async let membershipDoc = db.collection("stores").document(storeId).collection("members").document(employeeId).getDocument()
+        async let employeeStoreMirrorDoc = db.collection("employeeStores").document(employeeId).collection("stores").document(storeId).getDocument()
+        async let userDoc = db.collection("users").document(employeeId).getDocument()
+
+        let membership = try await membershipDoc
+        let employeeStoreMirrorDocSnapshot = try await employeeStoreMirrorDoc
+        let userDocSnapshot = try await userDoc
+
+        let employeeStoreMirror = employeeStoreMirrorDocSnapshot.exists
+        let assignedStoreIds = (userDocSnapshot.data()?["assignedStoreIds"] as? [String]) ?? []
+        let usersAssignedStoreIds = assignedStoreIds.contains(storeId)
+
+        print("[CheckIn][ASSIGNMENT] storeId=\(storeId) employeeId=\(employeeId) membership=\(membership.exists) employeeStoreMirror=\(employeeStoreMirror) usersAssignedStoreIds=\(usersAssignedStoreIds)")
+        return (membership.exists, employeeStoreMirror, usersAssignedStoreIds)
+    }
+
+    private func logRulesDebugBundle(
+        uid: String,
+        path: String,
+        payload: [String: Any],
+        storeId: String,
+        employeeId: String,
+        managerId: String,
+        assignment: (membership: Bool, employeeStoreMirror: Bool, usersAssignedStoreIds: Bool)
+    ) {
+        print("[CheckIn][RULES_DEBUG_BUNDLE] uid=\(uid) path=\(path) storeId=\(storeId) employeeId=\(employeeId) managerId=\(managerId) payloadKeys=\(payload.keys.sorted()) assignment.membership=\(assignment.membership) assignment.employeeStoreMirror=\(assignment.employeeStoreMirror) assignment.usersAssignedStoreIds=\(assignment.usersAssignedStoreIds)")
+    }
+#endif
 
     private func decodeCheckIn(document: QueryDocumentSnapshot) -> CheckIn? {
         let data = document.data()
