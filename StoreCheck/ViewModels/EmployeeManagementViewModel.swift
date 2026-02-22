@@ -1,4 +1,5 @@
 import Foundation
+import FirebaseFirestore
 
 @MainActor
 final class EmployeeManagementViewModel: ObservableObject {
@@ -8,6 +9,7 @@ final class EmployeeManagementViewModel: ObservableObject {
     @Published var employees: [EmployeeSummary] = []
     @Published var selectedStoreId: String = EmployeeManagementViewModel.allStoresFilter
     @Published var employeeError: String?
+    @Published var bannerMessage: String?
     @Published var isLoading = false
 
     private let employeeRepository: EmployeeManagementRepositoryProtocol
@@ -61,6 +63,10 @@ final class EmployeeManagementViewModel: ObservableObject {
             try await employeeRepository.removeEmployeeFromStore(storeId: storeId, employeeId: employeeId)
             await load()
         } catch {
+            if isFirestorePermissionDenied(error) {
+                bannerMessage = "Permission denied. Check Firestore rules."
+                FirestorePermissionLogger.log(operation: "removeEmployeeFromStore", path: "stores/\(storeId)/members/\(employeeId)", error: error)
+            }
             employeeError = error.localizedDescription
         }
     }
@@ -72,6 +78,10 @@ final class EmployeeManagementViewModel: ObservableObject {
             try await employeeRepository.removeEmployeeFromAllManagerStores(employeeId: employeeId, managerId: managerId)
             await load()
         } catch {
+            if isFirestorePermissionDenied(error) {
+                bannerMessage = "Permission denied. Check Firestore rules."
+                FirestorePermissionLogger.log(operation: "removeEmployeeFromAllManagerStores", path: "managerStores/\(managerId)/* + stores/*/members/\(employeeId)", error: error)
+            }
             employeeError = error.localizedDescription
         }
     }
@@ -81,7 +91,16 @@ final class EmployeeManagementViewModel: ObservableObject {
             try await employeeRepository.setEmployeeActive(employeeId: employeeId, isActive: isActive)
             await load()
         } catch {
+            if isFirestorePermissionDenied(error) {
+                bannerMessage = "Permission denied. Check Firestore rules."
+                FirestorePermissionLogger.log(operation: "setEmployeeActive", path: "users/\(employeeId) + stores/*/members/\(employeeId)", error: error)
+            }
             employeeError = error.localizedDescription
         }
+    }
+
+    private func isFirestorePermissionDenied(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        return nsError.domain == FirestoreErrorDomain && nsError.code == 7
     }
 }

@@ -23,6 +23,26 @@ struct EmployeeManagementView: View {
             .navigationTitle("Employees")
             .task { await viewModel.load() }
             .refreshable { await viewModel.load() }
+            .safeAreaInset(edge: .top) {
+                if let bannerMessage = viewModel.bannerMessage {
+                    HStack(spacing: DS.Spacing.s) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.white)
+                        Text(bannerMessage)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.white)
+                        Spacer()
+                        Button("Dismiss") {
+                            viewModel.bannerMessage = nil
+                        }
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.white)
+                    }
+                    .padding(.horizontal, DS.Spacing.m)
+                    .padding(.vertical, DS.Spacing.s)
+                    .background(.red.opacity(0.92))
+                }
+            }
             .alert("Employees", isPresented: Binding(get: { viewModel.employeeError != nil }, set: { _ in viewModel.employeeError = nil })) {
                 Button("OK", role: .cancel) { viewModel.employeeError = nil }
             } message: {
@@ -62,16 +82,22 @@ struct EmployeeManagementView: View {
                 ForEach(viewModel.filteredEmployees) { employee in
                     EmployeeCardView(
                         employee: employee,
-                        stores: viewModel.stores,
+                        selectedStoreId: viewModel.selectedStoreId,
                         storeSummary: viewModel.storeSummary(for: employee),
-                        onRemoveStore: { storeId in
-                            Task { await viewModel.removeFromStore(employeeId: employee.id, storeId: storeId) }
+                        onRemoveStore: {
+                            print("[Employees][UI] tapped removeFromStore employeeId=\(employee.id) storeId=\(viewModel.selectedStoreId)")
+                            Task { await viewModel.removeFromStore(employeeId: employee.id, storeId: viewModel.selectedStoreId) }
                         },
                         onRemoveAll: {
+                            print("[Employees][UI] tapped removeAll employeeId=\(employee.id)")
                             Task { await viewModel.removeFromAll(employeeId: employee.id) }
                         },
                         onToggleActive: {
+                            print("[Employees][UI] tapped disable employeeId=\(employee.id)")
                             Task { await viewModel.setActive(employeeId: employee.id, isActive: !employee.userIsActive) }
+                        },
+                        onActionFeedback: { message in
+                            viewModel.bannerMessage = message
                         }
                     )
                     .padding(.vertical, 4)
@@ -85,14 +111,19 @@ struct EmployeeManagementView: View {
 
 private struct EmployeeCardView: View {
     let employee: EmployeeSummary
-    let stores: [Store]
+    let selectedStoreId: String
     let storeSummary: String
-    let onRemoveStore: (String) -> Void
+    let onRemoveStore: () -> Void
     let onRemoveAll: () -> Void
     let onToggleActive: () -> Void
+    let onActionFeedback: (String) -> Void
 
     private var statusText: String { employee.userIsActive ? "Active" : "Disabled" }
     private var statusColor: Color { employee.userIsActive ? .green : .orange }
+    private var canRemoveFromSelectedStore: Bool {
+        selectedStoreId != EmployeeManagementViewModel.allStoresFilter
+            && employee.storeIds.contains(selectedStoreId)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: DS.Spacing.s) {
@@ -121,29 +152,37 @@ private struct EmployeeCardView: View {
                 .foregroundStyle(.secondary)
 
             HStack(spacing: DS.Spacing.s) {
-                Menu("Remove from store") {
-                    ForEach(stores.filter { employee.storeIds.contains($0.id) }) { store in
-                        Button(store.name, role: .destructive) {
-                            onRemoveStore(store.id)
-                        }
+                Button("Remove from store", role: .destructive) {
+                    guard selectedStoreId != EmployeeManagementViewModel.allStoresFilter else {
+                        onActionFeedback("Select a store to remove this employee from that store.")
+                        return
                     }
+                    onRemoveStore()
                 }
+                .disabled(!canRemoveFromSelectedStore)
                 .buttonStyle(.bordered)
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .clipShape(RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous))
 
                 Button("Remove all", role: .destructive) {
                     onRemoveAll()
                 }
                 .buttonStyle(.bordered)
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .clipShape(RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous))
             }
+            .buttonStyle(.borderless)
 
-            HStack {
-                Spacer()
-
+            HStack(spacing: 0) {
                 Button(employee.userIsActive ? "Disable" : "Enable") {
                     onToggleActive()
                 }
                 .buttonStyle(.borderedProminent)
+                .tint(.red)
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .clipShape(RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous))
             }
+            .buttonStyle(.borderless)
         }
         .padding(.vertical, DS.Spacing.s)
     }
