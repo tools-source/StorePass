@@ -293,6 +293,7 @@ final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
 
     func clearAllCheckIns(storeId: String, managerId: String, limit: Int = 500) async throws {
         let queryLimit = max(1, min(limit, 500))
+
         let managerSnapshot = try await db.collection("managerCheckins")
             .document(managerId)
             .collection("stores")
@@ -303,19 +304,51 @@ final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
 
         if managerSnapshot.documents.isEmpty { return }
 
-        let chunks = managerSnapshot.documents.chunked(into: 150)
+        // Local chunk helper (avoids fileprivate extension visibility issues)
+        func chunkDocuments<T>(_ items: [T], size: Int) -> [[T]] {
+            guard size > 0 else { return [items] }
+            var result: [[T]] = []
+            result.reserveCapacity((items.count + size - 1) / size)
+            var index = 0
+            while index < items.count {
+                let end = min(index + size, items.count)
+                result.append(Array(items[index..<end]))
+                index = end
+            }
+            return result
+        }
+
+        // 150 deletes per batch is safe (Firestore limit is 500 ops per batch)
+        let chunks = chunkDocuments(managerSnapshot.documents, size: 150)
+
         for chunk in chunks {
             let batch = db.batch()
+
             for document in chunk {
                 let checkinId = document.documentID
                 let employeeId = document.data()["employeeId"] as? String
 
                 batch.deleteDocument(db.collection("checkins").document(checkinId))
+
                 if let employeeId, !employeeId.isEmpty {
-                    batch.deleteDocument(db.collection("employeeCheckins").document(employeeId).collection("checkins").document(checkinId))
+                    batch.deleteDocument(
+                        db.collection("employeeCheckins")
+                            .document(employeeId)
+                            .collection("checkins")
+                            .document(checkinId)
+                    )
                 }
-                batch.deleteDocument(db.collection("managerCheckins").document(managerId).collection("stores").document(storeId).collection("checkins").document(checkinId))
+
+                batch.deleteDocument(
+                    db.collection("managerCheckins")
+                        .document(managerId)
+                        .collection("stores")
+                        .document(storeId)
+                        .collection("checkins")
+                        .document(checkinId)
+                )
             }
+
             try await batch.commit()
         }
     }
