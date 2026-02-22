@@ -130,42 +130,76 @@ final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
         }
     }
 
-    func checkout(checkinId: String, storeId: String, managerId: String?, checkoutLat: Double, checkoutLng: Double, distanceMeters: Double, accuracyMeters: Double) async throws {
+    func checkout(
+        checkinId: String,
+        storeId: String,
+        managerId: String?,
+        checkoutLat: Double,
+        checkoutLng: Double,
+        distanceMeters: Double,
+        accuracyMeters: Double
+    ) async throws {
         guard let uid = Auth.auth().currentUser?.uid else {
             throw NSError(domain: "StorePass", code: 4001, userInfo: [NSLocalizedDescriptionKey: "You must be signed in."])
         }
 
         let rootRef = db.collection("checkins").document(checkinId)
-        let employeeMirrorRef = db.collection("employeeCheckins").document(uid).collection("checkins").document(checkinId)
+        let employeeMirrorRef = db.collection("employeeCheckins")
+            .document(uid)
+            .collection("checkins")
+            .document(checkinId)
 
-        let managerId = try await resolveManagerId(storeId: storeId, preferredManagerId: managerId)
-        let managerMirrorRef = db.collection("managerCheckins").document(managerId).collection("stores").document(storeId).collection("checkins").document(checkinId)
+        let resolvedManagerId = try await resolveManagerId(storeId: storeId, preferredManagerId: managerId)
+        let managerMirrorRef = db.collection("managerCheckins")
+            .document(resolvedManagerId)
+            .collection("stores")
+            .document(storeId)
+            .collection("checkins")
+            .document(checkinId)
 
-        try await db.runTransaction { transaction, _ in
+        _ = try await db.runTransaction { transaction, errorPointer in
+            func fail(_ error: NSError) -> Any? {
+                self.logFirestoreError(prefix: "[CheckOut] transaction failed", error: error) // ✅ self.
+                errorPointer?.pointee = error
+                return nil
+            }
+
             let rootSnap: DocumentSnapshot
             do {
                 rootSnap = try transaction.getDocument(rootRef)
             } catch {
-                logFirestoreError(prefix: "[CheckOut][READ] path=checkins/\(checkinId)", error: error)
-                return nil
+                return fail(error as NSError)
             }
 
             guard let data = rootSnap.data(),
                   let employeeId = data["employeeId"] as? String,
                   employeeId == uid else {
-                throw NSError(domain: "StorePass", code: 4011, userInfo: [NSLocalizedDescriptionKey: "This check-in cannot be checked out by the current user."])
+                return fail(NSError(
+                    domain: "StorePass",
+                    code: 4011,
+                    userInfo: [NSLocalizedDescriptionKey: "This check-in cannot be checked out by the current user."]
+                ))
             }
 
             if data["checkOutTime"] != nil {
-                throw NSError(domain: "StorePass", code: 4012, userInfo: [NSLocalizedDescriptionKey: "Check-out is already completed."])
+                return fail(NSError(
+                    domain: "StorePass",
+                    code: 4012,
+                    userInfo: [NSLocalizedDescriptionKey: "Check-out is already completed."]
+                ))
             }
 
-            guard let checkInDate = decodeDate(data["checkInTime"]) else {
-                throw NSError(domain: "StorePass", code: 4013, userInfo: [NSLocalizedDescriptionKey: "Invalid check-in time for checkout."])
+            guard let checkInDate = self.decodeDate(data["checkInTime"]) else { // ✅ self.
+                return fail(NSError(
+                    domain: "StorePass",
+                    code: 4013,
+                    userInfo: [NSLocalizedDescriptionKey: "Invalid check-in time for checkout."]
+                ))
             }
 
             let checkoutDate = Date()
             let durationSeconds = max(Int(checkoutDate.timeIntervalSince(checkInDate)), 0)
+
             let payload: [String: Any] = [
                 "checkOutTime": Timestamp(date: checkoutDate),
                 "checkOutLat": checkoutLat,
@@ -177,14 +211,16 @@ final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
 
             print("[CheckOut][WRITE] path=checkins/\(checkinId) keys=\(payload.keys.sorted())")
             print("[CheckOut][WRITE] path=employeeCheckins/\(uid)/checkins/\(checkinId) keys=\(payload.keys.sorted())")
-            print("[CheckOut][WRITE] path=managerCheckins/\(managerId)/stores/\(storeId)/checkins/\(checkinId) keys=\(payload.keys.sorted())")
+            print("[CheckOut][WRITE] path=managerCheckins/\(resolvedManagerId)/stores/\(storeId)/checkins/\(checkinId) keys=\(payload.keys.sorted())")
 
             transaction.updateData(payload, forDocument: rootRef)
             transaction.updateData(payload, forDocument: employeeMirrorRef)
             transaction.updateData(payload, forDocument: managerMirrorRef)
+
             return nil
         }
     }
+    
 
     func updateCheckIn(_ checkIn: CheckIn) async throws {
         let managerId = try await resolveManagerId(storeId: checkIn.storeId, preferredManagerId: nil)
