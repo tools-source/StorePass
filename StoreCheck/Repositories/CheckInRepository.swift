@@ -443,47 +443,64 @@ final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
         var preflight = RulesPreflightSnapshot()
 
         do {
-            let userDoc = try await self.db.collection("users").document(uid).getDocument(source: .server)
+            let userDoc = try await db.collection("users").document(uid).getDocument(source: .server)
             preflight.userDocExists = userDoc.exists
+
             let userData = userDoc.data() ?? [:]
             preflight.role = userData["role"] as? String
             preflight.isActive = userData["isActive"] as? Bool
+
             let assignedStoreIds = userData["assignedStoreIds"] as? [String] ?? []
             preflight.assignedStoreIdsCount = assignedStoreIds.count
             preflight.assignedStoreIdsContains = assignedStoreIds.contains(storeId)
-            print("[RulesPreflight][users] uid=\(uid) storeId=\(storeId) userDocExists=\(preflight.userDocExists) role=\(preflight.role ?? \"nil\") isActive=\(String(describing: preflight.isActive)) assignedStoreIdsCount=\(preflight.assignedStoreIdsCount) assignedStoreIdsContains=\(preflight.assignedStoreIdsContains)")
+
+            let roleStr = preflight.role ?? "nil"
+            let activeStr = String(describing: preflight.isActive)
+
+            print("[RulesPreflight][users] uid=\(uid) storeId=\(storeId) userDocExists=\(preflight.userDocExists) role=\(roleStr) isActive=\(activeStr) assignedStoreIdsCount=\(preflight.assignedStoreIdsCount) assignedStoreIdsContains=\(preflight.assignedStoreIdsContains)")
         } catch {
-            self.logFirestoreError(prefix: "[RulesPreflight][users] uid=\(uid) storeId=\(storeId)", error: error)
+            logFirestoreError(prefix: "[RulesPreflight][users] uid=\(uid) storeId=\(storeId)", error: error)
         }
 
         do {
-            let memberDoc = try await self.db.collection("stores").document(storeId).collection("members").document(uid).getDocument(source: .server)
+            let memberDoc = try await db.collection("stores").document(storeId)
+                .collection("members").document(uid)
+                .getDocument(source: .server)
+
             preflight.membershipExists = memberDoc.exists
             print("[RulesPreflight][members] uid=\(uid) storeId=\(storeId) membershipExists=\(preflight.membershipExists)")
         } catch {
-            self.logFirestoreError(prefix: "[RulesPreflight][members] uid=\(uid) storeId=\(storeId)", error: error)
+            logFirestoreError(prefix: "[RulesPreflight][members] uid=\(uid) storeId=\(storeId)", error: error)
         }
 
         do {
-            let employeeStoreDoc = try await self.db.collection("employeeStores").document(uid).collection("stores").document(storeId).getDocument(source: .server)
+            let employeeStoreDoc = try await db.collection("employeeStores").document(uid)
+                .collection("stores").document(storeId)
+                .getDocument(source: .server)
+
             preflight.employeeStoreMirrorExists = employeeStoreDoc.exists
             print("[RulesPreflight][employeeStores] uid=\(uid) storeId=\(storeId) employeeStoreMirrorExists=\(preflight.employeeStoreMirrorExists)")
         } catch {
-            self.logFirestoreError(prefix: "[RulesPreflight][employeeStores] uid=\(uid) storeId=\(storeId)", error: error)
+            logFirestoreError(prefix: "[RulesPreflight][employeeStores] uid=\(uid) storeId=\(storeId)", error: error)
         }
 
         do {
-            let storeDoc = try await self.db.collection("stores").document(storeId).getDocument(source: .server)
+            let storeDoc = try await db.collection("stores").document(storeId).getDocument(source: .server)
             preflight.storeExists = storeDoc.exists
+
             let storeData = storeDoc.data() ?? [:]
             preflight.storeManagerId = storeData["managerId"] as? String
             preflight.storeIsActive = storeData["isActive"] as? Bool
-            print("[RulesPreflight][store] uid=\(uid) storeId=\(storeId) storeExists=\(preflight.storeExists) managerId=\(preflight.storeManagerId ?? \"nil\") isActive=\(String(describing: preflight.storeIsActive))")
+
+            let managerIdStr = preflight.storeManagerId ?? "nil"
+            let storeActiveStr = String(describing: preflight.storeIsActive)
+
+            print("[RulesPreflight][store] uid=\(uid) storeId=\(storeId) storeExists=\(preflight.storeExists) managerId=\(managerIdStr) isActive=\(storeActiveStr)")
         } catch {
-            self.logFirestoreError(prefix: "[RulesPreflight][store] uid=\(uid) storeId=\(storeId)", error: error)
+            logFirestoreError(prefix: "[RulesPreflight][store] uid=\(uid) storeId=\(storeId)", error: error)
         }
 
-        self.logPreflightSummary(preflight: preflight, uid: uid, storeId: storeId, prefix: "[RulesPreflight]")
+        logPreflightSummary(preflight: preflight, uid: uid, storeId: storeId, prefix: "[RulesPreflight]")
         return preflight
     }
 
