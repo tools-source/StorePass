@@ -101,9 +101,10 @@ final class FirestoreEmployeeManagementRepository: EmployeeManagementRepositoryP
     }
 
     func fetchManagerStores(managerId: String) async throws -> [Store] {
-        // ✅ FIX: remove orderBy(name) to avoid composite index requirement
-        let snapshot = try await db.collection("stores")
-            .whereField("managerId", isEqualTo: managerId)
+        let snapshot = try await db.collection("managerStores")
+            .document(managerId)
+            .collection("stores")
+            .whereField("isActive", isEqualTo: true)
             .getDocuments()
 
         let stores = snapshot.documents.map(decodeStore)

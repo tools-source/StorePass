@@ -85,9 +85,11 @@ exports.joinStoreByCode = (0, https_1.onRequest)({ region: 'us-central1' }, asyn
         console.log(`[JOIN] resolved uid=${uid} storeId=${storeId} joinCodeLast4=${joinCodeLast4}`);
         const memberPath = `stores/${storeId}/members/${uid}`;
         const userPath = `users/${uid}`;
+        const employeeStorePath = `employeeStores/${uid}/stores/${storeId}`;
         const memberRef = db.doc(memberPath);
         const userRef = db.doc(userPath);
-        console.log(`[JOIN] firestore write paths membershipDocPath=${memberPath} userDocPath=${userPath}`);
+        const employeeStoreRef = db.doc(employeeStorePath);
+        console.log(`[JOIN] firestore write paths membershipDocPath=${memberPath} userDocPath=${userPath} employeeStoreDocPath=${employeeStorePath}`);
         const existingMember = await memberRef.get();
         const existingUser = await userRef.get();
         const beforeAssignedStoreIds = existingUser.data()?.assignedStoreIds ?? [];
@@ -104,6 +106,19 @@ exports.joinStoreByCode = (0, https_1.onRequest)({ region: 'us-central1' }, asyn
                     joinedAt: admin.firestore.FieldValue.serverTimestamp(),
                     isActive: true,
                     storeName: String(store.name ?? 'Store'),
+                }, { merge: true });
+                transaction.set(employeeStoreRef, {
+                    storeId,
+                    employeeId: uid,
+                    managerId: typeof store.managerId === 'string' ? store.managerId : null,
+                    name: String(store.name ?? 'Store'),
+                    address: String(store.address ?? ''),
+                    latitude: typeof store.latitude === 'number' ? store.latitude : null,
+                    longitude: typeof store.longitude === 'number' ? store.longitude : null,
+                    radiusMeters: typeof store.radiusMeters === 'number' ? store.radiusMeters : 150,
+                    isActive: store.isActive === true,
+                    joinedAt: admin.firestore.FieldValue.serverTimestamp(),
+                    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
                 }, { merge: true });
                 if (!userBefore.exists) {
                     transaction.set(userRef, {
@@ -190,6 +205,10 @@ exports.rotateStoreCode = (0, https_1.onRequest)({ region: 'us-central1' }, asyn
         if (!storeSnap.exists) {
             throw new https_1.HttpsError('not-found', 'Store not found');
         }
+        const storeData = storeSnap.data() ?? {};
+        if (storeData.managerId !== uid) {
+            throw new https_1.HttpsError('permission-denied', 'You can only rotate code for your own store');
+        }
         const joinCode = (0, helpers_1.generateJoinCode)(8);
         const writePath = `stores/${storeId}`;
         console.log(`[ROTATE] firestore write attempt path=${writePath}`);
@@ -238,6 +257,9 @@ exports.getStoreJoinCode = (0, https_1.onRequest)({ region: 'us-central1' }, asy
             throw new https_1.HttpsError('not-found', 'Store not found');
         }
         const store = storeSnap.data() ?? {};
+        if (store.managerId !== uid) {
+            throw new https_1.HttpsError('permission-denied', 'You can only access code for your own store');
+        }
         const joinCode = typeof store.joinCode === 'string' ? store.joinCode : '';
         if (!joinCode) {
             throw new https_1.HttpsError('failed-precondition', 'joinCode not stored; only last4 available');
