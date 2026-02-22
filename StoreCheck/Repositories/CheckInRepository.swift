@@ -17,6 +17,10 @@ protocol CheckInRepositoryProtocol {
     ) -> CheckInListenerToken
 
     func createCheckIn(_ checkIn: CheckIn) async throws
+    func checkout(checkinId: String, storeId: String, managerId: String?, checkoutLat: Double, checkoutLng: Double, distanceMeters: Double, accuracyMeters: Double) async throws
+    func updateCheckIn(_ checkIn: CheckIn) async throws
+    func deleteCheckIn(checkinId: String, employeeId: String, storeId: String, managerId: String?) async throws
+    func clearAllCheckIns(isManagerScope: Bool, storeId: String?, managerId: String?) async throws
     func fetchCheckIns(employeeId: String?, limit: Int) async throws -> [CheckIn]
     func fetchEmployeeCheckIns(employeeId: String, limit: Int) async throws -> [CheckIn]
     func fetchManagerStoreCheckIns(managerId: String, storeId: String, limit: Int) async throws -> [CheckIn]
@@ -123,6 +127,109 @@ final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
             logFirestoreError(prefix: "[CheckIn] createCheckIn", error: error)
             FirestorePermissionLogger.log(operation: "setData", path: "checkins/\(checkIn.id)", error: error, uid: uid)
             throw mapFirestoreError(error)
+        }
+    }
+
+    func checkout(checkinId: String, storeId: String, managerId: String?, checkoutLat: Double, checkoutLng: Double, distanceMeters: Double, accuracyMeters: Double) async throws {
+        guard let uid = Auth.auth().currentUser?.uid else {
+            throw NSError(domain: "StorePass", code: 4001, userInfo: [NSLocalizedDescriptionKey: "You must be signed in."])
+        }
+
+        let rootRef = db.collection("checkins").document(checkinId)
+        let employeeMirrorRef = db.collection("employeeCheckins").document(uid).collection("checkins").document(checkinId)
+
+        let managerId = try await resolveManagerId(storeId: storeId, preferredManagerId: managerId)
+        let managerMirrorRef = db.collection("managerCheckins").document(managerId).collection("stores").document(storeId).collection("checkins").document(checkinId)
+
+        try await db.runTransaction { transaction, _ in
+            let rootSnap: DocumentSnapshot
+            do {
+                rootSnap = try transaction.getDocument(rootRef)
+            } catch {
+                logFirestoreError(prefix: "[CheckOut][READ] path=checkins/\(checkinId)", error: error)
+                return nil
+            }
+
+            guard let data = rootSnap.data(),
+                  let employeeId = data["employeeId"] as? String,
+                  employeeId == uid else {
+                throw NSError(domain: "StorePass", code: 4011, userInfo: [NSLocalizedDescriptionKey: "This check-in cannot be checked out by the current user."])
+            }
+
+            if data["checkOutTime"] != nil {
+                throw NSError(domain: "StorePass", code: 4012, userInfo: [NSLocalizedDescriptionKey: "Check-out is already completed."])
+            }
+
+            guard let checkInDate = decodeDate(data["checkInTime"]) else {
+                throw NSError(domain: "StorePass", code: 4013, userInfo: [NSLocalizedDescriptionKey: "Invalid check-in time for checkout."])
+            }
+
+            let checkoutDate = Date()
+            let durationSeconds = max(Int(checkoutDate.timeIntervalSince(checkInDate)), 0)
+            let payload: [String: Any] = [
+                "checkOutTime": Timestamp(date: checkoutDate),
+                "checkOutLat": checkoutLat,
+                "checkOutLng": checkoutLng,
+                "checkOutDistanceMeters": distanceMeters,
+                "checkOutAccuracyMeters": accuracyMeters,
+                "durationSeconds": durationSeconds
+            ]
+
+            print("[CheckOut][WRITE] path=checkins/\(checkinId) keys=\(payload.keys.sorted())")
+            print("[CheckOut][WRITE] path=employeeCheckins/\(uid)/checkins/\(checkinId) keys=\(payload.keys.sorted())")
+            print("[CheckOut][WRITE] path=managerCheckins/\(managerId)/stores/\(storeId)/checkins/\(checkinId) keys=\(payload.keys.sorted())")
+
+            transaction.updateData(payload, forDocument: rootRef)
+            transaction.updateData(payload, forDocument: employeeMirrorRef)
+            transaction.updateData(payload, forDocument: managerMirrorRef)
+            return nil
+        }
+    }
+
+    func updateCheckIn(_ checkIn: CheckIn) async throws {
+        let managerId = try await resolveManagerId(storeId: checkIn.storeId, preferredManagerId: nil)
+        let payload: [String: Any] = [
+            "status": checkIn.status.rawValue,
+            "rejectReason": checkIn.rejectReason as Any
+        ]
+        let batch = db.batch()
+        batch.updateData(payload, forDocument: db.collection("checkins").document(checkIn.id))
+        batch.updateData(payload, forDocument: db.collection("employeeCheckins").document(checkIn.employeeId).collection("checkins").document(checkIn.id))
+        batch.updateData(payload, forDocument: db.collection("managerCheckins").document(managerId).collection("stores").document(checkIn.storeId).collection("checkins").document(checkIn.id))
+        try await batch.commit()
+    }
+
+    func deleteCheckIn(checkinId: String, employeeId: String, storeId: String, managerId: String?) async throws {
+        let managerId = try await resolveManagerId(storeId: storeId, preferredManagerId: managerId)
+        let batch = db.batch()
+        batch.deleteDocument(db.collection("checkins").document(checkinId))
+        batch.deleteDocument(db.collection("employeeCheckins").document(employeeId).collection("checkins").document(checkinId))
+        batch.deleteDocument(db.collection("managerCheckins").document(managerId).collection("stores").document(storeId).collection("checkins").document(checkinId))
+        try await batch.commit()
+    }
+
+    func clearAllCheckIns(isManagerScope: Bool, storeId: String?, managerId: String?) async throws {
+        guard let uid = Auth.auth().currentUser?.uid else {
+            throw NSError(domain: "StorePass", code: 4001, userInfo: [NSLocalizedDescriptionKey: "You must be signed in."])
+        }
+
+        if isManagerScope {
+            guard let storeId else { return }
+            let manager = try await resolveManagerId(storeId: storeId, preferredManagerId: managerId)
+            let snap = try await db.collection("managerCheckins").document(manager).collection("stores").document(storeId).collection("checkins").getDocuments()
+            for document in snap.documents {
+                let data = document.data()
+                let employeeId = data["employeeId"] as? String ?? ""
+                try await deleteCheckIn(checkinId: document.documentID, employeeId: employeeId, storeId: storeId, managerId: manager)
+            }
+        } else {
+            let snap = try await db.collection("employeeCheckins").document(uid).collection("checkins").getDocuments()
+            for document in snap.documents {
+                let data = document.data()
+                let storeId = data["storeId"] as? String ?? ""
+                let manager = data["managerId"] as? String
+                try await deleteCheckIn(checkinId: document.documentID, employeeId: uid, storeId: storeId, managerId: manager)
+            }
         }
     }
 
@@ -239,6 +346,7 @@ final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
             "employeeId": checkIn.employeeId,
             "storeId": checkIn.storeId,
             "checkInTime": Timestamp(date: checkIn.checkInTime),
+            "checkOutTime": checkIn.checkOutTime.map { Timestamp(date: $0) } as Any,
             "createdAt": FieldValue.serverTimestamp(),
             "latitude": checkIn.clientLat,
             "longitude": checkIn.clientLng,
@@ -246,11 +354,17 @@ final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
             "clientLng": checkIn.clientLng,
             "distanceMeters": checkIn.distanceMeters,
             "accuracyMeters": checkIn.accuracyMeters,
+            "checkOutLat": checkIn.checkOutLat as Any,
+            "checkOutLng": checkIn.checkOutLng as Any,
+            "checkOutDistanceMeters": checkIn.checkOutDistanceMeters as Any,
+            "checkOutAccuracyMeters": checkIn.checkOutAccuracyMeters as Any,
+            "durationSeconds": checkIn.durationSeconds as Any,
             "status": checkIn.status.rawValue,
             "rejectReason": checkIn.rejectReason as Any,
             "employeeName": checkIn.employeeName,
             "employeeEmail": checkIn.employeeEmail as Any,
-            "storeName": resolvedStoreName
+            "storeName": resolvedStoreName,
+            "managerId": storeData?["managerId"] as Any
         ]
     }
 
@@ -267,16 +381,33 @@ final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
             employeeId: employeeId,
             storeId: storeId,
             checkInTime: checkInTime,
+            checkOutTime: decodeDate(data["checkOutTime"]),
             clientLat: (data["latitude"] as? Double) ?? (data["clientLat"] as? Double ?? 0),
             clientLng: (data["longitude"] as? Double) ?? (data["clientLng"] as? Double ?? 0),
             distanceMeters: data["distanceMeters"] as? Double ?? 0,
             accuracyMeters: data["accuracyMeters"] as? Double ?? 0,
+            checkOutLat: data["checkOutLat"] as? Double,
+            checkOutLng: data["checkOutLng"] as? Double,
+            checkOutDistanceMeters: data["checkOutDistanceMeters"] as? Double,
+            checkOutAccuracyMeters: data["checkOutAccuracyMeters"] as? Double,
+            durationSeconds: data["durationSeconds"] as? Int,
             status: CheckInStatus(rawValue: data["status"] as? String ?? "rejected") ?? .rejected,
             rejectReason: data["rejectReason"] as? String,
             employeeName: data["employeeName"] as? String ?? "Employee",
             employeeEmail: data["employeeEmail"] as? String,
             storeName: data["storeName"] as? String ?? "Store"
         )
+    }
+
+    private func resolveManagerId(storeId: String, preferredManagerId: String?) async throws -> String {
+        if let preferredManagerId, !preferredManagerId.isEmpty {
+            return preferredManagerId
+        }
+        let storeSnapshot = try await db.collection("stores").document(storeId).getDocument()
+        guard let managerId = storeSnapshot.data()?["managerId"] as? String, !managerId.isEmpty else {
+            throw NSError(domain: "StorePass", code: 4010, userInfo: [NSLocalizedDescriptionKey: "Store manager could not be resolved."])
+        }
+        return managerId
     }
 
     private func decodeDate(_ raw: Any?) -> Date? {
