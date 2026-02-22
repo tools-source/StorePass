@@ -24,15 +24,11 @@ final class EmployeeManagementViewModel: ObservableObject {
     }
 
     func storeSummary(for employee: EmployeeSummary) -> String {
-        if employee.storeNames.isEmpty {
-            return "No stores"
+        guard !employee.storeNames.isEmpty else {
+            return "Stores: None"
         }
 
-        if employee.storeNames.count == 1 {
-            return employee.storeNames[0]
-        }
-
-        return "\(employee.storeNames.count) stores: \(employee.storeNames.joined(separator: ", "))"
+        return "Stores: \(employee.storeNames.joined(separator: ", "))"
     }
 
     func load() async {
