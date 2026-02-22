@@ -63,7 +63,7 @@ struct EmployeeManagementView: View {
                     VStack(alignment: .leading, spacing: DS.Spacing.s) {
                         Text(employee.name)
                             .font(.headline)
-                        Text(employee.email ?? "No email on file")
+                        Text(employee.email ?? "Email unavailable")
                             .font(.caption)
                             .foregroundStyle(.secondary)
 

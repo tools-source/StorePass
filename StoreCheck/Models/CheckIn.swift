@@ -17,5 +17,6 @@ struct CheckIn: Codable, Identifiable, Hashable {
     var status: CheckInStatus
     var rejectReason: String?
     var employeeName: String
+    var employeeEmail: String?
     var storeName: String
 }
