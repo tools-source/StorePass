@@ -16,6 +16,13 @@ struct ManageStoresView: View {
     @State private var deletingStore: Store?
     @State private var errorMessage: String?
 
+    private var canCreateStore: Bool {
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedAddress = address.trimmingCharacters(in: .whitespacesAndNewlines)
+        let coordsSet = abs(latitude) > 0.000001 || abs(longitude) > 0.000001
+        return !viewModel.isCreatingStore && !trimmedName.isEmpty && !trimmedAddress.isEmpty && coordsSet
+    }
+
     init(repository: StoreRepositoryProtocol) {
         _viewModel = StateObject(wrappedValue: StoreManagementViewModel(repository: repository))
     }
@@ -117,6 +124,7 @@ struct ManageStoresView: View {
 
             Button(viewModel.isCreatingStore ? "Creating..." : "Create") {
                 Task {
+                    guard canCreateStore else { return }
                     let didCreate = await viewModel.createStore(
                         name: name,
                         address: address,
@@ -137,10 +145,8 @@ struct ManageStoresView: View {
                 }
             }
             .buttonStyle(PrimaryButtonStyle())
-            .disabled(
-                viewModel.isCreatingStore ||
-                    name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            )
+            .disabled(!canCreateStore)
+            .opacity(canCreateStore ? 1 : 0.6)
         }
         .padding(DS.Spacing.m)
         .background(.ultraThinMaterial.opacity(0.35), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
@@ -287,6 +293,9 @@ final class AddressSearchService: NSObject, ObservableObject, MKLocalSearchCompl
     }
     @Published var suggestions: [MKLocalSearchCompletion] = []
 
+    private var suppressNextResults = false
+    private var lastSelectedQuery: String?
+
     private let completer = MKLocalSearchCompleter()
 
     override init() {
@@ -296,6 +305,19 @@ final class AddressSearchService: NSObject, ObservableObject, MKLocalSearchCompl
     }
 
     func completerDidUpdateResults(_ completer: MKLocalSearchCompleter) {
+        if suppressNextResults {
+            suppressNextResults = false
+            suggestions = []
+            return
+        }
+
+        if let lastSelectedQuery,
+           query.trimmingCharacters(in: .whitespacesAndNewlines)
+                .caseInsensitiveCompare(lastSelectedQuery.trimmingCharacters(in: .whitespacesAndNewlines)) == .orderedSame {
+            suggestions = []
+            return
+        }
+
         suggestions = completer.results
     }
 
@@ -305,6 +327,12 @@ final class AddressSearchService: NSObject, ObservableObject, MKLocalSearchCompl
         guard let item = response?.mapItems.first else { return nil }
         return (item.placemark.title ?? completion.title, item.placemark.coordinate)
     }
+
+    func markSelection(_ selectedQuery: String) {
+        lastSelectedQuery = selectedQuery
+        suppressNextResults = true
+        suggestions = []
+    }
 }
 
 struct AddressSearchField: View {
@@ -313,11 +341,13 @@ struct AddressSearchField: View {
     @Binding var longitude: Double
 
     @StateObject private var search = AddressSearchService()
+    @FocusState private var isFocused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             TextField("Search address", text: $search.query)
                 .textFieldStyle(.roundedBorder)
+                .focused($isFocused)
 
             if !search.suggestions.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
@@ -329,8 +359,9 @@ struct AddressSearchField: View {
                                     address = resolved.0
                                     latitude = resolved.1.latitude
                                     longitude = resolved.1.longitude
+                                    search.markSelection(resolved.0)
                                     search.query = resolved.0
-                                    search.suggestions = []
+                                    isFocused = false
                                 }
                             }
                         } label: {
