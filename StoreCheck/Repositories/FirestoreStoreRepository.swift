@@ -23,21 +23,34 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
     }
 
     func fetchStores(ids: [String]? = nil) async throws -> [Store] {
-        guard let uid = auth.currentUser?.uid else { return [] }
+        let state = try await logCurrentUserAccessState(context: "before employee store read")
+        let uid = state.uid
+        guard !uid.isEmpty else { return [] }
 
         if let ids {
             if ids.isEmpty { return [] }
+            print("[Stores][READ] employeeStores operation=GET collection=stores authUid=\(auth.currentUser?.uid ?? \"nil\") resolvedUid=\(uid) role=\(state.role ?? \"nil\") isActive=\(String(describing: state.isActive)) storeIds=\(ids)")
             return try await fetchStoresByDocumentIDs(ids)
         }
 
-        let mirrorSnapshot = try await db.collection("employeeStores")
-            .document(uid)
-            .collection("stores")
-            .whereField("isActive", isEqualTo: true)
-            .getDocuments()
+        let mirrorPath = "employeeStores/\(uid)/stores"
+        print("[Stores][READ] employeeStores operation=QUERY collection=employeeStores authUid=\(auth.currentUser?.uid ?? \"nil\") resolvedUid=\(uid) role=\(state.role ?? \"nil\") isActive=\(String(describing: state.isActive)) path=\(mirrorPath) filters={isActive:true}")
 
-        let storeIds = mirrorSnapshot.documents.map(\.documentID)
-        return try await fetchStoresByDocumentIDs(storeIds)
+        let mirrorSnapshot: QuerySnapshot
+        do {
+            mirrorSnapshot = try await db.collection("employeeStores")
+                .document(uid)
+                .collection("stores")
+                .whereField("isActive", isEqualTo: true)
+                .getDocuments()
+            print("[Stores][READ] employeeStores mirror success path=\(mirrorPath) docs=\(mirrorSnapshot.documents.count)")
+        } catch {
+            logFirestoreOperationError(error, operation: "employeeStoresMirror.getDocuments", path: mirrorPath)
+            throw error
+        }
+
+        let stores = mirrorSnapshot.documents.compactMap(decodeStoreFromMirrorDocument)
+        return stores.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
     func fetchManagerStores(managerId: String) async throws -> [Store] {
@@ -231,6 +244,7 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
 
         do {
             let response = try await callable(name: "joinStoreByCode", payload: ["code": normalizedCode], responseType: JoinStorePayload.self)
+            let state = try await logCurrentUserAccessState(context: "after join-by-code response")
 
             guard let uid = auth.currentUser?.uid else {
                 throw NSError(
@@ -255,11 +269,15 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
                 .getDocument(source: .server)
             let assignedStoreIds = userSnapshot.data()?["assignedStoreIds"] as? [String] ?? []
 
+            let membershipPath = "stores/\(response.storeId)/members/\(uid)"
+            print("[Stores][READ] joinVerifyMembership operation=GET collection=stores authUid=\(auth.currentUser?.uid ?? \"nil\") resolvedUid=\(state.uid) role=\(state.role ?? \"nil\") isActive=\(String(describing: state.isActive)) path=\(membershipPath) storeIds=[\(response.storeId)]")
             let membershipSnapshot = try await db.collection("stores")
                 .document(response.storeId)
                 .collection("members")
                 .document(uid)
                 .getDocument(source: .server)
+            let membershipData = membershipSnapshot.data()
+            print("[Stores][READ] joinVerifyMembership result path=\(membershipPath) exists=\(membershipSnapshot.exists) managerId=\(membershipData?[\"managerId\"] as? String ?? \"nil\") isActive=\(String(describing: membershipData?[\"isActive\"] as? Bool))")
 
             let userContainsStore = assignedStoreIds.contains(response.storeId)
             print("[Stores] join verify storeId=\(response.storeId) uid=\(uid) userDocExists=\(userSnapshot.exists) userContainsStore=\(userContainsStore) membershipDocExists=\(membershipSnapshot.exists) assignedCount=\(assignedStoreIds.count)")
@@ -277,6 +295,10 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
             let nsError = error as NSError
             print("[Stores] joinStoreByCode error domain=\(nsError.domain) code=\(nsError.code)")
             print("[Stores] joinStoreByCode userInfo=\(nsError.userInfo)")
+            if nsError.domain == FirestoreErrorDomain,
+               let code = FirestoreErrorCode.Code(rawValue: nsError.code) {
+                print("[Stores] joinStoreByCode FirestoreErrorCode=\(FirestoreErrorCode(code)) rawValue=\(code.rawValue)")
+            }
             if nsError.code == 404 {
                 throw NSError(
                     domain: nsError.domain,
@@ -311,20 +333,56 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
 
     private func fetchStoresByDocumentIDs(_ ids: [String]) async throws -> [Store] {
         var stores: [Store] = []
-        for chunk in ids.chunked(into: 10) {
-            let snapshot = try await db.collection("stores")
-                .whereField(FieldPath.documentID(), in: chunk)
-                .getDocuments()
-            for document in snapshot.documents {
-                do {
-                    let store = try document.data(as: Store.self)
-                    stores.append(store)
-                } catch {
-                    print("[Stores] Skipping invalid store document id=\(document.documentID). Error: \(error)")
+        for storeId in ids {
+            let path = "stores/\(storeId)"
+            print("[Stores][READ] storeById operation=GET collection=stores path=\(path) storeIds=[\(storeId)]")
+            do {
+                let snapshot = try await db.collection("stores")
+                    .document(storeId)
+                    .getDocument()
+                let data = snapshot.data()
+                print("[Stores][READ] storeById result path=\(path) exists=\(snapshot.exists) managerId=\(data?[\"managerId\"] as? String ?? \"nil\") isActive=\(String(describing: data?[\"isActive\"] as? Bool))")
+
+                guard snapshot.exists else { continue }
+                guard let store = try? snapshot.data(as: Store.self) else {
+                    print("[Stores] Skipping invalid store document id=\(storeId). Error: decode failed")
+                    continue
                 }
+                stores.append(store)
+            } catch {
+                logFirestoreOperationError(error, operation: "storeById.getDocument", path: path)
+                throw error
             }
         }
         return stores.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    private func decodeStoreFromMirrorDocument(_ document: QueryDocumentSnapshot) -> Store? {
+        let data = document.data()
+        guard let name = data["name"] as? String,
+              let address = data["address"] as? String else {
+            print("[Stores] Skipping invalid employee mirror store id=\(document.documentID). Missing name/address")
+            return nil
+        }
+
+        let latitude = (data["latitude"] as? Double) ?? (data["lat"] as? Double) ?? 0
+        let longitude = (data["longitude"] as? Double) ?? (data["lng"] as? Double) ?? 0
+        let radiusMeters = data["radiusMeters"] as? Int ?? 0
+        let isActive = data["isActive"] as? Bool ?? true
+
+        return Store(
+            id: document.documentID,
+            name: name,
+            address: address,
+            latitude: latitude,
+            longitude: longitude,
+            radiusMeters: radiusMeters,
+            isActive: isActive,
+            managerId: data["managerId"] as? String,
+            createdAt: (data["createdAt"] as? Timestamp)?.dateValue(),
+            updatedAt: (data["updatedAt"] as? Timestamp)?.dateValue(),
+            joinCodeLast4: data["joinCodeLast4"] as? String
+        )
     }
 
     private func callable<T: Decodable>(name: String, payload: [String: Any], responseType: T.Type) async throws -> T {
