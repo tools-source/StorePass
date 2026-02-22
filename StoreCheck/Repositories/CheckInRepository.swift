@@ -235,7 +235,7 @@ final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
             ? (storeData?["name"] as? String ?? "Store")
             : checkIn.storeName
 
-        [
+        return [
             "employeeId": checkIn.employeeId,
             "storeId": checkIn.storeId,
             "checkInTime": Timestamp(date: checkIn.checkInTime),
