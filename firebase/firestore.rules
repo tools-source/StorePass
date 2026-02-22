@@ -121,15 +121,19 @@ service cloud.firestore {
       }
     }
 
+    function employeeCheckinHistoryQueryAllowed() {
+      return request.query.where("employeeId", "==", myUid())
+        && request.query.orderBy("checkInTime", "desc")
+        && request.query.limit <= 100;
+    }
+
     match /checkins/{checkinId} {
       allow get: if signedIn() && (
         resource.data.employeeId == myUid()
         || (activeManager() && canReadStore(resource.data.storeId, get(/databases/$(database)/documents/stores/$(resource.data.storeId)).data))
       );
-      allow list: if signedIn() && (
-        resource.data.employeeId == myUid()
-        || (activeManager() && canReadStore(resource.data.storeId, get(/databases/$(database)/documents/stores/$(resource.data.storeId)).data))
-      );
+      allow list: if (activeEmployee() && employeeCheckinHistoryQueryAllowed())
+        || activeManager();
       allow create: if signedIn()
         && request.resource.data.employeeId == myUid()
         && employeeAssignedToStore(request.resource.data.storeId);

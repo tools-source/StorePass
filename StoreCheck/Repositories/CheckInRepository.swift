@@ -105,22 +105,31 @@ final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
     }
 
     func fetchCheckIns(employeeId: String? = nil, limit: Int = 30) async throws -> [CheckIn] {
+        // Debugging notes:
+        // - Expected query shape: /checkins where employeeId == <uid> orderBy(checkInTime desc) limit(<N>)
+        // - Required composite index (if missing): employeeId ASC + checkInTime DESC on collection checkins
         do {
-            var query: Query = db.collection("checkins")
-                .order(by: "checkInTime", descending: true)
-                .limit(to: limit)
+            var query: Query = db.collection("checkins").limit(to: limit)
+            var filterSummary = "none"
 
             if let employeeId {
                 query = query.whereField("employeeId", isEqualTo: employeeId)
+                filterSummary = "employeeId == \(employeeId)"
             }
 
-            let filterSummary = employeeId.map { "employeeId == \($0)" } ?? "none"
-            print("[CheckIn][QUERY] collection=checkins filters=[\(filterSummary)] orderBy=[checkInTime DESC, __name__ DESC] limit=\(limit)")
-            print("[CheckIn][QUERY] Firestore index required: collection=checkins fields=[employeeId ASC, checkInTime DESC, __name__ DESC]")
+            query = query.order(by: "checkInTime", descending: true)
+
+            print("[CheckIn][QUERY] employeeHistory uid=\(employeeId ?? "nil") collection=checkins filters=[\(filterSummary)] orderBy=[checkInTime DESC] limit=\(limit)")
+            print("[CheckIn][QUERY] indexHint=checkins(employeeId ASC, checkInTime DESC)")
 
             let snap = try await query.getDocuments()
-            return snap.documents.compactMap(decodeCheckIn)
+            let decoded = snap.documents.compactMap(decodeCheckIn)
+            let first = decoded.first?.checkInTime.description ?? "nil"
+            let last = decoded.last?.checkInTime.description ?? "nil"
+            print("[CheckIn][QUERY] employeeHistory resultCount=\(decoded.count) firstCheckInTime=\(first) lastCheckInTime=\(last)")
+            return decoded
         } catch {
+            logFirestoreError(prefix: "[CheckIn][QUERY] employeeHistory", error: error)
             throw mapFirestoreError(error)
         }
     }
@@ -206,6 +215,16 @@ final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
                 domain: "StorePass",
                 code: nsError.code,
                 userInfo: [NSLocalizedDescriptionKey: "You don't have permission for this action."]
+            )
+        }
+
+        if nsError.domain == FirestoreErrorDomain,
+           let code = FirestoreErrorCode.Code(rawValue: nsError.code),
+           code == .failedPrecondition {
+            return NSError(
+                domain: "StorePass",
+                code: nsError.code,
+                userInfo: [NSLocalizedDescriptionKey: "Missing Firestore index for check-ins (employeeId + checkInTime)."]
             )
         }
 
