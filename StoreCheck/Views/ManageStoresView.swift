@@ -89,17 +89,29 @@ struct ManageStoresView: View {
     }
 
     private var createStoreCard: some View {
-        VStack(alignment: .leading, spacing: DS.Spacing.s) {
-            Text("Create Store")
-                .font(.headline)
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Create Store")
+                    .font(.headline)
+                Text("Add a location and assign its check-in radius.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
 
             TextField("Store name", text: $name)
                 .textFieldStyle(.roundedBorder)
 
             AddressSearchField(address: $address, latitude: $latitude, longitude: $longitude)
 
-            VStack(alignment: .leading) {
-                Text("Radius: \(Int(radius))m")
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text("Radius")
+                        .font(.subheadline.weight(.semibold))
+                    Spacer()
+                    Text("\(Int(radius))m")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.secondary)
+                }
                 Slider(value: $radius, in: 50 ... 500, step: 10)
             }
 
@@ -130,7 +142,12 @@ struct ManageStoresView: View {
                     name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             )
         }
-        .cardStyle()
+        .padding(DS.Spacing.m)
+        .background(.ultraThinMaterial.opacity(0.35), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(.white.opacity(0.06), lineWidth: 1)
+        }
     }
 
     private var storeListCard: some View {
@@ -156,57 +173,110 @@ struct ManageStoresView: View {
                         .font(.caption2)
                         .foregroundStyle(.secondary)
 
-                    HStack {
-                        Button("Copy code") {
-                            Task {
-                                if let cached = viewModel.latestJoinCodesByStoreId[store.id] {
-                                    UIPasteboard.general.string = cached
-                                    viewModel.showToast("Code copied")
-                                } else {
-                                    let fetched = await viewModel.fetchJoinCode(storeId: store.id)
-                                    if let fetched {
-                                        UIPasteboard.general.string = fetched
+                    VStack(spacing: 8) {
+                        HStack(spacing: 8) {
+                            actionButton("Copy code", icon: "doc.on.doc", prominence: .secondary) {
+                                Task {
+                                    if let cached = viewModel.latestJoinCodesByStoreId[store.id] {
+                                        UIPasteboard.general.string = cached
                                         viewModel.showToast("Code copied")
                                     } else {
-                                        await MainActor.run {
-                                            viewModel.presentStoreError("Unable to fetch store code.")
+                                        let fetched = await viewModel.fetchJoinCode(storeId: store.id)
+                                        if let fetched {
+                                            UIPasteboard.general.string = fetched
+                                            viewModel.showToast("Code copied")
+                                        } else {
+                                            await MainActor.run {
+                                                viewModel.presentStoreError("Unable to fetch store code.")
+                                            }
                                         }
                                     }
                                 }
                             }
-                        }
-                        .buttonStyle(.bordered)
 
-                        Button("Rotate code") {
-                            Task {
-                                await viewModel.rotateStoreCode(storeId: store.id)
-                                if let newCode = viewModel.latestJoinCodesByStoreId[store.id] {
-                                    UIPasteboard.general.string = newCode
-                                    viewModel.showToast("New code copied")
+                            actionButton("Rotate code", icon: "arrow.triangle.2.circlepath", prominence: .primary) {
+                                Task {
+                                    await viewModel.rotateStoreCode(storeId: store.id)
+                                    if let newCode = viewModel.latestJoinCodesByStoreId[store.id] {
+                                        UIPasteboard.general.string = newCode
+                                        viewModel.showToast("New code copied")
+                                    }
+                                    await viewModel.load(managerId: container.authRepository.currentUserId)
                                 }
-                                await viewModel.load(managerId: container.authRepository.currentUserId)
                             }
                         }
-                        .buttonStyle(.borderedProminent)
 
-                        Button("Edit") {
-                            editingStore = store
-                        }
-                        .buttonStyle(.bordered)
+                        HStack(spacing: 8) {
+                            actionButton("Edit", icon: "pencil", prominence: .secondary) {
+                                editingStore = store
+                            }
 
-                        Button("Delete", role: .destructive) {
-                            deletingStore = store
+                            actionButton("Delete", icon: "trash", prominence: .destructive) {
+                                deletingStore = store
+                            }
                         }
-                        .buttonStyle(.bordered)
                     }
                 }
+                .padding(.vertical, 6)
 
                 if store.id != viewModel.stores.last?.id {
-                    Divider().overlay(.white.opacity(0.15))
+                    Color.clear
+                        .frame(height: 2)
                 }
             }
         }
         .cardStyle()
+    }
+
+    private enum StoreActionProminence {
+        case primary
+        case secondary
+        case destructive
+    }
+
+    @ViewBuilder
+    private func actionButton(
+        _ title: String,
+        icon: String,
+        prominence: StoreActionProminence,
+        action: @escaping () -> Void
+    ) -> some View {
+        let foreground: Color = prominence == .destructive ? .red : .white
+        Button(action: action) {
+            Label(title, systemImage: icon)
+                .font(.subheadline.weight(.semibold))
+                .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(foreground)
+        .padding(.vertical, 9)
+        .background(buttonBackground(for: prominence), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(buttonStroke(for: prominence), lineWidth: 1)
+        }
+    }
+
+    private func buttonBackground(for prominence: StoreActionProminence) -> Color {
+        switch prominence {
+        case .primary:
+            return DS.Colors.primary.opacity(0.95)
+        case .secondary:
+            return .white.opacity(0.04)
+        case .destructive:
+            return .red.opacity(0.08)
+        }
+    }
+
+    private func buttonStroke(for prominence: StoreActionProminence) -> Color {
+        switch prominence {
+        case .primary:
+            return .clear
+        case .secondary:
+            return .white.opacity(0.1)
+        case .destructive:
+            return .red.opacity(0.35)
+        }
     }
 }
 
