@@ -158,7 +158,8 @@ final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
 
     func fetchEmployeeCheckIns(employeeId: String, limit: Int = 30) async throws -> [CheckIn] {
         let path = "employeeCheckins/\(employeeId)/checkins"
-        print("[CheckIn][QUERY] employeeMirror path=\(path) uid=\(employeeId) orderBy=checkInTime DESC limit=\(limit)")
+        print("[CheckIn][QUERY] path=\(path) uid=\(employeeId) storeId=nil orderBy=checkInTime DESC limit=\(limit)")
+        print("[CheckIn][QUERY] indexHint=none")
 
         do {
             let snapshot = try await db.collection("employeeCheckins")
@@ -172,7 +173,6 @@ final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
             print("[CheckIn][QUERY] employeeMirror uid=\(employeeId) count=\(decoded.count)")
             return decoded
         } catch {
-            print("[CheckIn][QUERY] employeeMirror uid=\(employeeId) error=\(error.localizedDescription)")
             logFirestoreError(prefix: "[CheckIn][QUERY] employeeMirror", error: error)
             throw mapFirestoreError(error)
         }
@@ -180,7 +180,8 @@ final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
 
     func fetchManagerStoreCheckIns(managerId: String, storeId: String, limit: Int = 100) async throws -> [CheckIn] {
         let path = "managerCheckins/\(managerId)/stores/\(storeId)/checkins"
-        print("[CheckIn][QUERY] managerMirror managerUid=\(managerId) storeId=\(storeId) path=\(path) orderBy=checkInTime DESC limit=\(limit)")
+        print("[CheckIn][QUERY] path=\(path) uid=\(managerId) storeId=\(storeId) orderBy=checkInTime DESC limit=\(limit)")
+        print("[CheckIn][QUERY] indexHint=none")
 
         do {
             let snapshot = try await db.collection("managerCheckins")
@@ -196,7 +197,6 @@ final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
             print("[CheckIn][QUERY] managerMirror managerUid=\(managerId) storeId=\(storeId) count=\(decoded.count)")
             return decoded
         } catch {
-            print("[CheckIn][QUERY] managerMirror managerUid=\(managerId) storeId=\(storeId) error=\(error.localizedDescription)")
             logFirestoreError(prefix: "[CheckIn][QUERY] managerMirror", error: error)
             throw mapFirestoreError(error)
         }
@@ -249,6 +249,7 @@ final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
             "status": checkIn.status.rawValue,
             "rejectReason": checkIn.rejectReason as Any,
             "employeeName": checkIn.employeeName,
+            "employeeEmail": checkIn.employeeEmail as Any,
             "storeName": resolvedStoreName
         ]
     }
@@ -273,6 +274,7 @@ final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
             status: CheckInStatus(rawValue: data["status"] as? String ?? "rejected") ?? .rejected,
             rejectReason: data["rejectReason"] as? String,
             employeeName: data["employeeName"] as? String ?? "Employee",
+            employeeEmail: data["employeeEmail"] as? String,
             storeName: data["storeName"] as? String ?? "Store"
         )
     }

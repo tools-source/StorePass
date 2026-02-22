@@ -87,6 +87,7 @@ final class CheckInService: CheckInServiceProtocol {
             status: approved ? .approved : .rejected,
             rejectReason: approved ? nil : "Out of range",
             employeeName: user.name,
+            employeeEmail: user.email,
             storeName: store.name
         )
 

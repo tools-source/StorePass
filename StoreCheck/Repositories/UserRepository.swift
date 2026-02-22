@@ -216,7 +216,8 @@ final class FirestoreEmployeeManagementRepository: EmployeeManagementRepositoryP
             } catch {
                 let nsError = error as NSError
                 let firestoreCode = FirestoreErrorCode.Code(rawValue: nsError.code)
-                print("[Employees][QUERY] userLookupSkipped employeeId=\(employeeId) domain=\(nsError.domain) code=\(nsError.code) firestoreCode=\(String(describing: firestoreCode))")
+                print("[Employees][QUERY] userLookupFailed path=users/\(employeeId) employeeId=\(employeeId) domain=\(nsError.domain) code=\(nsError.code) firestoreCode=\(String(describing: firestoreCode))")
+                print("[Employees][QUERY] userLookupFailed userInfo=\(nsError.userInfo)")
             }
         }
 

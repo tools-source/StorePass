@@ -64,7 +64,7 @@ service cloud.firestore {
     }
 
     match /users/{uid} {
-      allow get: if isSelf(uid);
+      allow get: if isSelf(uid) || activeManager();
       allow list: if false;
       allow create: if isSelf(uid) && request.resource.data.role == "employee";
       allow update: if isSelf(uid)
@@ -95,10 +95,7 @@ service cloud.firestore {
 
 
     match /employeeCheckins/{employeeUid}/checkins/{checkinId} {
-      allow get, list: if request.auth != null
-        && request.auth.uid == employeeUid
-        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
-        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isActive == true;
+      allow get, list: if isSelf(employeeUid) && myUserIsActive();
 
       allow create: if request.auth != null
         && request.auth.uid == employeeUid
@@ -109,11 +106,10 @@ service cloud.firestore {
     }
 
     match /managerCheckins/{managerUid}/stores/{storeId}/checkins/{checkinId} {
-      allow get, list: if request.auth != null
-        && request.auth.uid == managerUid
-        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
-        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "manager"
-        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isActive == true;
+      allow get, list: if isSelf(managerUid)
+        && activeManager()
+        && exists(/databases/$(database)/documents/stores/$(storeId))
+        && get(/databases/$(database)/documents/stores/$(storeId)).data.managerId == managerUid;
 
       allow create: if request.auth != null
         && exists(/databases/$(database)/documents/users/$(request.auth.uid))
