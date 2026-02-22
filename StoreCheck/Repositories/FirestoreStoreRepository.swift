@@ -29,12 +29,12 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
 
         if let ids {
             if ids.isEmpty { return [] }
-            print("[Stores][READ] employeeStores operation=GET collection=stores authUid=\(auth.currentUser?.uid ?? \"nil\") resolvedUid=\(uid) role=\(state.role ?? \"nil\") isActive=\(String(describing: state.isActive)) storeIds=\(ids)")
+            print("[Stores][READ] employeeStores operation=GET collection=stores authUid=\(auth.currentUser?.uid ?? "nil") resolvedUid=\(uid) role=\(state.role ?? "nil") isActive=\(String(describing: state.isActive)) storeIds=\(ids)")
             return try await fetchStoresByDocumentIDs(ids)
         }
 
         let mirrorPath = "employeeStores/\(uid)/stores"
-        print("[Stores][READ] employeeStores operation=QUERY collection=employeeStores authUid=\(auth.currentUser?.uid ?? \"nil\") resolvedUid=\(uid) role=\(state.role ?? \"nil\") isActive=\(String(describing: state.isActive)) path=\(mirrorPath) filters={isActive:true}")
+        print("[Stores][READ] employeeStores operation=QUERY collection=employeeStores authUid=\(auth.currentUser?.uid ?? "nil") resolvedUid=\(uid) role=\(state.role ?? "nil") isActive=\(String(describing: state.isActive)) path=\(mirrorPath) filters={isActive:true}")
 
         let mirrorSnapshot: QuerySnapshot
         do {
@@ -87,7 +87,7 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
     func upsertStore(_ store: Store) async throws {
         let managerId = store.managerId ?? auth.currentUser?.uid ?? ""
         let payload: [String: Any] = [
-            "id": store.id, // ✅ keep id in doc data for Codable Store decoding
+            "id": store.id,
             "storeId": store.id,
             "name": store.name,
             "address": store.address,
@@ -170,7 +170,7 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
         let managerStoreRef = db.collection("managerStores").document(user.uid).collection("stores").document(storeRef.documentID)
 
         var payload: [String: Any] = [
-            "id": storeRef.documentID, // ✅ FIX: required by Store decoding if Store has `id`
+            "id": storeRef.documentID,
             "storeId": storeRef.documentID,
             "name": trimmedName,
             "managerId": user.uid,
@@ -204,6 +204,7 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
             batch.setData(payload, forDocument: managerStoreRef)
             try await batch.commit()
             print("[Stores][WRITE] createStore.batch.commit success paths=[\(storeRef.path),\(managerStoreRef.path)]")
+
             let saved = try await storeRef.getDocument()
             let store = try saved.data(as: Store.self)
             return StoreCreationResult(store: store, joinCode: joinCode)
@@ -270,14 +271,16 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
             let assignedStoreIds = userSnapshot.data()?["assignedStoreIds"] as? [String] ?? []
 
             let membershipPath = "stores/\(response.storeId)/members/\(uid)"
-            print("[Stores][READ] joinVerifyMembership operation=GET collection=stores authUid=\(auth.currentUser?.uid ?? \"nil\") resolvedUid=\(state.uid) role=\(state.role ?? \"nil\") isActive=\(String(describing: state.isActive)) path=\(membershipPath) storeIds=[\(response.storeId)]")
+            print("[Stores][READ] joinVerifyMembership operation=GET collection=stores authUid=\(auth.currentUser?.uid ?? "nil") resolvedUid=\(state.uid) role=\(state.role ?? "nil") isActive=\(String(describing: state.isActive)) path=\(membershipPath) storeIds=[\(response.storeId)]")
+
             let membershipSnapshot = try await db.collection("stores")
                 .document(response.storeId)
                 .collection("members")
                 .document(uid)
                 .getDocument(source: .server)
             let membershipData = membershipSnapshot.data()
-            print("[Stores][READ] joinVerifyMembership result path=\(membershipPath) exists=\(membershipSnapshot.exists) managerId=\(membershipData?[\"managerId\"] as? String ?? \"nil\") isActive=\(String(describing: membershipData?[\"isActive\"] as? Bool))")
+
+            print("[Stores][READ] joinVerifyMembership result path=\(membershipPath) exists=\(membershipSnapshot.exists) managerId=\(membershipData?["managerId"] as? String ?? "nil") isActive=\(String(describing: membershipData?["isActive"] as? Bool))")
 
             let userContainsStore = assignedStoreIds.contains(response.storeId)
             print("[Stores] join verify storeId=\(response.storeId) uid=\(uid) userDocExists=\(userSnapshot.exists) userContainsStore=\(userContainsStore) membershipDocExists=\(membershipSnapshot.exists) assignedCount=\(assignedStoreIds.count)")
@@ -341,7 +344,7 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
                     .document(storeId)
                     .getDocument()
                 let data = snapshot.data()
-                print("[Stores][READ] storeById result path=\(path) exists=\(snapshot.exists) managerId=\(data?[\"managerId\"] as? String ?? \"nil\") isActive=\(String(describing: data?[\"isActive\"] as? Bool))")
+                print("[Stores][READ] storeById result path=\(path) exists=\(snapshot.exists) managerId=\(data?["managerId"] as? String ?? "nil") isActive=\(String(describing: data?["isActive"] as? Bool))")
 
                 guard snapshot.exists else { continue }
                 guard let store = try? snapshot.data(as: Store.self) else {
@@ -449,22 +452,22 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
             let wrapped = try? decoder.decode(BackendEnvelope<T>.self, from: data)
             if let backendMessage = wrapped?.error?.message {
                 let message = "Backend request failed (status=\(httpResponse.statusCode)). \(backendMessage). Raw: \(rawResponse)"
-                let error = NSError(domain: "StorePass", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: message])
+                let err = NSError(domain: "StorePass", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: message])
                 if httpResponse.statusCode == 404 {
                     saw404 = true
                     continue
                 }
-                throw error
+                throw err
             }
 
             guard (200 ... 299).contains(httpResponse.statusCode) else {
                 let message = "Backend request failed (status=\(httpResponse.statusCode)). Raw: \(rawResponse)"
-                let error = NSError(domain: "StorePass", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: message])
+                let err = NSError(domain: "StorePass", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: message])
                 if httpResponse.statusCode == 404 {
                     saw404 = true
                     continue
                 }
-                throw error
+                throw err
             }
 
             if let payload = wrapped?.result ?? wrapped?.data {
@@ -475,11 +478,11 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
                 return directPayload
             }
 
-            #if DEBUG
+#if DEBUG
             let message = "Backend returned invalid JSON shape for \(name). Raw: \(rawResponse)"
-            #else
+#else
             let message = "Backend returned invalid JSON."
-            #endif
+#endif
             throw NSError(domain: "StorePass", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: message])
         }
 
@@ -527,15 +530,12 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
         print("[Stores] NSError domain=\(nsError.domain) code=\(nsError.code)")
         print("[Stores] NSError userInfo=\(nsError.userInfo)")
 
-        // ✅ FIX: correct Firestore error decode for your Firebase version
         if nsError.domain == FirestoreErrorDomain,
            let code = FirestoreErrorCode.Code(rawValue: nsError.code) {
             let firestoreCode = FirestoreErrorCode(code)
             print("[Stores] FirestoreErrorCode=\(firestoreCode) rawValue=\(code.rawValue)")
         }
     }
-
-
 
     private func logFirestoreWriteAttempt(
         path: String,
@@ -551,6 +551,7 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
         let employeeId = data["employeeId"] ?? "<missing>"
         let joinedAt = data["joinedAt"] ?? "<missing>"
         let createdAt = data["createdAt"] ?? "<missing>"
+
         print("[Stores][WRITE] \(operation) authUid=\(auth.currentUser?.uid ?? "nil") stateUid=\(accessState?.uid ?? "nil") role=\(accessState?.role ?? "nil") isActive=\(String(describing: accessState?.isActive)) path=\(path)")
         print("[Stores][WRITE] \(operation) keys=[\(keySummary)] managerId=\(managerId) ownerId=\(ownerId) storeId=\(storeId) isActive=\(isActive) employeeId=\(employeeId) joinedAt=\(joinedAt) createdAt=\(createdAt)")
     }
@@ -560,6 +561,7 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
         let nsError = error as NSError
         print("[Stores][ERROR] op=\(operation) path=\(path) authUid=\(auth.currentUser?.uid ?? "nil")")
         print("[Stores][ERROR] op=\(operation) NSError domain=\(nsError.domain) code=\(nsError.code) userInfo=\(nsError.userInfo)")
+
         if nsError.domain == FirestoreErrorDomain,
            let code = FirestoreErrorCode.Code(rawValue: nsError.code) {
             let firestoreCode = FirestoreErrorCode(code)
@@ -572,7 +574,6 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
         var userInfo = nsError.userInfo
         userInfo["path"] = path
 
-        // ✅ FIX: correct Firestore error decode for your Firebase version
         if nsError.domain == FirestoreErrorDomain,
            let code = FirestoreErrorCode.Code(rawValue: nsError.code) {
             let firestoreCode = FirestoreErrorCode(code)
@@ -583,7 +584,6 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
         return NSError(domain: nsError.domain, code: nsError.code, userInfo: userInfo)
     }
 }
-
 
 private extension Array {
     func chunked(into size: Int) -> [[Element]] {
