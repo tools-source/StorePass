@@ -61,7 +61,6 @@
 		BEEFABCD1234000000000088 /* ManagerAccessRequiredView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000082 /* ManagerAccessRequiredView.swift */; };
 		BEEFABCD123400000000008A /* ManagerCheckInsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD123400000000008C /* ManagerCheckInsViewModel.swift */; };
 		BEEFABCD123400000000008B /* ManagerCheckInsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD123400000000008D /* ManagerCheckInsView.swift */; };
-		BEEFABCD1234000000000089 /* EmployeeSetupRequiredView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000083 /* EmployeeSetupRequiredView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -115,7 +114,6 @@
 		BEEFABCD123400000000007C /* DebugOptions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugOptions.swift; sourceTree = "<group>"; };
 		BEEFABCD1234000000000081 /* RoleProfileRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoleProfileRepository.swift; sourceTree = "<group>"; };
 		BEEFABCD1234000000000082 /* ManagerAccessRequiredView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManagerAccessRequiredView.swift; sourceTree = "<group>"; };
-		BEEFABCD1234000000000083 /* EmployeeSetupRequiredView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmployeeSetupRequiredView.swift; sourceTree = "<group>"; };
 		BEEFABCD123400000000008C /* ManagerCheckInsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManagerCheckInsViewModel.swift; sourceTree = "<group>"; };
 		BEEFABCD123400000000008D /* ManagerCheckInsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManagerCheckInsView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -284,7 +282,6 @@
 				BEEFABCD1234000000000022 /* ManagerTabView.swift */,
 				BEEFABCD1234000000000023 /* RootView.swift */,
 				BEEFABCD1234000000000082 /* ManagerAccessRequiredView.swift */,
-				BEEFABCD1234000000000083 /* EmployeeSetupRequiredView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -425,7 +422,6 @@
 				BEEFABCD123400000000004A /* ManagerTabView.swift in Sources */,
 				BEEFABCD123400000000004B /* RootView.swift in Sources */,
 				BEEFABCD1234000000000088 /* ManagerAccessRequiredView.swift in Sources */,
-				BEEFABCD1234000000000089 /* EmployeeSetupRequiredView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -33,9 +33,8 @@ private struct RootContentView: View {
                 if authViewModel.isRoleResolutionLoading {
                     ProgressView("Loading account")
                         .tint(.white)
-                } else if authViewModel.showEmployeeSetupRequired {
-                    EmployeeSetupRequiredView()
-                } else {
+                }
+                else {
                     LoginView()
                 }
             case .authenticated(let user):
