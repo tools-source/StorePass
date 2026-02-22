@@ -42,14 +42,21 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
 
     func fetchManagerStores(managerId: String) async throws -> [Store] {
         let state = try await logCurrentUserAccessState(context: "before store list query")
+        let listPath = "managerStores/\(managerId)/stores"
+        print("[Stores][READ] managerList authUid=\(auth.currentUser?.uid ?? "nil") resolvedUid=\(state.uid) role=\(state.role ?? "nil") isActive=\(String(describing: state.isActive)) path=\(listPath) filters={isActive:true}")
 
-        print("[Stores] managerQuery uid=\(state.uid) role=\(state.role ?? "nil") isActive=\(String(describing: state.isActive)) filters={managerId:\(managerId),isActive:true}")
-
-        let primarySnapshot = try await db.collection("managerStores")
-            .document(managerId)
-            .collection("stores")
-            .whereField("isActive", isEqualTo: true)
-            .getDocuments()
+        let primarySnapshot: QuerySnapshot
+        do {
+            primarySnapshot = try await db.collection("managerStores")
+                .document(managerId)
+                .collection("stores")
+                .whereField("isActive", isEqualTo: true)
+                .getDocuments()
+            print("[Stores][READ] managerList success path=\(listPath) docs=\(primarySnapshot.documents.count)")
+        } catch {
+            logFirestoreOperationError(error, operation: "managerList.getDocuments", path: listPath)
+            throw error
+        }
 
         var byId: [String: Store] = [:]
         for document in primarySnapshot.documents {
@@ -68,6 +75,7 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
         let managerId = store.managerId ?? auth.currentUser?.uid ?? ""
         let payload: [String: Any] = [
             "id": store.id, // ✅ keep id in doc data for Codable Store decoding
+            "storeId": store.id,
             "name": store.name,
             "address": store.address,
             "latitude": store.latitude,
@@ -80,15 +88,23 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
 
         let batch = db.batch()
         let storeRef = db.collection("stores").document(store.id)
+        logFirestoreWriteAttempt(path: storeRef.path, data: payload, operation: "upsertStore.root", accessState: nil)
         batch.setData(payload, forDocument: storeRef, merge: true)
 
         let mirrorRef = db.collection("managerStores")
             .document(managerId)
             .collection("stores")
             .document(store.id)
+        logFirestoreWriteAttempt(path: mirrorRef.path, data: payload, operation: "upsertStore.managerMirror", accessState: nil)
         batch.setData(payload, forDocument: mirrorRef, merge: true)
 
-        try await batch.commit()
+        do {
+            try await batch.commit()
+            print("[Stores][WRITE] upsertStore.batch.commit success paths=[\(storeRef.path),\(mirrorRef.path)]")
+        } catch {
+            logFirestoreOperationError(error, operation: "upsertStore.batch.commit", path: "\(storeRef.path),\(mirrorRef.path)")
+            throw error
+        }
     }
 
     func deleteStore(id: String) async throws {
@@ -142,6 +158,7 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
 
         var payload: [String: Any] = [
             "id": storeRef.documentID, // ✅ FIX: required by Store decoding if Store has `id`
+            "storeId": storeRef.documentID,
             "name": trimmedName,
             "managerId": user.uid,
             "ownerId": user.uid,
@@ -168,14 +185,18 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
 
         do {
             let batch = db.batch()
+            logFirestoreWriteAttempt(path: storeRef.path, data: payload, operation: "createStore.root", accessState: state)
             batch.setData(payload, forDocument: storeRef)
+            logFirestoreWriteAttempt(path: managerStoreRef.path, data: payload, operation: "createStore.managerMirror", accessState: state)
             batch.setData(payload, forDocument: managerStoreRef)
             try await batch.commit()
+            print("[Stores][WRITE] createStore.batch.commit success paths=[\(storeRef.path),\(managerStoreRef.path)]")
             let saved = try await storeRef.getDocument()
             let store = try saved.data(as: Store.self)
             return StoreCreationResult(store: store, joinCode: joinCode)
         } catch {
             logFirestoreCreateError(error, path: storeRef.path)
+            logFirestoreOperationError(error, operation: "createStore.batch.commit", path: "\(storeRef.path),\(managerStoreRef.path)")
             throw wrapCreateError(error, path: storeRef.path)
         }
     }
@@ -452,7 +473,39 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
         if nsError.domain == FirestoreErrorDomain,
            let code = FirestoreErrorCode.Code(rawValue: nsError.code) {
             let firestoreCode = FirestoreErrorCode(code)
-            print("[Stores] FirestoreErrorCode=\(firestoreCode) (code=\(code))")
+            print("[Stores] FirestoreErrorCode=\(firestoreCode) rawValue=\(code.rawValue)")
+        }
+    }
+
+
+
+    private func logFirestoreWriteAttempt(
+        path: String,
+        data: [String: Any],
+        operation: String,
+        accessState: (uid: String, exists: Bool, role: String?, isActive: Bool?)?
+    ) {
+        let keySummary = data.keys.sorted().joined(separator: ",")
+        let managerId = data["managerId"] ?? "<missing>"
+        let ownerId = data["ownerId"] ?? "<missing>"
+        let storeId = data["storeId"] ?? "<missing>"
+        let isActive = data["isActive"] ?? "<missing>"
+        let employeeId = data["employeeId"] ?? "<missing>"
+        let joinedAt = data["joinedAt"] ?? "<missing>"
+        let createdAt = data["createdAt"] ?? "<missing>"
+        print("[Stores][WRITE] \(operation) authUid=\(auth.currentUser?.uid ?? "nil") stateUid=\(accessState?.uid ?? "nil") role=\(accessState?.role ?? "nil") isActive=\(String(describing: accessState?.isActive)) path=\(path)")
+        print("[Stores][WRITE] \(operation) keys=[\(keySummary)] managerId=\(managerId) ownerId=\(ownerId) storeId=\(storeId) isActive=\(isActive) employeeId=\(employeeId) joinedAt=\(joinedAt) createdAt=\(createdAt)")
+    }
+
+    private func logFirestoreOperationError(_ error: Error, operation: String, path: String) {
+        FirestorePermissionLogger.log(operation: operation, path: path, error: error)
+        let nsError = error as NSError
+        print("[Stores][ERROR] op=\(operation) path=\(path) authUid=\(auth.currentUser?.uid ?? "nil")")
+        print("[Stores][ERROR] op=\(operation) NSError domain=\(nsError.domain) code=\(nsError.code) userInfo=\(nsError.userInfo)")
+        if nsError.domain == FirestoreErrorDomain,
+           let code = FirestoreErrorCode.Code(rawValue: nsError.code) {
+            let firestoreCode = FirestoreErrorCode(code)
+            print("[Stores][ERROR] op=\(operation) FirestoreErrorCode=\(firestoreCode) rawValue=\(code.rawValue)")
         }
     }
 
