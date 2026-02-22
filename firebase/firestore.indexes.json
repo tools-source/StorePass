@@ -4,33 +4,78 @@
       "collectionGroup": "checkins",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "storeId", "order": "ASCENDING" },
-        { "fieldPath": "checkInTime", "order": "DESCENDING" }
+        {
+          "fieldPath": "storeId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "checkInTime",
+          "order": "DESCENDING"
+        }
       ]
     },
     {
       "collectionGroup": "checkins",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "status", "order": "ASCENDING" },
-        { "fieldPath": "checkInTime", "order": "DESCENDING" }
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "checkInTime",
+          "order": "DESCENDING"
+        }
       ]
     },
     {
       "collectionGroup": "checkins",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "storeId", "order": "ASCENDING" },
-        { "fieldPath": "status", "order": "ASCENDING" },
-        { "fieldPath": "checkInTime", "order": "DESCENDING" }
+        {
+          "fieldPath": "storeId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "checkInTime",
+          "order": "DESCENDING"
+        }
       ]
     },
     {
       "collectionGroup": "checkins",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "employeeId", "order": "ASCENDING" },
-        { "fieldPath": "checkInTime", "order": "DESCENDING" }
+        {
+          "fieldPath": "employeeId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "checkInTime",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "checkins",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "employeeId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "checkInTime",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "__name__",
+          "order": "DESCENDING"
+        }
       ]
     }
   ],
