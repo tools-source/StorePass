@@ -98,6 +98,8 @@ export const joinStoreByCode = onRequest({ region: 'us-central1' }, async (req, 
             joinedAt: admin.firestore.FieldValue.serverTimestamp(),
             isActive: true,
             storeName: String(store.name ?? 'Store'),
+            employeeName: typeof userData?.name === 'string' ? userData.name : '',
+            employeeEmail: typeof userData?.email === 'string' ? userData.email : null,
           },
           { merge: true },
         );

@@ -124,6 +124,7 @@ service cloud.firestore {
     function employeeCheckinHistoryQueryAllowed() {
       return request.query.where("employeeId", "==", myUid())
         && request.query.orderBy("checkInTime", "desc")
+        && request.query.limit != null
         && request.query.limit <= 100;
     }
 
@@ -132,7 +133,7 @@ service cloud.firestore {
         resource.data.employeeId == myUid()
         || (activeManager() && canReadStore(resource.data.storeId, get(/databases/$(database)/documents/stores/$(resource.data.storeId)).data))
       );
-      allow list: if (activeEmployee() && employeeCheckinHistoryQueryAllowed())
+      allow list: if (signedIn() && employeeCheckinHistoryQueryAllowed())
         || activeManager();
       allow create: if signedIn()
         && request.resource.data.employeeId == myUid()
