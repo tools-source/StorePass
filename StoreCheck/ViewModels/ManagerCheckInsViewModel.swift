@@ -74,23 +74,33 @@ final class ManagerCheckInsViewModel: ObservableObject {
     }
 
     func delete(_ checkIn: CheckIn) async {
+        guard let managerId = authRepository.currentUserId else {
+            errorMessage = "Unable to resolve current manager session."
+            return
+        }
+
         do {
             try await checkInRepository.deleteCheckIn(
                 checkinId: checkIn.id,
-                employeeId: checkIn.employeeId,
                 storeId: checkIn.storeId,
-                managerId: authRepository.currentUserId
+                managerId: managerId
             )
-            await load()
+            checkIns.removeAll { $0.id == checkIn.id }
         } catch {
             errorMessage = error.localizedDescription
         }
     }
 
     func clearAllForSelectedStore() async {
+        guard let managerId = authRepository.currentUserId,
+              let storeId = selectedStoreId else {
+            errorMessage = "Unable to resolve current manager session."
+            return
+        }
+
         do {
-            try await checkInRepository.clearAllCheckIns(isManagerScope: true, storeId: selectedStoreId, managerId: authRepository.currentUserId)
-            await load()
+            try await checkInRepository.clearAllCheckIns(storeId: storeId, managerId: managerId, limit: 500)
+            checkIns.removeAll { $0.storeId == storeId }
         } catch {
             errorMessage = error.localizedDescription
         }
