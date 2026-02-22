@@ -183,6 +183,8 @@ final class FirestoreEmployeeManagementRepository: EmployeeManagementRepositoryP
                 if membershipNameByEmployee[employeeId] == nil {
                     if let name = data["employeeName"] as? String, !name.isEmpty {
                         membershipNameByEmployee[employeeId] = name
+                    } else if let name = data["displayName"] as? String, !name.isEmpty {
+                        membershipNameByEmployee[employeeId] = name
                     } else if let name = data["name"] as? String, !name.isEmpty {
                         membershipNameByEmployee[employeeId] = name
                     }
@@ -191,7 +193,9 @@ final class FirestoreEmployeeManagementRepository: EmployeeManagementRepositoryP
                 if membershipEmailByEmployee[employeeId] == nil {
                     if let email = data["employeeEmail"] as? String, !email.isEmpty {
                         membershipEmailByEmployee[employeeId] = email
-                    } else if data.keys.contains("employeeEmail") {
+                    } else if let email = data["email"] as? String, !email.isEmpty {
+                        membershipEmailByEmployee[employeeId] = email
+                    } else if data.keys.contains("employeeEmail") || data.keys.contains("email") {
                         membershipEmailByEmployee[employeeId] = ""
                     }
                 }

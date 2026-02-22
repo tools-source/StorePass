@@ -60,50 +60,92 @@ struct EmployeeManagementView: View {
                     .foregroundStyle(.secondary)
             } else {
                 ForEach(viewModel.filteredEmployees) { employee in
-                    VStack(alignment: .leading, spacing: DS.Spacing.s) {
-                        Text(employee.name)
-                            .font(.headline)
-                        Text(employee.email ?? "Email unavailable")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-
-                        Text(viewModel.storeSummary(for: employee))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-
-                        Label(
-                            employee.userIsActive ? "Active" : "Inactive",
-                            systemImage: employee.userIsActive ? "checkmark.circle.fill" : "minus.circle.fill"
-                        )
-                        .font(.caption)
-                        .foregroundStyle(employee.userIsActive ? .green : .orange)
-
-                        HStack {
-                            Menu("Remove from store") {
-                                ForEach(viewModel.stores.filter { employee.storeIds.contains($0.id) }) { store in
-                                    Button(store.name, role: .destructive) {
-                                        Task { await viewModel.removeFromStore(employeeId: employee.id, storeId: store.id) }
-                                    }
-                                }
-                            }
-                            .buttonStyle(.bordered)
-
-                            Button("Remove all", role: .destructive) {
-                                Task { await viewModel.removeFromAll(employeeId: employee.id) }
-                            }
-                            .buttonStyle(.bordered)
-
-                            Button(employee.userIsActive ? "Disable" : "Enable") {
-                                Task { await viewModel.setActive(employeeId: employee.id, isActive: !employee.userIsActive) }
-                            }
-                            .buttonStyle(.borderedProminent)
+                    EmployeeCardView(
+                        employee: employee,
+                        stores: viewModel.stores,
+                        storeSummary: viewModel.storeSummary(for: employee),
+                        onRemoveStore: { storeId in
+                            Task { await viewModel.removeFromStore(employeeId: employee.id, storeId: storeId) }
+                        },
+                        onRemoveAll: {
+                            Task { await viewModel.removeFromAll(employeeId: employee.id) }
+                        },
+                        onToggleActive: {
+                            Task { await viewModel.setActive(employeeId: employee.id, isActive: !employee.userIsActive) }
                         }
-                    }
-                    .padding(.vertical, 6)
+                    )
+                    .padding(.vertical, 4)
+                    .listRowInsets(EdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12))
                 }
             }
         }
         .listRowBackground(DS.Colors.card)
+    }
+}
+
+private struct EmployeeCardView: View {
+    let employee: EmployeeSummary
+    let stores: [Store]
+    let storeSummary: String
+    let onRemoveStore: (String) -> Void
+    let onRemoveAll: () -> Void
+    let onToggleActive: () -> Void
+
+    private var statusText: String { employee.userIsActive ? "Active" : "Disabled" }
+    private var statusColor: Color { employee.userIsActive ? .green : .orange }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DS.Spacing.s) {
+            HStack(alignment: .firstTextBaseline, spacing: DS.Spacing.s) {
+                Text(employee.name)
+                    .font(.headline)
+                    .fontWeight(.semibold)
+                    .lineLimit(1)
+
+                Spacer(minLength: DS.Spacing.s)
+
+                Text(statusText)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(statusColor)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(statusColor.opacity(0.15), in: Capsule())
+            }
+
+            Text(employee.email ?? "Email unavailable")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+
+            Text(storeSummary)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+
+            HStack(spacing: DS.Spacing.s) {
+                Menu("Remove from store") {
+                    ForEach(stores.filter { employee.storeIds.contains($0.id) }) { store in
+                        Button(store.name, role: .destructive) {
+                            onRemoveStore(store.id)
+                        }
+                    }
+                }
+                .buttonStyle(.bordered)
+
+                Button("Remove all", role: .destructive) {
+                    onRemoveAll()
+                }
+                .buttonStyle(.bordered)
+            }
+
+            HStack {
+                Spacer()
+
+                Button(employee.userIsActive ? "Disable" : "Enable") {
+                    onToggleActive()
+                }
+                .buttonStyle(.borderedProminent)
+            }
+        }
+        .padding(.vertical, DS.Spacing.xs)
     }
 }
 

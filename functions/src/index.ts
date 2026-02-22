@@ -34,6 +34,17 @@ export const joinStoreByCode = onRequest({ region: 'us-central1' }, async (req, 
 
     const userSnap = await db.collection('users').doc(uid).get();
     const userData = userSnap.data();
+    const profileName =
+      (typeof userData?.displayName === 'string' && userData.displayName.trim().length > 0
+        ? userData.displayName.trim()
+        : null) ??
+      (typeof userData?.name === 'string' && userData.name.trim().length > 0 ? userData.name.trim() : null) ??
+      (typeof decodedToken.name === 'string' && decodedToken.name.trim().length > 0 ? decodedToken.name.trim() : null) ??
+      `Employee ${uid.slice(0, 6)}`;
+    const profileEmail =
+      (typeof userData?.email === 'string' && userData.email.trim().length > 0 ? userData.email.trim() : null) ??
+      (typeof decodedToken.email === 'string' && decodedToken.email.trim().length > 0 ? decodedToken.email.trim() : null) ??
+      '';
     const role = typeof userData?.role === 'string' ? userData.role : null;
     const isActive = userData?.isActive === true;
     console.log(`[JOIN] role lookup uid=${uid} userDocExists=${userSnap.exists} role=${role ?? 'null'} isActive=${isActive}`);
@@ -98,8 +109,8 @@ export const joinStoreByCode = onRequest({ region: 'us-central1' }, async (req, 
             joinedAt: admin.firestore.FieldValue.serverTimestamp(),
             isActive: true,
             storeName: String(store.name ?? 'Store'),
-            employeeName: typeof userData?.name === 'string' ? userData.name : '',
-            employeeEmail: typeof userData?.email === 'string' ? userData.email : null,
+            employeeName: profileName,
+            employeeEmail: profileEmail,
           },
           { merge: true },
         );
