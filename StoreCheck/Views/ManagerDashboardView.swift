@@ -44,7 +44,7 @@ private struct ManagerCheckinsView: View {
             .navigationTitle("Today Check-ins")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    if let url = csvExporter.generateCSV(from: viewModel.checkIns) {
+                    if let url = csvExporter.generateCSV(from: viewModel.checkIns, filePrefix: "checkins_manager") {
                         ShareLink(item: url) { Label("Export", systemImage: "square.and.arrow.up") }
                     }
                 }

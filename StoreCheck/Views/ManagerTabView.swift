@@ -28,7 +28,8 @@ struct ManagerHomeView: View {
             ManagerCheckInsView(
                 storeRepository: container.storeRepository,
                 checkInRepository: container.checkInRepository,
-                authRepository: container.authRepository
+                authRepository: container.authRepository,
+                csvExporter: container.csvExporter
             )
             .tabItem { Label("Check-ins", systemImage: "checkmark.circle") }
             .tag(ManagerTab.checkIns)

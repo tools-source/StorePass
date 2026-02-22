@@ -69,7 +69,7 @@ final class FirestoreUserRepository: UserRepositoryProtocol {
     }
 
     fileprivate func encode(user: UserProfile) -> [String: Any] {
-        [
+        return [
             "name": user.name,
             "email": user.email as Any,
             "lastLoginAt": Timestamp(date: user.lastLoginAt),

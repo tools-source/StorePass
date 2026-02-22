@@ -9,13 +9,15 @@ struct EmployeeTabView: View {
                 authService: container.authService,
                 storeRepository: container.storeRepository,
                 checkInService: container.checkInService,
+                checkInRepository: container.checkInRepository,
                 locationService: container.locationService
             )
             .tabItem { Label("Home", systemImage: "house") }
 
             EmployeeHistoryView(
                 authService: container.authService,
-                checkInRepository: container.checkInRepository
+                checkInRepository: container.checkInRepository,
+                csvExporter: container.csvExporter
             )
             .tabItem { Label("History", systemImage: "clock") }
 

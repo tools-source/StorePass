@@ -9,21 +9,25 @@ final class EmployeeDashboardViewModel: ObservableObject {
     @Published var checkInSuccessBanner = false
     @Published var joinCodeInput = ""
     @Published var joinStatusMessage: String?
+    @Published var todaysCheckIns: [CheckIn] = []
 
     private let authService: AuthService
     private let storeRepository: StoreRepositoryProtocol
     private let checkInService: CheckInServiceProtocol
+    private let checkInRepository: CheckInRepositoryProtocol
     private let locationService: LocationServiceProtocol
 
     init(
         authService: AuthService,
         storeRepository: StoreRepositoryProtocol,
         checkInService: CheckInServiceProtocol,
+        checkInRepository: CheckInRepositoryProtocol,
         locationService: LocationServiceProtocol
     ) {
         self.authService = authService
         self.storeRepository = storeRepository
         self.checkInService = checkInService
+        self.checkInRepository = checkInRepository
         self.locationService = locationService
     }
 
@@ -31,6 +35,9 @@ final class EmployeeDashboardViewModel: ObservableObject {
         checkInService.blockedReason(for: locationStatus, user: authService.currentUser, store: selectedStore)
     }
 
+    var activeSession: CheckIn? {
+        todaysCheckIns.first(where: { $0.checkOutTime == nil })
+    }
 
     func selectStore(withId storeId: String) {
         Task { @MainActor in
@@ -45,6 +52,7 @@ final class EmployeeDashboardViewModel: ObservableObject {
             stores = try await storeRepository.fetchStores(ids: user.assignedStoreIds)
             selectedStore = selectedStore ?? stores.first
             refreshLocation()
+            try await loadTodaySessions()
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -65,9 +73,41 @@ final class EmployeeDashboardViewModel: ObservableObject {
         do {
             _ = try await checkInService.submitCheckIn(user: user, store: store)
             checkInSuccessBanner = true
+            try await loadTodaySessions()
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    func checkOut() async {
+        guard let activeSession, let store = selectedStore else { return }
+        guard let location = locationService.currentLocation else {
+            errorMessage = "Location unavailable."
+            return
+        }
+
+        do {
+            let distance = locationService.distance(from: location.coordinate, to: store.coordinate)
+            try await checkInRepository.checkout(
+                checkinId: activeSession.id,
+                storeId: store.id,
+                managerId: nil,
+                checkoutLat: location.coordinate.latitude,
+                checkoutLng: location.coordinate.longitude,
+                distanceMeters: distance,
+                accuracyMeters: location.horizontalAccuracy
+            )
+            try await loadTodaySessions()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func loadTodaySessions() async throws {
+        guard let user = authService.currentUser else { return }
+        let history = try await checkInRepository.fetchEmployeeCheckIns(employeeId: user.id, limit: 30)
+        let today = Calendar.current.startOfDay(for: Date())
+        todaysCheckIns = history.filter { Calendar.current.isDate($0.checkInTime, inSameDayAs: today) }
     }
 
     func joinStoreByCode() async {

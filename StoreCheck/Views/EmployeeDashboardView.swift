@@ -8,12 +8,14 @@ struct EmployeeDashboardView: View {
         authService: AuthService,
         storeRepository: StoreRepositoryProtocol,
         checkInService: CheckInServiceProtocol,
+        checkInRepository: CheckInRepositoryProtocol,
         locationService: LocationServiceProtocol
     ) {
         _vm = StateObject(wrappedValue: EmployeeDashboardViewModel(
             authService: authService,
             storeRepository: storeRepository,
             checkInService: checkInService,
+            checkInRepository: checkInRepository,
             locationService: locationService
         ))
     }
@@ -60,16 +62,20 @@ struct EmployeeHomeView: View {
 
                         statusCard
 
-                        Button("Check In") {
+                        Button(viewModel.activeSession == nil ? "Check In" : "Check Out") {
                             Task {
-                                await viewModel.checkIn()
+                                if viewModel.activeSession == nil {
+                                    await viewModel.checkIn()
+                                } else {
+                                    await viewModel.checkOut()
+                                }
                                 if viewModel.checkInSuccessBanner {
                                     UINotificationFeedbackGenerator().notificationOccurred(.success)
                                 }
                             }
                         }
                         .buttonStyle(PrimaryButtonStyle())
-                        .disabled(viewModel.blockedReason != nil)
+                        .disabled(viewModel.activeSession == nil && viewModel.blockedReason != nil)
 
                         if let reason = viewModel.blockedReason {
                             Text(reason).font(.caption).foregroundStyle(.orange)
