@@ -23,46 +23,36 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
     }
 
     func fetchStores(ids: [String]? = nil) async throws -> [Store] {
-        let snapshot: QuerySnapshot
+        guard let uid = auth.currentUser?.uid else { return [] }
+
         if let ids {
             if ids.isEmpty { return [] }
-            snapshot = try await db.collection("stores")
-                .whereField(FieldPath.documentID(), in: ids)
-                .getDocuments()
-        } else {
-            snapshot = try await db.collection("stores")
-                .order(by: "name")
-                .getDocuments()
+            return try await fetchStoresByDocumentIDs(ids)
         }
 
-        var stores: [Store] = []
-        stores.reserveCapacity(snapshot.documents.count)
+        let mirrorSnapshot = try await db.collection("employeeStores")
+            .document(uid)
+            .collection("stores")
+            .whereField("isActive", isEqualTo: true)
+            .getDocuments()
 
-        for document in snapshot.documents {
-            do {
-                let store = try document.data(as: Store.self)
-                stores.append(store)
-            } catch {
-                print("[Stores] Skipping invalid store document id=\(document.documentID). Error: \(error)")
-            }
-        }
-
-        return stores
+        let storeIds = mirrorSnapshot.documents.map(\.documentID)
+        return try await fetchStoresByDocumentIDs(storeIds)
     }
 
     func fetchManagerStores(managerId: String) async throws -> [Store] {
-        _ = try await logCurrentUserAccessState(context: "before store list query")
+        let state = try await logCurrentUserAccessState(context: "before store list query")
 
-        let primarySnapshot = try await db.collection("stores")
-            .whereField("managerId", isEqualTo: managerId)
-            .getDocuments()
+        print("[Stores] managerQuery uid=\(state.uid) role=\(state.role ?? "nil") isActive=\(String(describing: state.isActive)) filters={managerId:\(managerId),isActive:true}")
 
-        let fallbackSnapshot = try await db.collection("stores")
-            .whereField("ownerId", isEqualTo: managerId)
+        let primarySnapshot = try await db.collection("managerStores")
+            .document(managerId)
+            .collection("stores")
+            .whereField("isActive", isEqualTo: true)
             .getDocuments()
 
         var byId: [String: Store] = [:]
-        for document in primarySnapshot.documents + fallbackSnapshot.documents {
+        for document in primarySnapshot.documents {
             do {
                 let store = try document.data(as: Store.self)
                 byId[document.documentID] = store
@@ -75,7 +65,8 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
     }
 
     func upsertStore(_ store: Store) async throws {
-        try await db.collection("stores").document(store.id).setData([
+        let managerId = store.managerId ?? auth.currentUser?.uid ?? ""
+        let payload: [String: Any] = [
             "id": store.id, // ✅ keep id in doc data for Codable Store decoding
             "name": store.name,
             "address": store.address,
@@ -83,13 +74,33 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
             "longitude": store.longitude,
             "radiusMeters": store.radiusMeters,
             "isActive": store.isActive,
-            "managerId": store.managerId as Any,
+            "managerId": managerId,
             "updatedAt": FieldValue.serverTimestamp()
-        ], merge: true)
+        ]
+
+        let batch = db.batch()
+        let storeRef = db.collection("stores").document(store.id)
+        batch.setData(payload, forDocument: storeRef, merge: true)
+
+        let mirrorRef = db.collection("managerStores")
+            .document(managerId)
+            .collection("stores")
+            .document(store.id)
+        batch.setData(payload, forDocument: mirrorRef, merge: true)
+
+        try await batch.commit()
     }
 
     func deleteStore(id: String) async throws {
-        try await db.collection("stores").document(id).delete()
+        let storeDoc = try await db.collection("stores").document(id).getDocument()
+        let managerId = (storeDoc.data()?["managerId"] as? String) ?? auth.currentUser?.uid ?? ""
+
+        let batch = db.batch()
+        batch.deleteDocument(db.collection("stores").document(id))
+        if !managerId.isEmpty {
+            batch.deleteDocument(db.collection("managerStores").document(managerId).collection("stores").document(id))
+        }
+        try await batch.commit()
     }
 
     func createStore(
@@ -127,6 +138,7 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
 
         let joinCode = Self.generateJoinCode(length: 8)
         let storeRef = db.collection("stores").document()
+        let managerStoreRef = db.collection("managerStores").document(user.uid).collection("stores").document(storeRef.documentID)
 
         var payload: [String: Any] = [
             "id": storeRef.documentID, // ✅ FIX: required by Store decoding if Store has `id`
@@ -155,7 +167,10 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
         }
 
         do {
-            try await storeRef.setData(payload)
+            let batch = db.batch()
+            batch.setData(payload, forDocument: storeRef)
+            batch.setData(payload, forDocument: managerStoreRef)
+            try await batch.commit()
             let saved = try await storeRef.getDocument()
             let store = try saved.data(as: Store.self)
             return StoreCreationResult(store: store, joinCode: joinCode)
@@ -271,6 +286,24 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
         let isActive = data?["isActive"] as? Bool
         print("[Auth] \(context) uid=\(uid) exists=\(userDoc.exists) role=\(role ?? "nil") isActive=\(String(describing: isActive))")
         return (uid: uid, exists: userDoc.exists, role: role, isActive: isActive)
+    }
+
+    private func fetchStoresByDocumentIDs(_ ids: [String]) async throws -> [Store] {
+        var stores: [Store] = []
+        for chunk in ids.chunked(into: 10) {
+            let snapshot = try await db.collection("stores")
+                .whereField(FieldPath.documentID(), in: chunk)
+                .getDocuments()
+            for document in snapshot.documents {
+                do {
+                    let store = try document.data(as: Store.self)
+                    stores.append(store)
+                } catch {
+                    print("[Stores] Skipping invalid store document id=\(document.documentID). Error: \(error)")
+                }
+            }
+        }
+        return stores.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
     private func callable<T: Decodable>(name: String, payload: [String: Any], responseType: T.Type) async throws -> T {
@@ -437,6 +470,22 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
         }
 
         return NSError(domain: nsError.domain, code: nsError.code, userInfo: userInfo)
+    }
+}
+
+
+private extension Array {
+    func chunked(into size: Int) -> [[Element]] {
+        guard size > 0 else { return [] }
+        var chunks: [[Element]] = []
+        chunks.reserveCapacity((count + size - 1) / size)
+        var index = 0
+        while index < count {
+            let end = Swift.min(index + size, count)
+            chunks.append(Array(self[index ..< end]))
+            index = end
+        }
+        return chunks
     }
 }
 

@@ -70,9 +70,11 @@ export const joinStoreByCode = onRequest({ region: 'us-central1' }, async (req, 
 
     const memberPath = `stores/${storeId}/members/${uid}`;
     const userPath = `users/${uid}`;
+    const employeeStorePath = `employeeStores/${uid}/stores/${storeId}`;
     const memberRef = db.doc(memberPath);
     const userRef = db.doc(userPath);
-    console.log(`[JOIN] firestore write paths membershipDocPath=${memberPath} userDocPath=${userPath}`);
+    const employeeStoreRef = db.doc(employeeStorePath);
+    console.log(`[JOIN] firestore write paths membershipDocPath=${memberPath} userDocPath=${userPath} employeeStoreDocPath=${employeeStorePath}`);
 
     const existingMember = await memberRef.get();
     const existingUser = await userRef.get();
@@ -96,6 +98,24 @@ export const joinStoreByCode = onRequest({ region: 'us-central1' }, async (req, 
             joinedAt: admin.firestore.FieldValue.serverTimestamp(),
             isActive: true,
             storeName: String(store.name ?? 'Store'),
+          },
+          { merge: true },
+        );
+
+        transaction.set(
+          employeeStoreRef,
+          {
+            storeId,
+            employeeId: uid,
+            managerId: typeof store.managerId === 'string' ? store.managerId : null,
+            name: String(store.name ?? 'Store'),
+            address: String(store.address ?? ''),
+            latitude: typeof store.latitude === 'number' ? store.latitude : null,
+            longitude: typeof store.longitude === 'number' ? store.longitude : null,
+            radiusMeters: typeof store.radiusMeters === 'number' ? store.radiusMeters : 150,
+            isActive: store.isActive === true,
+            joinedAt: admin.firestore.FieldValue.serverTimestamp(),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           },
           { merge: true },
         );
@@ -210,6 +230,11 @@ export const rotateStoreCode = onRequest({ region: 'us-central1' }, async (req, 
       throw new HttpsError('not-found', 'Store not found');
     }
 
+    const storeData = storeSnap.data() ?? {};
+    if (storeData.managerId !== uid) {
+      throw new HttpsError('permission-denied', 'You can only rotate code for your own store');
+    }
+
     const joinCode = generateJoinCode(8);
     const writePath = `stores/${storeId}`;
     console.log(`[ROTATE] firestore write attempt path=${writePath}`);
@@ -268,6 +293,9 @@ export const getStoreJoinCode = onRequest({ region: 'us-central1' }, async (req,
     }
 
     const store = storeSnap.data() ?? {};
+    if (store.managerId !== uid) {
+      throw new HttpsError('permission-denied', 'You can only access code for your own store');
+    }
     const joinCode = typeof store.joinCode === 'string' ? store.joinCode : '';
 
     if (!joinCode) {
