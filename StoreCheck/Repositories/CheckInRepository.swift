@@ -82,10 +82,19 @@ final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
         }
 
         let payload = encode(checkIn: checkIn)
-        print("[CheckIn] write payload storeId=\(checkIn.storeId) employeeId=\(checkIn.employeeId) lat=\(checkIn.clientLat) lng=\(checkIn.clientLng) distance=\(checkIn.distanceMeters) accuracy=\(checkIn.accuracyMeters)")
+        let documentPath = "checkins/\(checkIn.id)"
+        print("[CheckIn][WRITE] path=\(documentPath)")
+        print("[CheckIn][WRITE] payload employeeId=\(String(describing: payload[\"employeeId\"])) storeId=\(String(describing: payload[\"storeId\"])) checkInTime=\(String(describing: payload[\"checkInTime\"])) createdAt=\(String(describing: payload[\"createdAt\"])) latitude=\(String(describing: payload[\"latitude\"])) longitude=\(String(describing: payload[\"longitude\"]))")
+        print("[CheckIn][WRITE] create semantics: using setData without merge on root /checkins/{id}.")
 
         do {
-            try await db.collection("checkins").document(checkIn.id).setData(payload)
+            let docRef = db.collection("checkins").document(checkIn.id)
+            let existing = try await docRef.getDocument()
+            guard !existing.exists else {
+                throw NSError(domain: "StorePass", code: 4010, userInfo: [NSLocalizedDescriptionKey: "Check-in document already exists; refusing update because rules only allow create."])
+            }
+
+            try await docRef.setData(payload)
         } catch {
             logFirestoreError(prefix: "[CheckIn] createCheckIn", error: error)
             FirestorePermissionLogger.log(operation: "setData", path: "checkins/\(checkIn.id)", error: error, uid: uid)
@@ -102,6 +111,10 @@ final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
             if let employeeId {
                 query = query.whereField("employeeId", isEqualTo: employeeId)
             }
+
+            let filterSummary = employeeId.map { "employeeId == \($0)" } ?? "none"
+            print("[CheckIn][QUERY] collection=checkins filters=[\(filterSummary)] orderBy=[checkInTime DESC, __name__ DESC] limit=\(limit)")
+            print("[CheckIn][QUERY] Firestore index required: collection=checkins fields=[employeeId ASC, checkInTime DESC, __name__ DESC]")
 
             let snap = try await query.getDocuments()
             return snap.documents.compactMap(decodeCheckIn)
@@ -143,6 +156,9 @@ final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
             "employeeId": checkIn.employeeId,
             "storeId": checkIn.storeId,
             "checkInTime": Timestamp(date: checkIn.checkInTime),
+            "createdAt": FieldValue.serverTimestamp(),
+            "latitude": checkIn.clientLat,
+            "longitude": checkIn.clientLng,
             "clientLat": checkIn.clientLat,
             "clientLng": checkIn.clientLng,
             "distanceMeters": checkIn.distanceMeters,
@@ -167,8 +183,8 @@ final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
             employeeId: employeeId,
             storeId: storeId,
             checkInTime: checkInTime,
-            clientLat: data["clientLat"] as? Double ?? 0,
-            clientLng: data["clientLng"] as? Double ?? 0,
+            clientLat: (data["latitude"] as? Double) ?? (data["clientLat"] as? Double ?? 0),
+            clientLng: (data["longitude"] as? Double) ?? (data["clientLng"] as? Double ?? 0),
             distanceMeters: data["distanceMeters"] as? Double ?? 0,
             accuracyMeters: data["accuracyMeters"] as? Double ?? 0,
             status: CheckInStatus(rawValue: data["status"] as? String ?? "rejected") ?? .rejected,
