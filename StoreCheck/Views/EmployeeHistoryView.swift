@@ -27,6 +27,12 @@ struct CheckInHistoryView: View {
                         .foregroundStyle(.red)
                 }
 
+                if viewModel.checkIns.isEmpty, viewModel.errorMessage == nil {
+                    Text("No check-ins yet. Make a check-in to see history.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+
                 ForEach(viewModel.checkIns) { item in
                     VStack(alignment: .leading, spacing: 6) {
                         Text(item.storeName).font(.headline)

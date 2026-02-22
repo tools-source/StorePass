@@ -59,6 +59,8 @@
 		BEEFABCD123400000000007D /* DebugOptions.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD123400000000007C /* DebugOptions.swift */; };
 		BEEFABCD1234000000000087 /* RoleProfileRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000081 /* RoleProfileRepository.swift */; };
 		BEEFABCD1234000000000088 /* ManagerAccessRequiredView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000082 /* ManagerAccessRequiredView.swift */; };
+		BEEFABCD123400000000008A /* ManagerCheckInsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD123400000000008C /* ManagerCheckInsViewModel.swift */; };
+		BEEFABCD123400000000008B /* ManagerCheckInsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD123400000000008D /* ManagerCheckInsView.swift */; };
 		BEEFABCD1234000000000089 /* EmployeeSetupRequiredView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000083 /* EmployeeSetupRequiredView.swift */; };
 /* End PBXBuildFile section */
 
@@ -114,6 +116,8 @@
 		BEEFABCD1234000000000081 /* RoleProfileRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoleProfileRepository.swift; sourceTree = "<group>"; };
 		BEEFABCD1234000000000082 /* ManagerAccessRequiredView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManagerAccessRequiredView.swift; sourceTree = "<group>"; };
 		BEEFABCD1234000000000083 /* EmployeeSetupRequiredView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmployeeSetupRequiredView.swift; sourceTree = "<group>"; };
+		BEEFABCD123400000000008C /* ManagerCheckInsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManagerCheckInsViewModel.swift; sourceTree = "<group>"; };
+		BEEFABCD123400000000008D /* ManagerCheckInsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManagerCheckInsView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -259,6 +263,7 @@
 				BEEFABCD1234000000000017 /* EmployeeManagementViewModel.swift */,
 				BEEFABCD1234000000000018 /* LoginViewModel.swift */,
 				BEEFABCD1234000000000019 /* ManagerDashboardViewModel.swift */,
+				BEEFABCD123400000000008C /* ManagerCheckInsViewModel.swift */,
 				BEEFABCD123400000000001A /* RootViewModel.swift */,
 				BEEFABCD123400000000001B /* StoreManagementViewModel.swift */,
 			);
@@ -275,6 +280,7 @@
 				BEEFABCD123400000000001F /* ManageEmployeesView.swift */,
 				BEEFABCD1234000000000020 /* ManageStoresView.swift */,
 				BEEFABCD1234000000000021 /* ManagerDashboardView.swift */,
+				BEEFABCD123400000000008D /* ManagerCheckInsView.swift */,
 				BEEFABCD1234000000000022 /* ManagerTabView.swift */,
 				BEEFABCD1234000000000023 /* RootView.swift */,
 				BEEFABCD1234000000000082 /* ManagerAccessRequiredView.swift */,
@@ -404,6 +410,7 @@
 				BEEFABCD123400000000003F /* EmployeeManagementViewModel.swift in Sources */,
 				BEEFABCD1234000000000040 /* LoginViewModel.swift in Sources */,
 				BEEFABCD1234000000000041 /* ManagerDashboardViewModel.swift in Sources */,
+				BEEFABCD123400000000008A /* ManagerCheckInsViewModel.swift in Sources */,
 				BEEFABCD1234000000000042 /* RootViewModel.swift in Sources */,
 				BEEFABCD1234000000000043 /* StoreManagementViewModel.swift in Sources */,
 				BEEFABCD1234000000000075 /* AuthViewModel.swift in Sources */,
@@ -414,6 +421,7 @@
 				BEEFABCD1234000000000047 /* ManageEmployeesView.swift in Sources */,
 				BEEFABCD1234000000000048 /* ManageStoresView.swift in Sources */,
 				BEEFABCD1234000000000049 /* ManagerDashboardView.swift in Sources */,
+				BEEFABCD123400000000008B /* ManagerCheckInsView.swift in Sources */,
 				BEEFABCD123400000000004A /* ManagerTabView.swift in Sources */,
 				BEEFABCD123400000000004B /* RootView.swift in Sources */,
 				BEEFABCD1234000000000088 /* ManagerAccessRequiredView.swift in Sources */,

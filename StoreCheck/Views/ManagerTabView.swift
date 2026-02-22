@@ -6,6 +6,7 @@ struct ManagerHomeView: View {
     private enum ManagerTab: Hashable {
         case stores
         case employees
+        case checkIns
         case settings
     }
 
@@ -23,6 +24,14 @@ struct ManagerHomeView: View {
             )
             .tabItem { Label("Employees", systemImage: "person.3") }
             .tag(ManagerTab.employees)
+
+            ManagerCheckInsView(
+                storeRepository: container.storeRepository,
+                checkInRepository: container.checkInRepository,
+                authRepository: container.authRepository
+            )
+            .tabItem { Label("Check-ins", systemImage: "checkmark.circle") }
+            .tag(ManagerTab.checkIns)
 
             AccountSettingsView()
                 .tabItem { Label("Settings", systemImage: "gearshape") }

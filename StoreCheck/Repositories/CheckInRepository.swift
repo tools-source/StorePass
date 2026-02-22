@@ -18,6 +18,8 @@ protocol CheckInRepositoryProtocol {
 
     func createCheckIn(_ checkIn: CheckIn) async throws
     func fetchCheckIns(employeeId: String?, limit: Int) async throws -> [CheckIn]
+    func fetchEmployeeCheckIns(employeeId: String, limit: Int) async throws -> [CheckIn]
+    func fetchManagerStoreCheckIns(managerId: String, storeId: String, limit: Int) async throws -> [CheckIn]
     func fetchTodaysCheckIns(filter: CheckInFilter) async throws -> [CheckIn]
 }
 
@@ -81,10 +83,28 @@ final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
             throw NSError(domain: "StorePass", code: 4009, userInfo: [NSLocalizedDescriptionKey: "A valid storeId is required for check-in."])
         }
 
-        let payload = encode(checkIn: checkIn)
-        let documentPath = "checkins/\(checkIn.id)"
+        let storeSnapshot: DocumentSnapshot
+        do {
+            storeSnapshot = try await db.collection("stores").document(checkIn.storeId).getDocument()
+        } catch {
+            logFirestoreError(prefix: "[CheckIn][READ] storeForMirror", error: error)
+            throw mapFirestoreError(error)
+        }
 
-        print("[CheckIn][WRITE] path=\(documentPath)")
+        guard let storeData = storeSnapshot.data(),
+              let managerId = storeData["managerId"] as? String,
+              !managerId.isEmpty else {
+            throw NSError(domain: "StorePass", code: 4010, userInfo: [NSLocalizedDescriptionKey: "Store manager could not be resolved for this check-in."])
+        }
+
+        let payload = encode(checkIn: checkIn, storeData: storeData)
+        let rootPath = "checkins/\(checkIn.id)"
+        let employeeMirrorPath = "employeeCheckins/\(checkIn.employeeId)/checkins/\(checkIn.id)"
+        let managerMirrorPath = "managerCheckins/\(managerId)/stores/\(checkIn.storeId)/checkins/\(checkIn.id)"
+
+        print("[CheckIn][WRITE] managerId=\(managerId) rootPath=\(rootPath)")
+        print("[CheckIn][WRITE] employeeMirrorPath=\(employeeMirrorPath)")
+        print("[CheckIn][WRITE] managerMirrorPath=\(managerMirrorPath)")
         print("[CheckIn][WRITE] payloadKeys=\(payload.keys.sorted())")
         print("[CheckIn][WRITE] payload employeeId=\(String(describing: payload["employeeId"])) storeId=\(String(describing: payload["storeId"]))")
         print("[CheckIn][WRITE] payload checkInTime=\(String(describing: payload["checkInTime"])) createdAt=\(String(describing: payload["createdAt"]))")
@@ -92,11 +112,13 @@ final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
         print("[CheckIn][WRITE] create semantics: setData without merge on root /checkins/{id}")
 
         do {
-            let docRef = db.collection("checkins").document(checkIn.id)
+            let batch = db.batch()
+            batch.setData(payload, forDocument: db.collection("checkins").document(checkIn.id))
+            batch.setData(payload, forDocument: db.collection("employeeCheckins").document(checkIn.employeeId).collection("checkins").document(checkIn.id))
+            batch.setData(payload, forDocument: db.collection("managerCheckins").document(managerId).collection("stores").document(checkIn.storeId).collection("checkins").document(checkIn.id))
 
-            // Important: rules allow create only, so we refuse if it already exists
-            
-            try await docRef.setData(payload)
+            try await batch.commit()
+            print("[CheckIn][WRITE] batchCommitSuccess checkinId=\(checkIn.id)")
         } catch {
             logFirestoreError(prefix: "[CheckIn] createCheckIn", error: error)
             FirestorePermissionLogger.log(operation: "setData", path: "checkins/\(checkIn.id)", error: error, uid: uid)
@@ -134,6 +156,52 @@ final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
         }
     }
 
+    func fetchEmployeeCheckIns(employeeId: String, limit: Int = 30) async throws -> [CheckIn] {
+        let path = "employeeCheckins/\(employeeId)/checkins"
+        print("[CheckIn][QUERY] employeeMirror path=\(path) uid=\(employeeId) orderBy=checkInTime DESC limit=\(limit)")
+
+        do {
+            let snapshot = try await db.collection("employeeCheckins")
+                .document(employeeId)
+                .collection("checkins")
+                .order(by: "checkInTime", descending: true)
+                .limit(to: limit)
+                .getDocuments()
+
+            let decoded = snapshot.documents.compactMap(decodeCheckIn)
+            print("[CheckIn][QUERY] employeeMirror uid=\(employeeId) count=\(decoded.count)")
+            return decoded
+        } catch {
+            print("[CheckIn][QUERY] employeeMirror uid=\(employeeId) error=\(error.localizedDescription)")
+            logFirestoreError(prefix: "[CheckIn][QUERY] employeeMirror", error: error)
+            throw mapFirestoreError(error)
+        }
+    }
+
+    func fetchManagerStoreCheckIns(managerId: String, storeId: String, limit: Int = 100) async throws -> [CheckIn] {
+        let path = "managerCheckins/\(managerId)/stores/\(storeId)/checkins"
+        print("[CheckIn][QUERY] managerMirror managerUid=\(managerId) storeId=\(storeId) path=\(path) orderBy=checkInTime DESC limit=\(limit)")
+
+        do {
+            let snapshot = try await db.collection("managerCheckins")
+                .document(managerId)
+                .collection("stores")
+                .document(storeId)
+                .collection("checkins")
+                .order(by: "checkInTime", descending: true)
+                .limit(to: limit)
+                .getDocuments()
+
+            let decoded = snapshot.documents.compactMap(decodeCheckIn)
+            print("[CheckIn][QUERY] managerMirror managerUid=\(managerId) storeId=\(storeId) count=\(decoded.count)")
+            return decoded
+        } catch {
+            print("[CheckIn][QUERY] managerMirror managerUid=\(managerId) storeId=\(storeId) error=\(error.localizedDescription)")
+            logFirestoreError(prefix: "[CheckIn][QUERY] managerMirror", error: error)
+            throw mapFirestoreError(error)
+        }
+    }
+
     func fetchTodaysCheckIns(filter: CheckInFilter) async throws -> [CheckIn] {
         do {
             let snapshot = try await todaysCheckinsQuery(for: filter).getDocuments()
@@ -162,7 +230,11 @@ final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
         return query.order(by: "checkInTime", descending: true)
     }
 
-    private func encode(checkIn: CheckIn) -> [String: Any] {
+    private func encode(checkIn: CheckIn, storeData: [String: Any]? = nil) -> [String: Any] {
+        let resolvedStoreName = checkIn.storeName.isEmpty
+            ? (storeData?["name"] as? String ?? "Store")
+            : checkIn.storeName
+
         [
             "employeeId": checkIn.employeeId,
             "storeId": checkIn.storeId,
@@ -177,7 +249,7 @@ final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
             "status": checkIn.status.rawValue,
             "rejectReason": checkIn.rejectReason as Any,
             "employeeName": checkIn.employeeName,
-            "storeName": checkIn.storeName
+            "storeName": resolvedStoreName
         ]
     }
 
