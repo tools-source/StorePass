@@ -33,23 +33,17 @@ private struct RootContentView: View {
                 if authViewModel.isRoleResolutionLoading {
                     ProgressView("Loading account")
                         .tint(.white)
-                } else if authViewModel.showManagerAccessRequired {
-                    ManagerAccessRequiredView()
                 } else if authViewModel.showEmployeeSetupRequired {
                     EmployeeSetupRequiredView()
                 } else {
                     LoginView()
                 }
             case .authenticated(let user):
-                if authViewModel.requestedRole == .manager && user.role == .employee {
-                    ManagerAccessRequiredView()
-                } else {
-                    switch user.role {
-                    case .manager:
-                        ManagerHomeView(container: appContainer)
-                    case .employee:
-                        EmployeeTabView(container: appContainer)
-                    }
+                switch user.role {
+                case .manager:
+                    ManagerHomeView(container: appContainer)
+                case .employee:
+                    EmployeeTabView(container: appContainer)
                 }
             }
         }

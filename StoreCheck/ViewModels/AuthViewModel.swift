@@ -16,6 +16,7 @@ final class AuthViewModel: ObservableObject {
     @Published var resolvedRole: UserRole?
     @Published var isLoading = false
     @Published var errorMessage: String?
+    @Published var signInNoticeMessage: String?
     @Published var showManagerAccessRequired = false
     @Published var managerAccessMessage = "This account does not have manager access. Please switch to Employee mode or ask an admin to update your role."
     @Published var showEmployeeSetupRequired = false
@@ -58,6 +59,7 @@ final class AuthViewModel: ObservableObject {
 
     func signInWithGoogle(requestedRole: UserRole) async {
         guard !isResolvingProfile else { return }
+        signInNoticeMessage = nil
         isLoading = true
         isRoleResolutionLoading = true
         defer { isLoading = false }
@@ -82,6 +84,7 @@ final class AuthViewModel: ObservableObject {
     func handleAppleSignInResult(_ result: Result<ASAuthorization, Error>, requestedRole: UserRole) {
         Task {
             guard !isResolvingProfile else { return }
+            signInNoticeMessage = nil
             isLoading = true
             isRoleResolutionLoading = true
             defer { isLoading = false }
@@ -160,12 +163,12 @@ final class AuthViewModel: ObservableObject {
         }
 
         if requestedRole == .manager, profile.role != .manager {
-            managerAccessMessage = "This account is not marked as manager in users/\(firebaseUser.uid). Please switch to Employee mode or ask an admin to grant manager access."
-            showManagerAccessRequired = true
-            resolvedRole = nil
-            currentUser = nil
-            authState = .signedOut
-            logAuth("route_manager_access_required", uid: firebaseUser.uid, requestedRole: requestedRole, details: ["resolvedRole": profile.role.rawValue])
+            await signOutToLogin(
+                message: "This account is an \(profile.role.rawValue). Please use Employee mode.",
+                uid: firebaseUser.uid,
+                requestedRole: requestedRole,
+                resolvedRole: profile.role.rawValue
+            )
             return
         }
 
@@ -244,6 +247,18 @@ final class AuthViewModel: ObservableObject {
         managerAccessMessage = "This account does not have manager access. Please switch to Employee mode or ask an admin to update your role."
         showEmployeeSetupRequired = false
         isRoleResolutionLoading = false
+    }
+
+    private func signOutToLogin(message: String, uid: String, requestedRole: UserRole, resolvedRole: String) async {
+        do {
+            try await authService.signOut()
+        } catch {
+            logAuth("sign_out_failed", uid: uid, requestedRole: requestedRole, details: ["error": error.localizedDescription])
+        }
+
+        clearState()
+        signInNoticeMessage = message
+        logAuth("route_signed_out_non_manager", uid: uid, requestedRole: requestedRole, details: ["resolvedRole": resolvedRole])
     }
 
     private func logAuth(_ event: String, uid: String, requestedRole: UserRole?, details: [String: Any] = [:]) {

@@ -49,6 +49,15 @@ struct LoginView: View {
             }
             .frame(maxWidth: 420)
 
+            if let notice = viewModel.signInNoticeMessage {
+                Text(notice)
+                    .font(.footnote)
+                    .foregroundStyle(.black)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(.yellow.opacity(0.9), in: Capsule())
+            }
+
             if viewModel.isLoading { ProgressView().tint(.white) }
             Spacer()
         }
