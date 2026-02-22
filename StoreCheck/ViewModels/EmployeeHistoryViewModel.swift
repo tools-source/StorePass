@@ -16,7 +16,7 @@ final class EmployeeHistoryViewModel: ObservableObject {
     func load() async {
         guard let id = authService.currentUser?.id else { return }
         do {
-            checkIns = try await checkInRepository.fetchCheckIns(employeeId: id, limit: 30)
+            checkIns = try await checkInRepository.fetchEmployeeCheckIns(employeeId: id, limit: 30)
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription

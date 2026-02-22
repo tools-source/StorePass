@@ -93,6 +93,40 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+
+    match /employeeCheckins/{employeeUid}/checkins/{checkinId} {
+      allow get, list: if request.auth != null
+        && request.auth.uid == employeeUid
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isActive == true;
+
+      allow create: if request.auth != null
+        && request.auth.uid == employeeUid
+        && request.resource.data.employeeId == request.auth.uid
+        && request.resource.data.storeId is string;
+
+      allow update, delete: if false;
+    }
+
+    match /managerCheckins/{managerUid}/stores/{storeId}/checkins/{checkinId} {
+      allow get, list: if request.auth != null
+        && request.auth.uid == managerUid
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "manager"
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isActive == true;
+
+      allow create: if request.auth != null
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "employee"
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isActive == true
+        && request.resource.data.employeeId == request.auth.uid
+        && request.resource.data.storeId == storeId
+        && exists(/databases/$(database)/documents/stores/$(storeId))
+        && get(/databases/$(database)/documents/stores/$(storeId)).data.managerId == managerUid;
+
+      allow update, delete: if false;
+    }
+
     match /stores/{storeId} {
       allow get: if canReadStore(storeId, resource.data);
       allow list: if false;

@@ -227,11 +227,17 @@ final class FirestoreEmployeeManagementRepository: EmployeeManagementRepositoryP
             let userData = userDataById[employeeId]
             let storeIdsForEmployee = Array(storeIdsByEmployee[employeeId] ?? []).sorted()
             let storeNames = storeIdsForEmployee.compactMap { storesById[$0]?.name }
-            let resolvedName = membershipNameByEmployee[employeeId]
+            let membershipName = membershipNameByEmployee[employeeId]
+            let membershipEmail = membershipEmailByEmployee[employeeId]
+            let resolvedName = membershipName
                 ?? (userData?["name"] as? String)
                 ?? "Employee \(employeeId.prefix(6))"
-            let resolvedEmail = membershipEmailByEmployee[employeeId]
+            let resolvedEmail = membershipEmail
                 ?? (userData?["email"] as? String)
+
+            if membershipName == nil || membershipEmail == nil {
+                print("[Employees][MEMBERSHIP] missingFields employeeId=\(employeeId) missingName=\(membershipName == nil) missingEmail=\(membershipEmail == nil)")
+            }
 
             rows.append(
                 EmployeeSummary(
