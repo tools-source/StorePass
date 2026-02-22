@@ -145,7 +145,7 @@ private struct EmployeeCardView: View {
                 .buttonStyle(.borderedProminent)
             }
         }
-        .padding(.vertical, DS.Spacing.xs)
+        .padding(.vertical, DS.Spacing.s)
     }
 }
 
