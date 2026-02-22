@@ -388,6 +388,16 @@ struct AddressSearchField: View {
                 search.query = address
             }
         }
+        .onChange(of: address) { _, newValue in
+            if search.query != newValue {
+                search.query = newValue
+            }
+
+            if newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                search.suggestions = []
+                isFocused = false
+            }
+        }
     }
 }
 
