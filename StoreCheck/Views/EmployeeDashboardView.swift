@@ -30,6 +30,7 @@ struct EmployeeHomeView: View {
 
     @State private var pendingLeaveStore: Store?
     @State private var showManageStores = false
+    @State private var isLocationExpanded = false
 
     var body: some View {
         NavigationStack {
@@ -176,31 +177,119 @@ struct EmployeeHomeView: View {
     }
 
     private var statusCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Image(systemName: "location.fill")
-                    .foregroundStyle(.blue)
-                Text("Location Status")
-                    .font(.headline)
-            }
+        VStack(alignment: .leading, spacing: 12) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) { isLocationExpanded.toggle() }
+            } label: {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack(alignment: .top, spacing: 10) {
+                        Image(systemName: "location.fill")
+                            .foregroundStyle(.blue)
+                            .frame(width: 30, height: 30)
+                            .background(.blue.opacity(0.14), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Location")
+                                .font(.headline)
+                            Text(statusPrimary)
+                                .font(.subheadline.weight(.semibold))
+                            if let secondary = statusSecondary {
+                                Text(secondary)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        Spacer(minLength: 8)
+                        VStack(alignment: .trailing, spacing: 8) {
+                            statusChip
+                            Image(systemName: isLocationExpanded ? "chevron.up" : "chevron.down")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(statusPrimary)
-                    .font(.subheadline.weight(.semibold))
-                if let secondary = statusSecondary {
-                    Text(secondary)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    if isLocationExpanded {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Divider().opacity(0.25)
+                            locationDetailRow(label: "Distance", value: distanceText)
+                            if let accuracyText {
+                                locationDetailRow(label: "Accuracy", value: accuracyText)
+                            }
+                            locationDetailRow(label: "Last updated", value: lastUpdatedText)
+                            Button("Refresh location") {
+                                viewModel.refreshLocation()
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.small)
+                            .tint(.blue)
+                            .frame(maxWidth: .infinity)
+                        }
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                    }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-
-            Button("Refresh location") {
-                viewModel.refreshLocation()
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
+            .buttonStyle(.plain)
         }
         .cardStyle()
+    }
+
+    private var statusChip: some View {
+        let chip = statusChipStyle
+        return Text(chip.text)
+            .font(.caption.weight(.semibold))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 4)
+            .foregroundStyle(chip.foreground)
+            .background(chip.background, in: Capsule())
+    }
+
+    private var statusChipStyle: (text: String, foreground: Color, background: Color) {
+        switch viewModel.locationStatus {
+        case .inRange:
+            ("In range", .green.opacity(0.95), .green.opacity(0.18))
+        case .outOfRange:
+            ("Out of range", .red.opacity(0.95), .red.opacity(0.18))
+        default:
+            ("Locating", .secondary, .white.opacity(0.08))
+        }
+    }
+
+    private func locationDetailRow(label: String, value: String) -> some View {
+        HStack {
+            Text(label)
+                .foregroundStyle(.secondary)
+            Spacer()
+            Text(value)
+                .fontWeight(.medium)
+        }
+        .font(.caption)
+    }
+
+    private var distanceText: String {
+        switch viewModel.locationStatus {
+        case .inRange(let distance), .outOfRange(let distance):
+            "\(Int(distance))m"
+        default:
+            "Unknown"
+        }
+    }
+
+    private var accuracyText: String? {
+        switch viewModel.locationStatus {
+        case .lowAccuracy(let accuracy):
+            "±\(Int(accuracy))m"
+        case .inRange, .outOfRange:
+            "Good"
+        default:
+            nil
+        }
+    }
+
+    private var lastUpdatedText: String {
+        guard let updatedAt = viewModel.lastLocationRefreshAt else {
+            return "Updated just now"
+        }
+        return updatedAt.formatted(date: .omitted, time: .standard)
     }
 
     private var statusPrimary: String {
@@ -209,32 +298,25 @@ struct EmployeeHomeView: View {
             "In range • \(Int(distance))m"
         case .outOfRange(let distance):
             "Out of range • \(Int(distance))m"
-        case .lowAccuracy:
-            "Location accuracy is low"
-        case .permissionDenied:
-            "Permission denied"
-        case .locationUnavailable:
-            "Location unavailable"
-        case .preciseLocationRequired:
-            "Precise location required"
-        case .unknown:
-            "Resolving location"
+        default:
+            "Locating • \(distanceText)"
         }
     }
 
     private var statusSecondary: String? {
         switch viewModel.locationStatus {
-        case .inRange:
-            "Accuracy: Good"
-        case .outOfRange:
+        case .inRange, .outOfRange:
             "Accuracy: Good"
         case .lowAccuracy(let accuracy):
             "Accuracy: ±\(Int(accuracy))m"
-        case .permissionDenied,
-             .locationUnavailable,
-             .preciseLocationRequired,
-             .unknown:
-            nil
+        case .permissionDenied:
+            "Accuracy: Permission denied"
+        case .locationUnavailable:
+            "Accuracy: Location unavailable"
+        case .preciseLocationRequired:
+            "Accuracy: Precise required"
+        case .unknown:
+            "Accuracy: Resolving"
         }
     }
 }

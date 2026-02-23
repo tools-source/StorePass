@@ -10,6 +10,7 @@ final class EmployeeDashboardViewModel: ObservableObject {
     @Published var joinCodeInput = ""
     @Published var joinStatusMessage: String?
     @Published var todaysCheckIns: [CheckIn] = []
+    @Published var lastLocationRefreshAt: Date?
 
     private let authService: AuthService
     private let storeRepository: StoreRepositoryProtocol
@@ -64,6 +65,7 @@ final class EmployeeDashboardViewModel: ObservableObject {
 
     func refreshLocation() {
         guard let selectedStore else { return }
+        lastLocationRefreshAt = Date()
         locationService.requestWhenInUseAuthorization()
         locationService.requestLocation()
         locationStatus = checkInService.evaluateLocation(for: selectedStore, user: authService.currentUser)
