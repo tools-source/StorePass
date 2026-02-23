@@ -1,6 +1,16 @@
 import Foundation
 import UIKit
 
+enum DurationFormatter {
+    static func clockString(from seconds: Int) -> String {
+        let safeSeconds = max(0, seconds)
+        let hours = safeSeconds / 3600
+        let minutes = (safeSeconds % 3600) / 60
+        let remainingSeconds = safeSeconds % 60
+        return String(format: "%02d:%02d:%02d", hours, minutes, remainingSeconds)
+    }
+}
+
 @MainActor
 final class EmployeeHistoryViewModel: ObservableObject {
     @Published var checkIns: [CheckIn] = []
@@ -79,9 +89,7 @@ final class EmployeeHistoryViewModel: ObservableObject {
     }
 
     func formattedDuration(seconds: Int) -> String {
-        let hours = seconds / 3600
-        let minutes = (seconds % 3600) / 60
-        return "\(hours)h \(minutes)m"
+        DurationFormatter.clockString(from: seconds)
     }
 
     private func csvText(for items: [CheckIn]) -> String {
