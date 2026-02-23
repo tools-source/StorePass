@@ -1,6 +1,7 @@
 import FirebaseAuth
 import FirebaseCore
 import FirebaseFirestore
+import FirebaseFunctions
 import Foundation
 
 // MARK: - Protocols
@@ -23,6 +24,76 @@ protocol EmployeeManagementRepositoryProtocol {
     func removeEmployeeFromAllManagerStores(employeeId: String, managerId: String) async throws
     func setEmployeeStoresForManager(employeeId: String, storeIds: [String]) async throws
     func setEmployeeActive(employeeId: String, isActive: Bool) async throws
+}
+
+
+
+enum CloudFunctionClientError: LocalizedError {
+    case unexpectedServerResponse(rawPayload: Any?)
+
+    var errorDescription: String? {
+        switch self {
+        case .unexpectedServerResponse:
+            return "Unexpected server response."
+        }
+    }
+}
+
+final class CloudFunctionsService {
+    private let functions = Functions.functions(region: "us-central1")
+
+    func leaveStore(storeId: String) async throws -> Bool {
+        try await callExpectingOK(name: "leaveStore", payload: ["storeId": storeId])
+    }
+
+    func removeEmployeeFromStore(storeId: String, employeeId: String) async throws -> Bool {
+        try await callExpectingOK(name: "removeEmployeeFromStore", payload: ["storeId": storeId, "employeeId": employeeId])
+    }
+
+    private func callExpectingOK(name: String, payload: [String: Any]) async throws -> Bool {
+        do {
+            let callable = functions.httpsCallable(name)
+            let result = try await callable.call(payload)
+            guard let data = result.data as? [String: Any],
+                  let ok = data["ok"] as? Bool else {
+                print("[Functions] Unexpected payload for \(name): \(String(describing: result.data))")
+                throw CloudFunctionClientError.unexpectedServerResponse(rawPayload: result.data)
+            }
+            guard ok else {
+                print("[Functions] Non-ok payload for \(name): \(data)")
+                throw CloudFunctionClientError.unexpectedServerResponse(rawPayload: data)
+            }
+            return ok
+        } catch {
+            throw mapError(error)
+        }
+    }
+
+    private func mapError(_ error: Error) -> NSError {
+        if case CloudFunctionClientError.unexpectedServerResponse = error {
+            return NSError(domain: "StorePass", code: 4004, userInfo: [NSLocalizedDescriptionKey: "Unexpected server response."])
+        }
+
+        let nsError = error as NSError
+        if nsError.domain == FunctionsErrorDomain,
+           let code = FunctionsErrorCode(rawValue: nsError.code) {
+            let message: String
+            switch code {
+            case .permissionDenied:
+                message = "You don’t have permission."
+            case .failedPrecondition:
+                message = "This action can’t be completed right now."
+            case .notFound:
+                message = "Store or membership not found."
+            case .internal:
+                message = "Something went wrong. Try again."
+            default:
+                message = nsError.localizedDescription
+            }
+            return NSError(domain: nsError.domain, code: nsError.code, userInfo: [NSLocalizedDescriptionKey: message])
+        }
+        return nsError
+    }
 }
 
 // MARK: - User Repo
@@ -82,6 +153,7 @@ final class FirestoreUserRepository: UserRepositoryProtocol {
 // MARK: - Employee Management Repo
 
 final class FirestoreEmployeeManagementRepository: EmployeeManagementRepositoryProtocol {
+    private let cloudFunctionsService = CloudFunctionsService()
     private var db: Firestore {
         FirebaseBootstrap.assertConfigured(context: "FirestoreEmployeeManagementRepository.db")
         return Firestore.firestore()
@@ -248,7 +320,7 @@ final class FirestoreEmployeeManagementRepository: EmployeeManagementRepositoryP
     }
 
     func removeEmployeeFromStore(storeId: String, employeeId: String) async throws {
-        _ = try await callable(name: "removeEmployeeFromStore", payload: ["storeId": storeId, "employeeId": employeeId])
+        _ = try await cloudFunctionsService.removeEmployeeFromStore(storeId: storeId, employeeId: employeeId)
     }
 
     func removeEmployeeFromAllManagerStores(employeeId: String, managerId: String) async throws {
