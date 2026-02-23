@@ -18,6 +18,7 @@ struct AccountSettingsView: View {
     @State private var showDeleteConfirmation = false
     @State private var showReauthSheet = false
     @State private var pendingDeleteRole: UserRole?
+    @State private var deleteTask: Task<Void, Never>?
 
     var body: some View {
         NavigationStack {
@@ -46,8 +47,7 @@ struct AccountSettingsView: View {
             .alert("Delete account permanently?", isPresented: $showDeleteConfirmation) {
                 Button("Cancel", role: .cancel) {}
                 Button("Delete", role: .destructive) {
-                    Task {
-                        guard !viewModel.isDeleting else { return }
+                    startDeleteTask {
                         let role = authViewModel.currentUser?.role
                         pendingDeleteRole = role
                         if role == .manager {
@@ -68,7 +68,7 @@ struct AccountSettingsView: View {
             .sheet(isPresented: $showReauthSheet) {
                 ReauthenticateSheet(viewModel: viewModel) {
                     showReauthSheet = false
-                    Task {
+                    startDeleteTask {
                         if pendingDeleteRole == .manager {
                             await viewModel.deleteManagerAccountFlow()
                         } else {
@@ -86,6 +86,14 @@ struct AccountSettingsView: View {
             } message: {
                 Text(viewModel.errorMessage ?? "")
             }
+        }
+    }
+
+    private func startDeleteTask(_ operation: @escaping @MainActor () async -> Void) {
+        guard deleteTask == nil, !viewModel.isDeleting else { return }
+        deleteTask = Task { @MainActor in
+            defer { deleteTask = nil }
+            await operation()
         }
     }
 }
@@ -377,9 +385,10 @@ final class AccountSettingsViewModel: ObservableObject {
     private func logDeleteAccountError(_ error: Error) {
         let nsError = error as NSError
         let userInfoKeys = Array(nsError.userInfo.keys).map { String(describing: $0) }.sorted()
+        let isFunctionsDomain = nsError.domain == FunctionsErrorDomain
 
         print("[DeleteAccount] stage=error uid=\(auth.currentUser?.uid ?? "nil") provider=\(providerForCurrentUser()) errorDomain=\(nsError.domain) code=\(nsError.code) message=\(nsError.localizedDescription)")
-        print("[DeleteAccount] stage=error_details functionsDomain=\(FunctionsErrorDomain) userInfoKeys=\(userInfoKeys) userInfo=\(nsError.userInfo)")
+        print("[DeleteAccount] stage=error_details functionsDomain=\(FunctionsErrorDomain) isFunctionsDomain=\(isFunctionsDomain) userInfoKeys=\(userInfoKeys) userInfo=\(nsError.userInfo)")
     }
 
     private func userFacingDeleteError(_ error: Error) -> String {

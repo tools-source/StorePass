@@ -565,6 +565,77 @@ async function commitDeleteBatch(
   return deleted;
 }
 
+async function cleanupMemberships(params: {
+  uid: string;
+  userRef: FirebaseFirestore.DocumentReference;
+  userData: FirebaseFirestore.DocumentData;
+  traceId: string;
+}): Promise<void> {
+  const { uid, userRef, userData, traceId } = params;
+  const assignedStoreIds = Array.isArray(userData.assignedStoreIds)
+    ? userData.assignedStoreIds.filter((value): value is string => typeof value === 'string' && value.length > 0)
+    : [];
+
+  const refsToDelete = new Map<string, FirebaseFirestore.DocumentReference>();
+  const addRef = (ref: FirebaseFirestore.DocumentReference | undefined | null): void => {
+    if (!ref) {
+      return;
+    }
+    refsToDelete.set(ref.path, ref);
+  };
+
+  const employeeStoresSnap = await db.collection('employeeStores').doc(uid).collection('stores').get();
+  console.log(`[deleteMyAccount] stage=deleteEmployeeStores traceId=${traceId} uid=${uid} mirrors=${employeeStoresSnap.size}`);
+  for (const doc of employeeStoresSnap.docs) {
+    addRef(doc.ref);
+  }
+  addRef(db.collection('employeeStores').doc(uid));
+
+  const employeeCheckinsSnap = await db.collection('employeeCheckins').doc(uid).collection('checkins').get();
+  console.log(`[deleteMyAccount] stage=deleteEmployeeCheckins traceId=${traceId} uid=${uid} checkins=${employeeCheckinsSnap.size}`);
+  for (const doc of employeeCheckinsSnap.docs) {
+    addRef(doc.ref);
+  }
+  addRef(db.collection('employeeCheckins').doc(uid));
+
+  console.log(`[deleteMyAccount] stage=removeMemberships traceId=${traceId} uid=${uid}`);
+  const storesFromMirrors = employeeStoresSnap.docs.map((doc) => doc.id).filter((storeId) => Boolean(storeId));
+  const membersByUserIdSnap = await db.collectionGroup('members').where('userId', '==', uid).get();
+  const membersByDocIdSnap = await db.collectionGroup('members').where(admin.firestore.FieldPath.documentId(), '==', uid).get();
+  const storeIds = new Set<string>([...assignedStoreIds, ...storesFromMirrors]);
+
+  for (const memberDoc of [...membersByUserIdSnap.docs, ...membersByDocIdSnap.docs]) {
+    const storeId = memberDoc.ref.parent.parent?.id;
+    if (storeId) {
+      storeIds.add(storeId);
+    }
+    addRef(memberDoc.ref);
+  }
+
+  const now = admin.firestore.FieldValue.serverTimestamp();
+  for (const storeId of storeIds) {
+    if (!storeId) {
+      continue;
+    }
+    const storeRef = db.collection('stores').doc(storeId);
+    addRef(storeRef.collection('members').doc(uid));
+    await storeRef.set({ updatedAt: now }, { merge: true });
+  }
+
+  const managerByEmployeeIdSnap = await db.collectionGroup('checkins').where('employeeId', '==', uid).get();
+  const managerByUserIdSnap = await db.collectionGroup('checkins').where('userId', '==', uid).get();
+  for (const checkinDoc of [...managerByEmployeeIdSnap.docs, ...managerByUserIdSnap.docs]) {
+    if (checkinDoc.ref.path.includes('/managerCheckins/')) {
+      addRef(checkinDoc.ref);
+    }
+  }
+
+  addRef(db.collection('employees').doc(uid));
+  addRef(userRef);
+
+  await commitDeleteBatch([...refsToDelete.values()], { prefix: 'deleteMyAccount', uid, stage: 'cleanupFirestore' });
+}
+
 export const deleteMyAccount = onCall({ region: 'us-central1' }, async (request) => {
   const traceId = Math.random().toString(36).slice(2, 10);
   const uid = request.auth?.uid;
@@ -582,77 +653,31 @@ export const deleteMyAccount = onCall({ region: 'us-central1' }, async (request)
     const userRef = db.collection('users').doc(uid);
     const userSnap = await userRef.get();
     const userData = userSnap.data() ?? {};
-    const assignedStoreIds = Array.isArray(userData.assignedStoreIds)
-      ? userData.assignedStoreIds.filter((value): value is string => typeof value === 'string' && value.length > 0)
-      : [];
 
-    const refsToDelete = new Map<string, FirebaseFirestore.DocumentReference>();
-    const addRef = (ref: FirebaseFirestore.DocumentReference | undefined | null): void => {
-      if (!ref) {
-        return;
-      }
-      refsToDelete.set(ref.path, ref);
-    };
-
-    const employeeStoresSnap = await db.collection('employeeStores').doc(uid).collection('stores').get();
-    console.log(`[deleteMyAccount] stage=deleteEmployeeStores traceId=${traceId} uid=${uid} mirrors=${employeeStoresSnap.size}`);
-    for (const doc of employeeStoresSnap.docs) {
-      addRef(doc.ref);
-    }
-    addRef(db.collection('employeeStores').doc(uid));
-
-    const employeeCheckinsSnap = await db.collection('employeeCheckins').doc(uid).collection('checkins').get();
-    console.log(`[deleteMyAccount] stage=deleteEmployeeCheckins traceId=${traceId} uid=${uid} checkins=${employeeCheckinsSnap.size}`);
-    for (const doc of employeeCheckinsSnap.docs) {
-      addRef(doc.ref);
-    }
-    addRef(db.collection('employeeCheckins').doc(uid));
-
-    console.log(`[deleteMyAccount] stage=removeMemberships traceId=${traceId} uid=${uid}`);
-    const storesFromMirrors = employeeStoresSnap.docs.map((doc) => doc.id).filter((storeId) => Boolean(storeId));
-    const membersByUserIdSnap = await db.collectionGroup('members').where('userId', '==', uid).get();
-    const membersByDocIdSnap = await db.collectionGroup('members').where(admin.firestore.FieldPath.documentId(), '==', uid).get();
-    const storeIds = new Set<string>([...assignedStoreIds, ...storesFromMirrors]);
-
-    for (const memberDoc of [...membersByUserIdSnap.docs, ...membersByDocIdSnap.docs]) {
-      const storeId = memberDoc.ref.parent.parent?.id;
-      if (storeId) {
-        storeIds.add(storeId);
-      }
-      addRef(memberDoc.ref);
+    if (mode === 'cleanup_memberships') {
+      await cleanupMemberships({ uid, userRef, userData, traceId });
+      console.log(`[deleteMyAccount] stage=done traceId=${traceId} uid=${uid} mode=${mode}`);
+      return { ok: true, traceId, mode };
     }
 
-    for (const storeId of storeIds) {
-      if (!storeId) {
-        continue;
-      }
-      addRef(db.collection('stores').doc(storeId).collection('members').doc(uid));
+    if (mode === 'delete_auth') {
+      console.log(`[deleteMyAccount] stage=deleteAuthUser traceId=${traceId} uid=${uid}`);
+      await admin.auth().deleteUser(uid);
+      console.log(`[deleteMyAccount] stage=done traceId=${traceId} uid=${uid} mode=${mode}`);
+      return { ok: true, traceId, mode };
     }
 
-    const managerByEmployeeIdSnap = await db.collectionGroup('checkins').where('employeeId', '==', uid).get();
-    const managerByUserIdSnap = await db.collectionGroup('checkins').where('userId', '==', uid).get();
-    for (const checkinDoc of [...managerByEmployeeIdSnap.docs, ...managerByUserIdSnap.docs]) {
-      if (checkinDoc.ref.path.includes('/managerCheckins/')) {
-        addRef(checkinDoc.ref);
-      }
-    }
-
-    addRef(db.collection('employees').doc(uid));
-    addRef(userRef);
-
-    await commitDeleteBatch([...refsToDelete.values()], { prefix: 'deleteMyAccount', uid, stage: 'cleanupFirestore' });
-
-    console.log(`[deleteMyAccount] stage=deleteAuthUser traceId=${traceId} uid=${uid}`);
-    await admin.auth().deleteUser(uid);
-
-    console.log(`[deleteMyAccount] stage=done traceId=${traceId} uid=${uid}`);
-    return { ok: true, traceId };
+    throw new HttpsError('invalid-argument', `Unsupported deleteMyAccount mode: ${mode}`);
   } catch (error: any) {
-    console.error(`[deleteMyAccount] FAIL traceId=${traceId} uid=${uid}`, error);
-    throw new HttpsError('internal', 'deleteMyAccount failed', {
+    console.error(`[deleteMyAccount] FAIL traceId=${traceId} uid=${uid} mode=${mode}`, error);
+    if (error instanceof HttpsError) {
+      throw error;
+    }
+    const message = error?.message ?? String(error);
+    throw new HttpsError('internal', message, {
       traceId,
-      message: error?.message ?? String(error),
-      stack: error?.stack ?? null,
+      uid,
+      mode,
     });
   }
 });

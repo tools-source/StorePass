@@ -350,36 +350,52 @@ exports.setEmployeeActive = onCall(async (request) => {
   return { employeeId, isActive: !!isActive };
 });
 
-exports.deleteMyAccount = onCall(async (request) => {
-  if (!request.auth) throw new HttpsError('unauthenticated', 'You must be signed in.');
-  const uid = request.auth.uid;
-  const mode = request.data.mode;
-  const user = await requireActiveUser(uid);
-
-  if (user.role === 'manager' && mode !== 'manager_delete_all') {
-    throw new HttpsError('failed-precondition', 'Managers must use manager_delete_all or keep stores mode (not enabled).');
-  }
-
+async function cleanupMemberships(uid) {
   const memberDocs = await db.collectionGroup('members')
     .where(admin.firestore.FieldPath.documentId(), '==', uid)
     .get();
 
+  const storeIds = new Set();
   const batch = db.batch();
-  memberDocs.docs.forEach((doc) => batch.delete(doc.ref));
+  memberDocs.docs.forEach((doc) => {
+    const storeId = doc.ref.parent.parent && doc.ref.parent.parent.id;
+    if (storeId) storeIds.add(storeId);
+    batch.delete(doc.ref);
+  });
 
-  if (user.role === 'manager') {
-    const stores = await db.collection('stores').where('managerId', '==', uid).get();
-    for (const store of stores.docs) {
-      const members = await db.collection('storeMembers').doc(store.id).collection('members').get();
-      members.docs.forEach((m) => batch.delete(m.ref));
-      batch.delete(db.collection('storeMembers').doc(store.id));
-      batch.delete(store.ref);
-    }
+  const now = admin.firestore.FieldValue.serverTimestamp();
+  for (const storeId of storeIds) {
+    const storeRef = db.collection('stores').doc(storeId);
+    await storeRef.set({ updatedAt: now }, { merge: true });
   }
 
   batch.delete(db.collection('users').doc(uid));
   await batch.commit();
-  await admin.auth().deleteUser(uid);
+}
 
-  return { ok: true };
+exports.deleteMyAccount = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'You must be signed in.');
+  const uid = request.auth.uid;
+  const mode = typeof request.data.mode === 'string' ? request.data.mode : 'cleanup_memberships';
+
+  try {
+    await requireActiveUser(uid);
+    console.log(`[deleteMyAccount] start uid=${uid} mode=${mode}`);
+
+    if (mode === 'cleanup_memberships') {
+      await cleanupMemberships(uid);
+      return { ok: true, mode };
+    }
+
+    if (mode === 'delete_auth') {
+      await admin.auth().deleteUser(uid);
+      return { ok: true, mode };
+    }
+
+    throw new HttpsError('invalid-argument', `Unsupported deleteMyAccount mode: ${mode}`);
+  } catch (error) {
+    console.error(`[deleteMyAccount] fail uid=${uid} mode=${mode}`, error);
+    if (error instanceof HttpsError) throw error;
+    throw new HttpsError('internal', error?.message || String(error));
+  }
 });
