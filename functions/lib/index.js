@@ -1,4 +1,6 @@
 "use strict";
+// What changed:
+// - Added employee deleteMyAccount cleanup endpoint to unlink memberships/mirrors before auth deletion.
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
     var desc = Object.getOwnPropertyDescriptor(m, k);
@@ -33,7 +35,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.deleteManagerAccount = exports.removeEmployeeFromStore = exports.leaveStore = exports.setUserRole = exports.getStoreJoinCode = exports.rotateStoreCode = exports.joinStoreByCode = void 0;
+exports.deleteManagerAccount = exports.deleteMyAccount = exports.removeEmployeeFromStore = exports.leaveStore = exports.setUserRole = exports.getStoreJoinCode = exports.rotateStoreCode = exports.joinStoreByCode = void 0;
 const https_1 = require("firebase-functions/v2/https");
 const admin = __importStar(require("firebase-admin"));
 const helpers_1 = require("./helpers");
@@ -470,6 +472,74 @@ async function commitDeleteBatch(paths) {
         await batch.commit();
     }
 }
+exports.deleteMyAccount = (0, https_1.onRequest)({ region: 'us-central1' }, async (req, res) => {
+    if (req.method !== 'POST') {
+        res.status(405).json({ error: { message: 'Method not allowed' } });
+        return;
+    }
+    try {
+        const decodedToken = await (0, helpers_1.verifyBearerToken)(req);
+        const uid = decodedToken.uid;
+        const userRef = db.collection('users').doc(uid);
+        const userSnap = await userRef.get();
+        const userData = userSnap.data() ?? {};
+        const role = typeof userData.role === 'string' ? String(userData.role).toLowerCase() : 'employee';
+        if (role === 'manager') {
+            throw new https_1.HttpsError('failed-precondition', 'Managers must use the manager account deletion flow.');
+        }
+        console.log(`[deleteMyAccount] stage=start uid=${uid} role=${role}`);
+        const assignedStoreIds = Array.isArray(userData.assignedStoreIds)
+            ? userData.assignedStoreIds.filter((value) => typeof value === 'string' && value.length > 0)
+            : [];
+        const employeeStoreSnap = await db.collection('employeeStores').doc(uid).collection('stores').get();
+        const mirroredStoreIds = employeeStoreSnap.docs.map((doc) => doc.id).filter((value) => value.length > 0);
+        const membersByEmployeeIdSnap = await db.collectionGroup('members').where('employeeId', '==', uid).get();
+        const membersByUserIdSnap = await db.collectionGroup('members').where('userId', '==', uid).get();
+        const storeIds = new Set([...assignedStoreIds, ...mirroredStoreIds]);
+        const membershipRefsByPath = new Map();
+        for (const memberDoc of [...membersByEmployeeIdSnap.docs, ...membersByUserIdSnap.docs]) {
+            const storeId = memberDoc.ref.parent.parent?.id;
+            if (storeId) {
+                storeIds.add(storeId);
+            }
+            membershipRefsByPath.set(memberDoc.ref.path, memberDoc.ref);
+        }
+        const refsToDelete = [];
+        for (const storeId of storeIds) {
+            refsToDelete.push(db.collection('stores').doc(storeId).collection('members').doc(uid));
+            refsToDelete.push(db.collection('employeeStores').doc(uid).collection('stores').doc(storeId));
+        }
+        for (const ref of membershipRefsByPath.values()) {
+            refsToDelete.push(ref);
+        }
+        const employeeCheckinsSnap = await db.collection('employeeCheckins').doc(uid).collection('checkins').get();
+        for (const checkinDoc of employeeCheckinsSnap.docs) {
+            refsToDelete.push(checkinDoc.ref);
+        }
+        refsToDelete.push(db.collection('employeeCheckins').doc(uid));
+        refsToDelete.push(db.collection('employeeStores').doc(uid));
+        refsToDelete.push(db.collection('employees').doc(uid));
+        await commitDeleteBatch(refsToDelete);
+        await userRef.set({ assignedStoreIds: [], updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+        await userRef.delete();
+        console.log(`[deleteMyAccount] stage=cleanup_complete uid=${uid} storesProcessed=${storeIds.size} membershipsDeleted=${membershipRefsByPath.size} employeeStoreMirrors=${employeeStoreSnap.size} employeeCheckinsDeleted=${employeeCheckinsSnap.size}`);
+        res.status(200).json({
+            result: {
+                ok: true,
+                uid,
+                storesProcessed: storeIds.size,
+                membershipsDeleted: membershipRefsByPath.size,
+                employeeStoreMirrorsDeleted: employeeStoreSnap.size,
+                employeeCheckinsDeleted: employeeCheckinsSnap.size,
+            },
+        });
+    }
+    catch (error) {
+        console.error('[deleteMyAccount] request failed', error);
+        const err = (0, helpers_1.toErrorResponse)(error);
+        res.status(err.status).json(err.body);
+    }
+});
 exports.deleteManagerAccount = (0, https_1.onCall)({ region: 'us-central1' }, async (request) => {
     const managerUid = request.auth?.uid;
     const requestedManagerId = typeof request.data?.managerId === 'string' ? request.data.managerId : undefined;

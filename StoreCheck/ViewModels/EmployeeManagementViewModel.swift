@@ -2,6 +2,9 @@ import Foundation
 import FirebaseFirestore
 import FirebaseFunctions
 
+// What changed:
+// - Hardened Firebase Functions error logging to avoid unavailable SDK constants.
+
 @MainActor
 final class EmployeeManagementViewModel: ObservableObject {
     static let allStoresFilter = "all"
@@ -248,10 +251,10 @@ final class EmployeeManagementViewModel: ObservableObject {
 
     private func logFunctionsErrorIfPresent(_ error: Error) {
         let nsError = error as NSError
-        if nsError.domain == FunctionsErrorDomain {
+        if nsError.domain == "com.firebase.functions" || nsError.domain == "FunctionsErrorDomain" {
             let message = nsError.userInfo[NSLocalizedDescriptionKey] as? String ?? nsError.localizedDescription
-            let details = nsError.userInfo[FunctionsErrorDetailsKey].map { String(describing: $0) } ?? "nil"
-            print("[RemoveEmployee][FAIL] domain=\(nsError.domain) code=\(nsError.code) message=\(message) details=\(details)")
+            let userInfoKeys = Array(nsError.userInfo.keys).map { String(describing: $0) }.sorted()
+            print("[RemoveEmployee][FAIL] domain=\(nsError.domain) code=\(nsError.code) message=\(message) userInfoKeys=\(userInfoKeys)")
             print("[RemoveEmployee][FAIL] function=\(removeEmployeeFunctionName) region=\(removeEmployeeFunctionRegion)")
             return
         }

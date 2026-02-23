@@ -3,6 +3,10 @@ import FirebaseCore
 import FirebaseFirestore
 import Foundation
 
+// What changed:
+// - Preserve real Apple names in users/{uid}.name (never downgrade to defaults on later sign-ins).
+// - Add focused Apple sign-in debug logging with incoming/existing/final saved names.
+
 // MARK: - Domain Models (single source of truth)
 
 
@@ -111,6 +115,7 @@ final class FirestoreRoleProfileRepository: RoleProfileRepositoryProtocol {
         let incomingName = name?.trimmingCharacters(in: .whitespacesAndNewlines)
         let incomingEmail = email?.trimmingCharacters(in: .whitespacesAndNewlines)
         let existingName = (userDoc.data()?["name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let hasExistingName = existingName?.isEmpty == false
 
         if userDoc.exists {
             // Break into a typed dictionary to avoid compiler “unable to type-check” issues
@@ -121,7 +126,7 @@ final class FirestoreRoleProfileRepository: RoleProfileRepositoryProtocol {
 
             if let incomingName, !incomingName.isEmpty {
                 update["name"] = incomingName
-            } else if existingName == nil || existingName?.isEmpty == true {
+            } else if !hasExistingName {
                 update["name"] = "StorePass User"
             }
 
@@ -130,7 +135,10 @@ final class FirestoreRoleProfileRepository: RoleProfileRepositoryProtocol {
             }
 
             try await userRef.setData(update, merge: true)
-            print("[AppleSignIn] firestore_upsert uid=\(uid) savedName=\(update["name"] as? String ?? "<skipped>") savedEmail=\(update["email"] as? String ?? "<skipped>") skippedName=\(update["name"] == nil) skippedEmail=\(update["email"] == nil)")
+            let finalSavedName = (update["name"] as? String) ?? existingName ?? "StorePass User"
+            let savedEmailStr = (update["email"] as? String) ?? "<skipped>"
+            print("[AppleSignIn] incomingName=\(incomingName ?? "<nil>") existingName=\(existingName ?? "<nil>") finalSavedName=\(finalSavedName)")
+            print("[AppleSignIn] firestore_upsert uid=\(uid) savedName=\(finalSavedName) savedEmail=\(savedEmailStr)")
         } else {
             // New user must pick role (or we go to setup screen)
             guard let requestedRole = requestedRole else {
@@ -143,7 +151,10 @@ final class FirestoreRoleProfileRepository: RoleProfileRepositoryProtocol {
             let seedEmail = validEmail(from: incomingEmail)
 
             _ = try await setUserRole(requestedRole: requestedRole, name: seedName, email: seedEmail, provider: provider)
-            print("[AppleSignIn] firestore_upsert uid=\(uid) savedName=\(seedName) savedEmail=\(seedEmail ?? "<skipped>") skippedName=false skippedEmail=\(seedEmail == nil)")        }
+            let seedEmailStr = seedEmail ?? "<skipped>"
+            print("[AppleSignIn] incomingName=\(incomingName ?? "<nil>") existingName=<missing_doc> finalSavedName=\(seedName)")
+            print("[AppleSignIn] firestore_upsert uid=\(uid) savedName=\(seedName) savedEmail=\(seedEmailStr)")
+        }
 
         // Fetch and resolve
         guard let fetched = try await fetchUserProfileRaw(uid: uid) else {
