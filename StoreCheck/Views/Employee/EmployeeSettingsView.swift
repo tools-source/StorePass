@@ -8,11 +8,16 @@ import Security
 import SwiftUI
 import UIKit
 
+// What changed:
+// - Added delete-account reauth retry flow for Apple/Google users.
+// - Added targeted delete-account stage logging and resilient callable error parsing.
+
 struct AccountSettingsView: View {
     @EnvironmentObject private var authViewModel: AuthViewModel
     @StateObject private var viewModel = AccountSettingsViewModel()
     @State private var showDeleteConfirmation = false
     @State private var showReauthSheet = false
+    @State private var pendingDeleteRole: UserRole?
 
     var body: some View {
         NavigationStack {
@@ -41,11 +46,14 @@ struct AccountSettingsView: View {
                 Button("Delete", role: .destructive) {
                     Task {
                         let role = authViewModel.currentUser?.role
+                        pendingDeleteRole = role
                         if role == .manager {
                             showReauthSheet = true
                         } else {
                             await viewModel.deleteAccount(role: role)
-                            if viewModel.errorMessage == nil {
+                            if viewModel.needsReauthentication {
+                                showReauthSheet = true
+                            } else if viewModel.errorMessage == nil {
                                 await authViewModel.signOut()
                             }
                         }
@@ -58,7 +66,11 @@ struct AccountSettingsView: View {
                 ReauthenticateSheet(viewModel: viewModel) {
                     showReauthSheet = false
                     Task {
-                        await viewModel.deleteManagerAccountFlow()
+                        if pendingDeleteRole == .manager {
+                            await viewModel.deleteManagerAccountFlow()
+                        } else {
+                            await viewModel.deleteAccountAfterReauth(role: pendingDeleteRole)
+                        }
                         if viewModel.errorMessage == nil {
                             await authViewModel.signOut()
                         }
@@ -147,6 +159,7 @@ final class AccountSettingsViewModel: ObservableObject {
     @Published var errorMessage: String?
     @Published var selectedProviderForReauth: String?
     @Published var isDeleting = false
+    @Published var needsReauthentication = false
 
     private let cloudFunctions = CloudFunctionsService()
     private var appleReauthNonce: String?
@@ -269,28 +282,49 @@ final class AccountSettingsViewModel: ObservableObject {
     }
 
     func deleteAccount(role: UserRole?) async {
+        await executeDeleteAccount(role: role, allowReauthPrompt: true)
+    }
+
+    func deleteAccountAfterReauth(role: UserRole?) async {
+        await executeDeleteAccount(role: role, allowReauthPrompt: false)
+    }
+
+    private func executeDeleteAccount(role: UserRole?, allowReauthPrompt: Bool) async {
         guard let currentUser = auth.currentUser else {
             errorMessage = "You must be signed in."
             return
         }
 
+        let provider = providerForCurrentUser()
+        logDeleteAccountStage("start", uid: currentUser.uid, provider: provider)
+
         do {
-            _ = try? await callable(name: "deleteMyAccount", payload: ["mode": "cleanup_memberships", "role": role?.rawValue as Any])
+            _ = try await callable(name: "deleteMyAccount", payload: ["mode": "cleanup_memberships", "role": role?.rawValue as Any])
+            logDeleteAccountStage("cleanup_ok", uid: currentUser.uid, provider: provider)
 
             if auth.currentUser != nil {
                 do {
                     try await currentUser.delete()
+                    logDeleteAccountStage("auth_delete_ok", uid: currentUser.uid, provider: provider)
                 } catch {
                     let nsError = error as NSError
                     if nsError.domain == AuthErrorDomain,
                        nsError.code == AuthErrorCode.requiresRecentLogin.rawValue {
-                        errorMessage = "For security, please sign in again and retry account deletion."
+                        logDeleteAccountStage("requires_recent_login", uid: currentUser.uid, provider: provider, error: error)
+                        if allowReauthPrompt {
+                            needsReauthentication = true
+                            prepareProviderForReauth()
+                            errorMessage = nil
+                            return
+                        }
+                        errorMessage = "Re-authentication failed. Please sign in again and retry account deletion."
                         return
                     }
 
                     if nsError.domain == AuthErrorDomain,
                        nsError.code == AuthErrorCode.userNotFound.rawValue {
                         errorMessage = nil
+                        needsReauthentication = false
                         return
                     }
 
@@ -298,21 +332,33 @@ final class AccountSettingsViewModel: ObservableObject {
                 }
             }
 
+            needsReauthentication = false
             errorMessage = nil
         } catch {
-            errorMessage = error.localizedDescription
+            logDeleteAccountError(error)
+            errorMessage = userFacingDeleteError(error)
         }
+    }
+
+    private func logDeleteAccountStage(_ stage: String, uid: String, provider: String, error: Error? = nil) {
+        if let error {
+            let nsError = error as NSError
+            print("[DeleteAccount] stage=\(stage) uid=\(uid) provider=\(provider) errorDomain=\(nsError.domain) code=\(nsError.code) message=\(nsError.localizedDescription)")
+            return
+        }
+        print("[DeleteAccount] stage=\(stage) uid=\(uid) provider=\(provider) errorDomain=none code=0 message=ok")
     }
 
     private func logDeleteAccountError(_ error: Error) {
         let nsError = error as NSError
-        let details = nsError.userInfo[FunctionsErrorDetailsKey] ?? "nil"
-        print("[DeleteAccount][ERROR] domain=\(nsError.domain) code=\(nsError.code) message=\(nsError.localizedDescription) details=\(details)")
+        let userInfoKeys = Array(nsError.userInfo.keys).map { String(describing: $0) }.sorted()
+        print("[DeleteAccount] stage=error uid=\(auth.currentUser?.uid ?? "nil") provider=\(providerForCurrentUser()) errorDomain=\(nsError.domain) code=\(nsError.code) message=\(nsError.localizedDescription)")
+        print("[DeleteAccount] stage=error_details userInfoKeys=\(userInfoKeys) userInfo=\(nsError.userInfo)")
     }
 
     private func userFacingDeleteError(_ error: Error) -> String {
         let nsError = error as NSError
-        if nsError.domain == FunctionsErrorDomain {
+        if nsError.domain == "com.firebase.functions" || nsError.domain == "FunctionsErrorDomain" {
             return "Could not delete account data right now. Please try again."
         }
         if nsError.domain == AuthErrorDomain,
@@ -320,6 +366,15 @@ final class AccountSettingsViewModel: ObservableObject {
             return "For security, please sign in again and retry account deletion."
         }
         return nsError.localizedDescription
+    }
+
+    private func providerForCurrentUser() -> String {
+        guard let user = auth.currentUser else { return "unknown" }
+        let providerIds = user.providerData.map(\.providerID)
+        if providerIds.contains("apple.com") { return "apple.com" }
+        if providerIds.contains("google.com") { return "google.com" }
+        if providerIds.contains("password") { return "password" }
+        return providerIds.first ?? "unknown"
     }
 
     private func callable(name: String, payload: [String: Any]) async throws -> [String: Any] {

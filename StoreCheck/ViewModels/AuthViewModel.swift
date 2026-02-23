@@ -4,6 +4,9 @@ import FirebaseFirestore
 import Foundation
 import SwiftUI
 
+// What changed:
+// - Capture Apple full name (given + family) on first authorization and pass it into profile bootstrap.
+
 @MainActor
 final class AuthViewModel: ObservableObject {
     enum AuthState: Equatable {
@@ -101,12 +104,16 @@ final class AuthViewModel: ObservableObject {
                     throw NSError(domain: "StorePass", code: 2001, userInfo: [NSLocalizedDescriptionKey: "Apple sign in failed. Please try again."])
                 }
 
-                let resolvedAppleName = appleDisplayName(from: credential.fullName)
+                let resolvedAppleName = [credential.fullName?.givenName, credential.fullName?.familyName]
+                    .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .filter { !$0.isEmpty }
+                    .joined(separator: " ")
                 let resolvedAppleEmail = credential.email?.trimmingCharacters(in: .whitespacesAndNewlines)
                 let hasAppleEmail = resolvedAppleEmail?.isEmpty == false
-                print("[AppleSignIn] credential_received fullNamePresent=\(credential.fullName != nil) emailPresent=\(hasAppleEmail)")
+                let finalAppleName = resolvedAppleName.isEmpty ? nil : resolvedAppleName
+                print("[AppleSignIn] credential_received fullNamePresent=\(credential.fullName != nil) emailPresent=\(hasAppleEmail) incomingName=\(finalAppleName ?? "<nil>")")
 
-                pendingAppleProfileName = resolvedAppleName
+                pendingAppleProfileName = finalAppleName
                 pendingAppleProfileEmail = resolvedAppleEmail?.isEmpty == false ? resolvedAppleEmail : nil
 
                 try await authService.signInWithApple(idToken: idToken, rawNonce: nonce, fullName: credential.fullName, email: credential.email)

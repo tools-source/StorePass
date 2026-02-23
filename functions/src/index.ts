@@ -1,3 +1,6 @@
+// What changed:
+// - Added employee deleteMyAccount cleanup endpoint to unlink memberships/mirrors before auth deletion.
+
 import { HttpsError, onCall, onRequest } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
 import {
@@ -552,6 +555,91 @@ async function commitDeleteBatch(paths: FirebaseFirestore.DocumentReference[]): 
     await batch.commit();
   }
 }
+
+export const deleteMyAccount = onRequest({ region: 'us-central1' }, async (req, res) => {
+  if (req.method !== 'POST') {
+    res.status(405).json({ error: { message: 'Method not allowed' } });
+    return;
+  }
+
+  try {
+    const decodedToken = await verifyBearerToken(req as { headers: Record<string, unknown> });
+    const uid = decodedToken.uid;
+    const userRef = db.collection('users').doc(uid);
+    const userSnap = await userRef.get();
+    const userData = userSnap.data() ?? {};
+    const role = typeof userData.role === 'string' ? String(userData.role).toLowerCase() : 'employee';
+
+    if (role === 'manager') {
+      throw new HttpsError('failed-precondition', 'Managers must use the manager account deletion flow.');
+    }
+
+    console.log(`[deleteMyAccount] stage=start uid=${uid} role=${role}`);
+
+    const assignedStoreIds = Array.isArray(userData.assignedStoreIds)
+      ? userData.assignedStoreIds.filter((value): value is string => typeof value === 'string' && value.length > 0)
+      : [];
+
+    const employeeStoreSnap = await db.collection('employeeStores').doc(uid).collection('stores').get();
+    const mirroredStoreIds = employeeStoreSnap.docs.map((doc) => doc.id).filter((value) => value.length > 0);
+
+    const membersByEmployeeIdSnap = await db.collectionGroup('members').where('employeeId', '==', uid).get();
+    const membersByUserIdSnap = await db.collectionGroup('members').where('userId', '==', uid).get();
+
+    const storeIds = new Set<string>([...assignedStoreIds, ...mirroredStoreIds]);
+    const membershipRefsByPath = new Map<string, FirebaseFirestore.DocumentReference>();
+
+    for (const memberDoc of [...membersByEmployeeIdSnap.docs, ...membersByUserIdSnap.docs]) {
+      const storeId = memberDoc.ref.parent.parent?.id;
+      if (storeId) {
+        storeIds.add(storeId);
+      }
+      membershipRefsByPath.set(memberDoc.ref.path, memberDoc.ref);
+    }
+
+    const refsToDelete: FirebaseFirestore.DocumentReference[] = [];
+    for (const storeId of storeIds) {
+      refsToDelete.push(db.collection('stores').doc(storeId).collection('members').doc(uid));
+      refsToDelete.push(db.collection('employeeStores').doc(uid).collection('stores').doc(storeId));
+    }
+
+    for (const ref of membershipRefsByPath.values()) {
+      refsToDelete.push(ref);
+    }
+
+    const employeeCheckinsSnap = await db.collection('employeeCheckins').doc(uid).collection('checkins').get();
+    for (const checkinDoc of employeeCheckinsSnap.docs) {
+      refsToDelete.push(checkinDoc.ref);
+    }
+
+    refsToDelete.push(db.collection('employeeCheckins').doc(uid));
+    refsToDelete.push(db.collection('employeeStores').doc(uid));
+    refsToDelete.push(db.collection('employees').doc(uid));
+
+    await commitDeleteBatch(refsToDelete);
+    await userRef.set({ assignedStoreIds: [], updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+    await userRef.delete();
+
+    console.log(
+      `[deleteMyAccount] stage=cleanup_complete uid=${uid} storesProcessed=${storeIds.size} membershipsDeleted=${membershipRefsByPath.size} employeeStoreMirrors=${employeeStoreSnap.size} employeeCheckinsDeleted=${employeeCheckinsSnap.size}`,
+    );
+
+    res.status(200).json({
+      result: {
+        ok: true,
+        uid,
+        storesProcessed: storeIds.size,
+        membershipsDeleted: membershipRefsByPath.size,
+        employeeStoreMirrorsDeleted: employeeStoreSnap.size,
+        employeeCheckinsDeleted: employeeCheckinsSnap.size,
+      },
+    });
+  } catch (error) {
+    console.error('[deleteMyAccount] request failed', error);
+    const err = toErrorResponse(error);
+    res.status(err.status).json(err.body);
+  }
+});
 
 export const deleteManagerAccount = onCall({ region: 'us-central1' }, async (request) => {
   const managerUid = request.auth?.uid;
