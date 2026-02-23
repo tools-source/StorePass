@@ -48,6 +48,30 @@ struct EmployeeManagementView: View {
             } message: {
                 Text(viewModel.employeeError ?? "")
             }
+            .alert("Employees", isPresented: Binding(get: { viewModel.successMessage != nil }, set: { _ in viewModel.successMessage = nil })) {
+                Button("OK", role: .cancel) { viewModel.successMessage = nil }
+            } message: {
+                Text(viewModel.successMessage ?? "")
+            }
+            .confirmationDialog("Choose store", isPresented: $viewModel.showStoreChooser, titleVisibility: .visible) {
+                ForEach(viewModel.removalStoreChoices, id: \.id) { choice in
+                    Button(choice.name) {
+                        viewModel.confirmRemovalChoice(storeId: choice.id)
+                    }
+                }
+                Button("Cancel", role: .cancel) { viewModel.cancelPendingRemoval() }
+            }
+            .alert(
+                "Remove from store",
+                isPresented: Binding(get: { viewModel.pendingRemoval != nil }, set: { if !$0 { viewModel.cancelPendingRemoval() } })
+            ) {
+                Button("Remove", role: .destructive) {
+                    Task { await viewModel.executePendingRemoval() }
+                }
+                Button("Cancel", role: .cancel) { viewModel.cancelPendingRemoval() }
+            } message: {
+                Text(viewModel.removalConfirmationMessage)
+            }
         }
     }
 
@@ -82,14 +106,14 @@ struct EmployeeManagementView: View {
                 ForEach(viewModel.filteredEmployees) { employee in
                     EmployeeCardView(
                         employee: employee,
-                        selectedStoreId: viewModel.selectedStoreId,
-                        storeSummary: viewModel.storeSummary(for: employee),
-                        onRemoveStore: { storeId in
-                            print("[Employees][UI] tapped removeFromStore employeeId=\(employee.id) storeId=\(storeId)")
-                            Task { await viewModel.removeFromStore(employeeId: employee.id, storeId: storeId) }
-                        }
+                        storeSummary: viewModel.storeSummary(for: employee)
                     )
                     .padding(.vertical, 4)
+                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                        Button("Remove", role: .destructive) {
+                            viewModel.prepareRemoval(for: employee)
+                        }
+                    }
                     .listRowInsets(EdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12))
                 }
             }
@@ -100,30 +124,10 @@ struct EmployeeManagementView: View {
 
 private struct EmployeeCardView: View {
     let employee: EmployeeSummary
-    let selectedStoreId: String
     let storeSummary: String
-    let onRemoveStore: (String) -> Void
-
-    @State private var showStorePicker = false
-    @State private var confirmStoreId: String?
 
     private var statusText: String { employee.userIsActive ? "Active" : "Disabled" }
     private var statusColor: Color { employee.userIsActive ? .green : .orange }
-    private var canRemoveFromSelectedStore: Bool {
-        selectedStoreId != EmployeeManagementViewModel.allStoresFilter
-            && employee.storeIds.contains(selectedStoreId)
-    }
-
-    private var hasAnyStores: Bool {
-        !employee.storeIds.isEmpty
-    }
-
-    private var availableStores: [(id: String, name: String)] {
-        employee.storeIds.enumerated().map { index, id in
-            let name = index < employee.storeNames.count ? employee.storeNames[index] : id
-            return (id, name)
-        }
-    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: DS.Spacing.s) {
@@ -151,54 +155,13 @@ private struct EmployeeCardView: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 
-            Button("Remove from store", role: .destructive) {
-                guard hasAnyStores else { return }
-
-                if selectedStoreId == EmployeeManagementViewModel.allStoresFilter {
-                    showStorePicker = true
-                } else {
-                    confirmStoreId = selectedStoreId
-                }
-            }
-            .disabled(!hasAnyStores || (selectedStoreId != EmployeeManagementViewModel.allStoresFilter && !canRemoveFromSelectedStore))
-            .buttonStyle(.bordered)
-            .frame(maxWidth: .infinity, minHeight: 44)
-            .clipShape(RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous))
-
-            if !hasAnyStores {
+            if employee.storeIds.isEmpty {
                 Text("No stores assigned")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
         }
         .padding(.vertical, DS.Spacing.s)
-        .confirmationDialog("Select store", isPresented: $showStorePicker, titleVisibility: .visible) {
-            ForEach(availableStores, id: \.id) { store in
-                Button(store.name) {
-                    confirmStoreId = store.id
-                }
-            }
-            Button("Cancel", role: .cancel) { }
-        }
-        .alert(
-            "Remove from store",
-            isPresented: Binding(
-                get: { confirmStoreId != nil },
-                set: { newValue in
-                    if !newValue { confirmStoreId = nil }
-                }
-            )
-        ) {
-            Button("Remove", role: .destructive) {
-                if let storeId = confirmStoreId {
-                    onRemoveStore(storeId)
-                }
-                confirmStoreId = nil
-            }
-            Button("Cancel", role: .cancel) { confirmStoreId = nil }
-        } message: {
-            Text("Are you sure you want to remove \(employee.name) from this store?")
-        }
     }
 }
 

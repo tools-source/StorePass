@@ -9,8 +9,12 @@ final class EmployeeManagementViewModel: ObservableObject {
     @Published var employees: [EmployeeSummary] = []
     @Published var selectedStoreId: String = EmployeeManagementViewModel.allStoresFilter
     @Published var employeeError: String?
+    @Published var successMessage: String?
     @Published var bannerMessage: String?
     @Published var isLoading = false
+    @Published var showStoreChooser = false
+
+    @Published private(set) var pendingRemoval: PendingRemoval?
 
     private let employeeRepository: EmployeeManagementRepositoryProtocol
     private let authRepository: AuthRepositoryProtocol
@@ -18,6 +22,73 @@ final class EmployeeManagementViewModel: ObservableObject {
     init(employeeRepository: EmployeeManagementRepositoryProtocol, authRepository: AuthRepositoryProtocol) {
         self.employeeRepository = employeeRepository
         self.authRepository = authRepository
+    }
+
+
+
+    struct PendingRemoval {
+        let employeeId: String
+        let employeeName: String
+        let storeId: String
+        let storeName: String
+    }
+
+    var removalStoreChoices: [(id: String, name: String)] {
+        guard let pendingRemoval else { return [] }
+        guard let employee = employees.first(where: { $0.id == pendingRemoval.employeeId }) else { return [] }
+
+        return employee.storeIds.enumerated().map { index, id in
+            let name = index < employee.storeNames.count ? employee.storeNames[index] : id
+            return (id, name)
+        }
+    }
+
+    var removalConfirmationMessage: String {
+        guard let pendingRemoval else { return "" }
+        return "Remove this employee from \(pendingRemoval.storeName)?"
+    }
+
+    func prepareRemoval(for employee: EmployeeSummary) {
+        if selectedStoreId == Self.allStoresFilter {
+            pendingRemoval = PendingRemoval(employeeId: employee.id, employeeName: employee.name, storeId: "", storeName: "")
+            showStoreChooser = true
+            return
+        }
+
+        guard employee.storeIds.contains(selectedStoreId),
+              let storeName = stores.first(where: { $0.id == selectedStoreId })?.name else {
+            employeeError = "Select a store before removing this employee."
+            return
+        }
+
+        pendingRemoval = PendingRemoval(employeeId: employee.id, employeeName: employee.name, storeId: selectedStoreId, storeName: storeName)
+    }
+
+    func confirmRemovalChoice(storeId: String) {
+        guard let pending = pendingRemoval,
+              let selected = removalStoreChoices.first(where: { $0.id == storeId }) else {
+            cancelPendingRemoval()
+            return
+        }
+
+        pendingRemoval = PendingRemoval(
+            employeeId: pending.employeeId,
+            employeeName: pending.employeeName,
+            storeId: storeId,
+            storeName: selected.name
+        )
+        showStoreChooser = false
+    }
+
+    func cancelPendingRemoval() {
+        pendingRemoval = nil
+        showStoreChooser = false
+    }
+
+    func executePendingRemoval() async {
+        guard let pendingRemoval else { return }
+        await removeFromStore(employeeId: pendingRemoval.employeeId, storeId: pendingRemoval.storeId)
+        cancelPendingRemoval()
     }
 
     var filteredEmployees: [EmployeeSummary] {
@@ -61,6 +132,7 @@ final class EmployeeManagementViewModel: ObservableObject {
     func removeFromStore(employeeId: String, storeId: String) async {
         do {
             try await employeeRepository.removeEmployeeFromStore(storeId: storeId, employeeId: employeeId)
+            successMessage = "Removed from store."
             await load()
         } catch {
             if isFirestorePermissionDenied(error) {

@@ -110,19 +110,6 @@ struct EmployeeHomeView: View {
                 Text("Current Store")
                     .font(.headline)
                 Spacer()
-                if !viewModel.stores.isEmpty {
-                    Menu {
-                        ForEach(viewModel.stores) { store in
-                            Button("Leave \(store.name)", role: .destructive) {
-                                pendingLeaveStore = store
-                            }
-                        }
-                    } label: {
-                        Label("Manage", systemImage: "ellipsis.circle")
-                            .labelStyle(.titleAndIcon)
-                            .font(.subheadline.weight(.semibold))
-                    }
-                }
             }
 
             if viewModel.stores.isEmpty {
@@ -130,27 +117,28 @@ struct EmployeeHomeView: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             } else {
-                HStack(spacing: 10) {
-                    Image(systemName: "building.2.crop.circle")
-                        .font(.title3)
-                        .foregroundStyle(.blue)
-
-                    Picker("Assigned store", selection: Binding(get: {
-                        viewModel.selectedStore?.id ?? ""
-                    }, set: { id in
-                        viewModel.selectStore(withId: id)
-                    })) {
-                        ForEach(viewModel.stores) { store in
-                            Text(store.name).tag(store.id)
+                VStack(spacing: 8) {
+                    ForEach(viewModel.stores) { store in
+                        HStack(spacing: 10) {
+                            Image(systemName: viewModel.selectedStore?.id == store.id ? "checkmark.circle.fill" : "circle")
+                                .foregroundStyle(viewModel.selectedStore?.id == store.id ? .blue : .secondary)
+                            Text(store.name)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            viewModel.selectStore(withId: store.id)
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 10)
+                        .background(.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                            Button("Leave", role: .destructive) {
+                                pendingLeaveStore = store
+                            }
                         }
                     }
-                    .pickerStyle(.menu)
-                    .labelsHidden()
-                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
-                .background(.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             }
         }
         .cardStyle()

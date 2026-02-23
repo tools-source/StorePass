@@ -4,6 +4,7 @@ import FirebaseFirestore
 import Foundation
 
 final class FirestoreStoreRepository: StoreRepositoryProtocol {
+    private let cloudFunctionsService = CloudFunctionsService()
     private var db: Firestore {
         FirebaseBootstrap.assertConfigured(context: "FirestoreStoreRepository.db")
         return Firestore.firestore()
@@ -325,7 +326,7 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
 
 
     func leaveStore(storeId: String) async throws {
-        _ = try await callable(name: "leaveStore", payload: ["storeId": storeId], responseType: LeaveStorePayload.self)
+        _ = try await cloudFunctionsService.leaveStore(storeId: storeId)
     }
 
     private func upsertMembershipProfileFields(storeId: String, uid: String) async throws {
@@ -689,9 +690,6 @@ private struct JoinStoreDebugPayload: Decodable {
     let assignedStoreIdsContainsStoreId: Bool?
 }
 
-private struct LeaveStorePayload: Decodable {
-    let ok: Bool
-}
 
 private struct JoinStorePayload: Decodable {
     let storeId: String
