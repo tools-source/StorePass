@@ -50,7 +50,11 @@ final class EmployeeDashboardViewModel: ObservableObject {
         guard let user = authService.currentUser else { return }
         do {
             stores = try await storeRepository.fetchStores(ids: user.assignedStoreIds)
-            selectedStore = selectedStore ?? stores.first
+            if let currentSelection = selectedStore, stores.contains(where: { $0.id == currentSelection.id }) {
+                selectedStore = currentSelection
+            } else {
+                selectedStore = stores.first
+            }
             refreshLocation()
             try await loadTodaySessions()
         } catch {
@@ -137,4 +141,21 @@ final class EmployeeDashboardViewModel: ObservableObject {
             print("[Stores] Join-by-code error: \(error.localizedDescription)")
         }
     }
+
+    func leaveStore(storeId: String) async {
+        do {
+            try await storeRepository.leaveStore(storeId: storeId)
+            if var currentUser = authService.currentUser {
+                currentUser.assignedStoreIds.removeAll { $0 == storeId }
+                authService.setCurrentUser(currentUser)
+            }
+            await load()
+            if stores.isEmpty {
+                selectedStore = nil
+            }
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
 }

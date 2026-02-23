@@ -21,4 +21,5 @@ protocol StoreRepositoryProtocol {
     func rotateStoreCode(storeId: String) async throws -> String
     func getStoreJoinCode(storeId: String) async throws -> String
     func joinStoreByCode(code: String) async throws -> JoinStoreResult
+    func leaveStore(storeId: String) async throws
 }

@@ -322,6 +322,12 @@ final class FirestoreStoreRepository: StoreRepositoryProtocol {
         }
     }
 
+
+
+    func leaveStore(storeId: String) async throws {
+        _ = try await callable(name: "leaveStore", payload: ["storeId": storeId], responseType: LeaveStorePayload.self)
+    }
+
     private func upsertMembershipProfileFields(storeId: String, uid: String) async throws {
         let membershipRef = db.collection("stores")
             .document(storeId)
@@ -681,6 +687,10 @@ private struct JoinCodePayload: Decodable {
 private struct JoinStoreDebugPayload: Decodable {
     let membershipExists: Bool?
     let assignedStoreIdsContainsStoreId: Bool?
+}
+
+private struct LeaveStorePayload: Decodable {
+    let ok: Bool
 }
 
 private struct JoinStorePayload: Decodable {

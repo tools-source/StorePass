@@ -84,20 +84,9 @@ struct EmployeeManagementView: View {
                         employee: employee,
                         selectedStoreId: viewModel.selectedStoreId,
                         storeSummary: viewModel.storeSummary(for: employee),
-                        onRemoveStore: {
-                            print("[Employees][UI] tapped removeFromStore employeeId=\(employee.id) storeId=\(viewModel.selectedStoreId)")
-                            Task { await viewModel.removeFromStore(employeeId: employee.id, storeId: viewModel.selectedStoreId) }
-                        },
-                        onRemoveAll: {
-                            print("[Employees][UI] tapped removeAll employeeId=\(employee.id)")
-                            Task { await viewModel.removeFromAll(employeeId: employee.id) }
-                        },
-                        onToggleActive: {
-                            print("[Employees][UI] tapped disable employeeId=\(employee.id)")
-                            Task { await viewModel.setActive(employeeId: employee.id, isActive: !employee.userIsActive) }
-                        },
-                        onActionFeedback: { message in
-                            viewModel.bannerMessage = message
+                        onRemoveStore: { storeId in
+                            print("[Employees][UI] tapped removeFromStore employeeId=\(employee.id) storeId=\(storeId)")
+                            Task { await viewModel.removeFromStore(employeeId: employee.id, storeId: storeId) }
                         }
                     )
                     .padding(.vertical, 4)
@@ -113,16 +102,27 @@ private struct EmployeeCardView: View {
     let employee: EmployeeSummary
     let selectedStoreId: String
     let storeSummary: String
-    let onRemoveStore: () -> Void
-    let onRemoveAll: () -> Void
-    let onToggleActive: () -> Void
-    let onActionFeedback: (String) -> Void
+    let onRemoveStore: (String) -> Void
+
+    @State private var showStorePicker = false
+    @State private var confirmStoreId: String?
 
     private var statusText: String { employee.userIsActive ? "Active" : "Disabled" }
     private var statusColor: Color { employee.userIsActive ? .green : .orange }
     private var canRemoveFromSelectedStore: Bool {
         selectedStoreId != EmployeeManagementViewModel.allStoresFilter
             && employee.storeIds.contains(selectedStoreId)
+    }
+
+    private var hasAnyStores: Bool {
+        !employee.storeIds.isEmpty
+    }
+
+    private var availableStores: [(id: String, name: String)] {
+        employee.storeIds.enumerated().map { index, id in
+            let name = index < employee.storeNames.count ? employee.storeNames[index] : id
+            return (id, name)
+        }
     }
 
     var body: some View {
@@ -151,40 +151,54 @@ private struct EmployeeCardView: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 
-            HStack(spacing: DS.Spacing.s) {
-                Button("Remove from store", role: .destructive) {
-                    guard selectedStoreId != EmployeeManagementViewModel.allStoresFilter else {
-                        onActionFeedback("Select a store to remove this employee from that store.")
-                        return
-                    }
-                    onRemoveStore()
-                }
-                .disabled(!canRemoveFromSelectedStore)
-                .buttonStyle(.bordered)
-                .frame(maxWidth: .infinity, minHeight: 44)
-                .clipShape(RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous))
+            Button("Remove from store", role: .destructive) {
+                guard hasAnyStores else { return }
 
-                Button("Remove all", role: .destructive) {
-                    onRemoveAll()
+                if selectedStoreId == EmployeeManagementViewModel.allStoresFilter {
+                    showStorePicker = true
+                } else {
+                    confirmStoreId = selectedStoreId
                 }
-                .buttonStyle(.bordered)
-                .frame(maxWidth: .infinity, minHeight: 44)
-                .clipShape(RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous))
             }
-            .buttonStyle(.borderless)
+            .disabled(!hasAnyStores || (selectedStoreId != EmployeeManagementViewModel.allStoresFilter && !canRemoveFromSelectedStore))
+            .buttonStyle(.bordered)
+            .frame(maxWidth: .infinity, minHeight: 44)
+            .clipShape(RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous))
 
-            HStack(spacing: 0) {
-                Button(employee.userIsActive ? "Disable" : "Enable") {
-                    onToggleActive()
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(.red)
-                .frame(maxWidth: .infinity, minHeight: 44)
-                .clipShape(RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous))
+            if !hasAnyStores {
+                Text("No stores assigned")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
-            .buttonStyle(.borderless)
         }
         .padding(.vertical, DS.Spacing.s)
+        .confirmationDialog("Select store", isPresented: $showStorePicker, titleVisibility: .visible) {
+            ForEach(availableStores, id: \.id) { store in
+                Button(store.name) {
+                    confirmStoreId = store.id
+                }
+            }
+            Button("Cancel", role: .cancel) { }
+        }
+        .alert(
+            "Remove from store",
+            isPresented: Binding(
+                get: { confirmStoreId != nil },
+                set: { newValue in
+                    if !newValue { confirmStoreId = nil }
+                }
+            )
+        ) {
+            Button("Remove", role: .destructive) {
+                if let storeId = confirmStoreId {
+                    onRemoveStore(storeId)
+                }
+                confirmStoreId = nil
+            }
+            Button("Cancel", role: .cancel) { confirmStoreId = nil }
+        } message: {
+            Text("Are you sure you want to remove \(employee.name) from this store?")
+        }
     }
 }
 

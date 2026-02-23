@@ -33,7 +33,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.setUserRole = exports.getStoreJoinCode = exports.rotateStoreCode = exports.joinStoreByCode = void 0;
+exports.removeEmployeeFromStore = exports.leaveStore = exports.setUserRole = exports.getStoreJoinCode = exports.rotateStoreCode = exports.joinStoreByCode = void 0;
 const https_1 = require("firebase-functions/v2/https");
 const admin = __importStar(require("firebase-admin"));
 const helpers_1 = require("./helpers");
@@ -338,6 +338,120 @@ exports.setUserRole = (0, https_1.onRequest)({ region: 'us-central1' }, async (r
     }
     catch (error) {
         console.error('[SET_ROLE] request failed', error);
+        const err = (0, helpers_1.toErrorResponse)(error);
+        res.status(err.status).json(err.body);
+    }
+});
+exports.leaveStore = (0, https_1.onRequest)({ region: 'us-central1' }, async (req, res) => {
+    if (req.method !== 'POST') {
+        res.status(405).json({ error: { message: 'Method not allowed' } });
+        return;
+    }
+    try {
+        const decodedToken = await (0, helpers_1.verifyBearerToken)(req);
+        const uid = decodedToken.uid;
+        const data = (0, helpers_1.extractDataPayload)(req.body);
+        const storeId = String(data.storeId ?? '');
+        if (!uid) {
+            throw new https_1.HttpsError('unauthenticated', 'Authentication required');
+        }
+        if (!storeId) {
+            throw new https_1.HttpsError('invalid-argument', 'storeId is required');
+        }
+        const storeRef = db.collection('stores').doc(storeId);
+        const memberRef = storeRef.collection('members').doc(uid);
+        const employeeStoreRef = db.collection('employeeStores').doc(uid).collection('stores').doc(storeId);
+        const userRef = db.collection('users').doc(uid);
+        const [storeSnap, memberSnap, employeeStoreSnap, userSnap] = await Promise.all([
+            storeRef.get(),
+            memberRef.get(),
+            employeeStoreRef.get(),
+            userRef.get(),
+        ]);
+        if (!storeSnap.exists) {
+            throw new https_1.HttpsError('not-found', 'Store not found');
+        }
+        const assignedStoreIds = userSnap.data()?.assignedStoreIds ?? [];
+        const isMember = memberSnap.exists || employeeStoreSnap.exists || assignedStoreIds.includes(storeId);
+        if (!isMember) {
+            throw new https_1.HttpsError('failed-precondition', 'Employee is not assigned to this store');
+        }
+        const batch = db.batch();
+        if (memberSnap.exists) {
+            batch.delete(memberRef);
+        }
+        if (employeeStoreSnap.exists) {
+            batch.delete(employeeStoreRef);
+        }
+        if (Array.isArray(userSnap.data()?.assignedStoreIds)) {
+            batch.set(userRef, {
+                assignedStoreIds: admin.firestore.FieldValue.arrayRemove(storeId),
+                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            }, { merge: true });
+        }
+        await batch.commit();
+        res.status(200).json({ result: { ok: true } });
+    }
+    catch (error) {
+        console.error('[LEAVE_STORE] request failed', error);
+        const err = (0, helpers_1.toErrorResponse)(error);
+        res.status(err.status).json(err.body);
+    }
+});
+exports.removeEmployeeFromStore = (0, https_1.onRequest)({ region: 'us-central1' }, async (req, res) => {
+    if (req.method !== 'POST') {
+        res.status(405).json({ error: { message: 'Method not allowed' } });
+        return;
+    }
+    try {
+        const decodedToken = await (0, helpers_1.verifyBearerToken)(req);
+        const managerId = decodedToken.uid;
+        const data = (0, helpers_1.extractDataPayload)(req.body);
+        const storeId = String(data.storeId ?? '');
+        const employeeId = String(data.employeeId ?? '');
+        if (!storeId || !employeeId) {
+            throw new https_1.HttpsError('invalid-argument', 'storeId and employeeId are required');
+        }
+        await (0, helpers_1.requireActiveManager)(db, managerId);
+        const storeRef = db.collection('stores').doc(storeId);
+        const memberRef = storeRef.collection('members').doc(employeeId);
+        const employeeStoreRef = db.collection('employeeStores').doc(employeeId).collection('stores').doc(storeId);
+        const userRef = db.collection('users').doc(employeeId);
+        const [storeSnap, memberSnap, employeeStoreSnap, userSnap] = await Promise.all([
+            storeRef.get(),
+            memberRef.get(),
+            employeeStoreRef.get(),
+            userRef.get(),
+        ]);
+        if (!storeSnap.exists) {
+            throw new https_1.HttpsError('not-found', 'Store not found');
+        }
+        if (storeSnap.data()?.managerId !== managerId) {
+            throw new https_1.HttpsError('permission-denied', 'You can only remove employees from your own store');
+        }
+        const assignedStoreIds = userSnap.data()?.assignedStoreIds ?? [];
+        const hasMembership = memberSnap.exists || employeeStoreSnap.exists || assignedStoreIds.includes(storeId);
+        if (!hasMembership) {
+            throw new https_1.HttpsError('failed-precondition', 'Employee is not assigned to this store');
+        }
+        const batch = db.batch();
+        if (memberSnap.exists) {
+            batch.delete(memberRef);
+        }
+        if (employeeStoreSnap.exists) {
+            batch.delete(employeeStoreRef);
+        }
+        if (Array.isArray(userSnap.data()?.assignedStoreIds)) {
+            batch.set(userRef, {
+                assignedStoreIds: admin.firestore.FieldValue.arrayRemove(storeId),
+                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            }, { merge: true });
+        }
+        await batch.commit();
+        res.status(200).json({ result: { ok: true } });
+    }
+    catch (error) {
+        console.error('[REMOVE_EMPLOYEE_FROM_STORE] request failed', error);
         const err = (0, helpers_1.toErrorResponse)(error);
         res.status(err.status).json(err.body);
     }
