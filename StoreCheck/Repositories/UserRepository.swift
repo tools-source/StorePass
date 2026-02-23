@@ -51,6 +51,10 @@ final class CloudFunctionsService {
         return try await invokeRemoveEmployeeFromStore(storeId: storeId, employeeId: employeeId)
     }
 
+    func deleteManagerAccount() async throws -> Bool {
+        return try await callExpectingOK(name: "deleteManagerAccount", payload: [:])
+    }
+
     private func invokeRemoveEmployeeFromStore(storeId: String, employeeId: String) async throws -> Bool {
         return try await callExpectingOK(name: "removeEmployeeFromStore", payload: ["storeId": storeId, "employeeId": employeeId])
     }

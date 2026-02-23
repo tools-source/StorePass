@@ -33,7 +33,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.removeEmployeeFromStore = exports.leaveStore = exports.setUserRole = exports.getStoreJoinCode = exports.rotateStoreCode = exports.joinStoreByCode = void 0;
+exports.deleteManagerAccount = exports.removeEmployeeFromStore = exports.leaveStore = exports.setUserRole = exports.getStoreJoinCode = exports.rotateStoreCode = exports.joinStoreByCode = void 0;
 const https_1 = require("firebase-functions/v2/https");
 const admin = __importStar(require("firebase-admin"));
 const helpers_1 = require("./helpers");
@@ -454,5 +454,143 @@ exports.removeEmployeeFromStore = (0, https_1.onCall)({ region: 'us-central1' },
             throw error;
         }
         throw new https_1.HttpsError('internal', 'Failed to remove employee from store');
+    }
+});
+async function commitDeleteBatch(paths) {
+    if (paths.length === 0) {
+        return;
+    }
+    const chunkSize = 350;
+    for (let i = 0; i < paths.length; i += chunkSize) {
+        const chunk = paths.slice(i, i + chunkSize);
+        const batch = db.batch();
+        for (const ref of chunk) {
+            batch.delete(ref);
+        }
+        await batch.commit();
+    }
+}
+exports.deleteManagerAccount = (0, https_1.onCall)({ region: 'us-central1' }, async (request) => {
+    const managerUid = request.auth?.uid;
+    const requestedManagerId = typeof request.data?.managerId === 'string' ? request.data.managerId : undefined;
+    if (!managerUid) {
+        throw new https_1.HttpsError('unauthenticated', 'Authentication required.');
+    }
+    if (requestedManagerId && requestedManagerId !== managerUid) {
+        throw new https_1.HttpsError('permission-denied', 'managerId must match authenticated user.');
+    }
+    console.log(`[deleteManagerAccount] managerUid=${managerUid}`);
+    let deletedStoresCount = 0;
+    let unlinkedEmployeesCount = 0;
+    let deletedCheckinsCount = 0;
+    try {
+        const storesSnap = await db.collection('stores').where('managerId', '==', managerUid).get();
+        const storeDocs = storesSnap.docs;
+        const storeIds = storeDocs.map((doc) => doc.id);
+        const unlinkedEmployees = new Set();
+        const checkinIds = new Set();
+        console.log(`[deleteManagerAccount] storesFound=${storeDocs.length}`);
+        for (const storeDoc of storeDocs) {
+            const storeId = storeDoc.id;
+            try {
+                const membersSnap = await db.collection('stores').doc(storeId).collection('members').get();
+                const refsToDelete = [];
+                const storeEmployeeUids = new Set();
+                let employeesUnlinkedForStore = 0;
+                for (const memberDoc of membersSnap.docs) {
+                    const memberData = memberDoc.data();
+                    const employeeUid = typeof memberData.employeeId === 'string'
+                        ? memberData.employeeId
+                        : typeof memberData.userId === 'string'
+                            ? memberData.userId
+                            : memberDoc.id;
+                    const memberRole = typeof memberData.role === 'string' ? memberData.role : 'employee';
+                    refsToDelete.push(memberDoc.ref);
+                    if (memberRole !== 'manager' && employeeUid && employeeUid !== managerUid) {
+                        refsToDelete.push(db.collection('employeeStores').doc(employeeUid).collection('stores').doc(storeId));
+                        employeesUnlinkedForStore += 1;
+                        unlinkedEmployees.add(employeeUid);
+                        storeEmployeeUids.add(employeeUid);
+                    }
+                }
+                refsToDelete.push(db.collection('stores').doc(storeId));
+                await commitDeleteBatch(refsToDelete);
+                for (const employeeUid of storeEmployeeUids) {
+                    await db
+                        .collection('users')
+                        .doc(employeeUid)
+                        .set({
+                        assignedStoreIds: admin.firestore.FieldValue.arrayRemove(storeId),
+                        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                    }, { merge: true });
+                }
+                const rootCheckinsSnap = await db.collection('checkins').where('storeId', '==', storeId).get();
+                const checkinDeleteRefs = [];
+                for (const checkinDoc of rootCheckinsSnap.docs) {
+                    checkinIds.add(checkinDoc.id);
+                    checkinDeleteRefs.push(checkinDoc.ref);
+                    const checkinData = checkinDoc.data();
+                    const employeeUid = typeof checkinData.employeeId === 'string' ? checkinData.employeeId : undefined;
+                    if (employeeUid) {
+                        checkinDeleteRefs.push(db.collection('employeeCheckins').doc(employeeUid).collection('checkins').doc(checkinDoc.id));
+                    }
+                }
+                await commitDeleteBatch(checkinDeleteRefs);
+                deletedStoresCount += 1;
+                deletedCheckinsCount += rootCheckinsSnap.size;
+                console.log(`[deleteManagerAccount] storeId=${storeId} membersDeleted=${membersSnap.size} employeesUnlinked=${employeesUnlinkedForStore}`);
+            }
+            catch (error) {
+                console.error('[deleteManagerAccount] cleanup failed for store', { storeId, error });
+                throw new https_1.HttpsError('internal', 'cleanup_failed', { step: 'store_cleanup', storeId });
+            }
+        }
+        try {
+            const managerStoresSnap = await db.collection('managerStores').doc(managerUid).collection('stores').get();
+            const managerStoresRefs = managerStoresSnap.docs.map((doc) => doc.ref);
+            managerStoresRefs.push(db.collection('managerStores').doc(managerUid));
+            await commitDeleteBatch(managerStoresRefs);
+            const managerCheckinStoresSnap = await db.collection('managerCheckins').doc(managerUid).collection('stores').get();
+            for (const storeMirrorDoc of managerCheckinStoresSnap.docs) {
+                const checkinsSnap = await storeMirrorDoc.ref.collection('checkins').get();
+                await commitDeleteBatch(checkinsSnap.docs.map((doc) => doc.ref));
+            }
+            const managerCheckinStoreRefs = managerCheckinStoresSnap.docs.map((doc) => doc.ref);
+            managerCheckinStoreRefs.push(db.collection('managerCheckins').doc(managerUid));
+            await commitDeleteBatch(managerCheckinStoreRefs);
+            console.log(`[deleteManagerAccount] mirrorsDeleted=managerStores:${managerStoresSnap.size},managerCheckinsStores:${managerCheckinStoresSnap.size}`);
+        }
+        catch (error) {
+            console.error('[deleteManagerAccount] mirror cleanup failed', error);
+            throw new https_1.HttpsError('internal', 'cleanup_failed', { step: 'manager_mirrors' });
+        }
+        try {
+            await commitDeleteBatch([
+                db.collection('managers').doc(managerUid),
+                db.collection('users').doc(managerUid),
+            ]);
+        }
+        catch (error) {
+            console.error('[deleteManagerAccount] manager profile cleanup failed', error);
+            throw new https_1.HttpsError('internal', 'cleanup_failed', { step: 'manager_profile' });
+        }
+        unlinkedEmployeesCount = unlinkedEmployees.size;
+        console.log('[deleteManagerAccount] done');
+        return {
+            ok: true,
+            deletedStoresCount,
+            unlinkedEmployeesCount,
+            deletedCheckinsCount,
+            deletedCheckinMirrorCount: checkinIds.size,
+            managerUid,
+            storeIds,
+        };
+    }
+    catch (error) {
+        if (error instanceof https_1.HttpsError) {
+            throw error;
+        }
+        console.error('[deleteManagerAccount] unexpected failure', error);
+        throw new https_1.HttpsError('internal', 'cleanup_failed', { step: 'unknown' });
     }
 });
