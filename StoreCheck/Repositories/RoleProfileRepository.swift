@@ -130,7 +130,7 @@ final class FirestoreRoleProfileRepository: RoleProfileRepositoryProtocol {
             }
 
             try await userRef.setData(update, merge: true)
-            print("[AppleSignIn] firestore_upsert uid=\(uid) savedName=\(update[\"name\"] as? String ?? \"<skipped>\") savedEmail=\(update[\"email\"] as? String ?? \"<skipped>\") skippedName=\(update[\"name\"] == nil) skippedEmail=\(update[\"email\"] == nil)")
+            print("[AppleSignIn] firestore_upsert uid=\(uid) savedName=\(update["name"] as? String ?? "<skipped>") savedEmail=\(update["email"] as? String ?? "<skipped>") skippedName=\(update["name"] == nil) skippedEmail=\(update["email"] == nil)")
         } else {
             // New user must pick role (or we go to setup screen)
             guard let requestedRole = requestedRole else {
@@ -143,8 +143,7 @@ final class FirestoreRoleProfileRepository: RoleProfileRepositoryProtocol {
             let seedEmail = validEmail(from: incomingEmail)
 
             _ = try await setUserRole(requestedRole: requestedRole, name: seedName, email: seedEmail, provider: provider)
-            print("[AppleSignIn] firestore_upsert uid=\(uid) savedName=\(seedName) savedEmail=\(seedEmail ?? \"<skipped>\") skippedName=false skippedEmail=\(seedEmail == nil)")
-        }
+            print("[AppleSignIn] firestore_upsert uid=\(uid) savedName=\(seedName) savedEmail=\(seedEmail ?? "<skipped>") skippedName=false skippedEmail=\(seedEmail == nil)")        }
 
         // Fetch and resolve
         guard let fetched = try await fetchUserProfileRaw(uid: uid) else {
