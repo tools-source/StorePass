@@ -179,7 +179,7 @@ final class EmployeeManagementViewModel: ObservableObject {
             return false
         }
         do {
-            print("[RemoveEmployee][CALL] storeId=\(storeId) employeeId=\(employeeId) managerUid=\(authRepository.currentUserId ?? \"nil\")")
+            print("[RemoveEmployee][CALL] storeId=\(storeId) employeeId=\(employeeId) managerUid=\(String(describing: authRepository.currentUserId))")
             try await employeeRepository.removeEmployeeFromStore(storeId: storeId, employeeId: employeeId)
             print("[RemoveEmployee][OK] storeId=\(storeId) employeeId=\(employeeId) result=ok")
             employees = employees.compactMap { summary in
