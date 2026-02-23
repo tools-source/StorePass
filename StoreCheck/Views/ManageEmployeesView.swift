@@ -120,7 +120,16 @@ struct EmployeeManagementView: View {
                     .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                         if !employee.storeIds.isEmpty {
                             Button("Remove", role: .destructive) {
-                                viewModel.prepareRemoval(for: employee)
+                                let targetStoreIds = viewModel.targetStoreIds(for: employee)
+                                print("[UI][RemoveEmployee] swipeTriggered selectedFilterStoreId=\(viewModel.selectedStoreId) employeeId=\(employee.id)")
+                                print("[UI][RemoveEmployee] targetStoreIds=\(targetStoreIds) employeeId=\(employee.id)")
+                                Task {
+                                    await viewModel.removeEmployee(
+                                        employeeId: employee.id,
+                                        employeeName: employee.name,
+                                        targetStoreIds: targetStoreIds
+                                    )
+                                }
                             }
                         }
                     }

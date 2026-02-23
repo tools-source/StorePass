@@ -53,6 +53,16 @@ final class EmployeeManagementViewModel: ObservableObject {
         return "Remove this employee from \(pendingRemoval.storeName)?"
     }
 
+    func targetStoreIds(for employee: EmployeeSummary) -> [String] {
+        let targets = removalTargets(for: employee)
+
+        if selectedStoreId == Self.allStoresFilter {
+            return targets.map(\.storeId)
+        }
+
+        return targets.filter { $0.storeId == selectedStoreId }.map(\.storeId)
+    }
+
     func prepareRemoval(for employee: EmployeeSummary) {
         print("[UI][RemoveEmployee] swipe storeFilter=\(selectedStoreId) employeeId=\(employee.id)")
 
@@ -98,8 +108,31 @@ final class EmployeeManagementViewModel: ObservableObject {
     func executePendingRemoval() async {
         guard let pendingRemoval else { return }
         print("[UI][RemoveEmployee] tapped storeId=\(pendingRemoval.storeId) employeeId=\(pendingRemoval.employeeId)")
-        await removeFromStore(employeeId: pendingRemoval.employeeId, storeId: pendingRemoval.storeId, storeName: pendingRemoval.storeName)
+        _ = await removeFromStore(employeeId: pendingRemoval.employeeId, storeId: pendingRemoval.storeId, storeName: pendingRemoval.storeName)
         cancelPendingRemoval()
+    }
+
+    func removeEmployee(employeeId: String, employeeName: String, targetStoreIds: [String]) async {
+        guard !targetStoreIds.isEmpty else {
+            employeeError = "Select a store before removing this employee."
+            return
+        }
+
+        print("[VM][RemoveEmployee] start employeeId=\(employeeId) targetStoreIds=\(targetStoreIds)")
+
+        var allSucceeded = true
+        for storeId in targetStoreIds {
+            let storeName = stores.first(where: { $0.id == storeId })?.name ?? storeId
+            print("[VM][RemoveEmployee] callingFunction storeId=\(storeId) employeeId=\(employeeId)")
+            let succeeded = await removeFromStore(employeeId: employeeId, storeId: storeId, storeName: storeName)
+            allSucceeded = allSucceeded && succeeded
+        }
+
+        if allSucceeded {
+            print("[VM][RemoveEmployee] success -> refreshing employees list")
+            await load()
+            successMessage = "Removed \(employeeName) from selected store memberships."
+        }
     }
 
     var filteredEmployees: [EmployeeSummary] {
@@ -140,17 +173,34 @@ final class EmployeeManagementViewModel: ObservableObject {
         }
     }
 
-    func removeFromStore(employeeId: String, storeId: String, storeName: String? = nil) async {
+    func removeFromStore(employeeId: String, storeId: String, storeName: String? = nil) async -> Bool {
         guard !storeId.isEmpty else {
             employeeError = "Select a store first."
-            return
+            return false
         }
         do {
             print("[RemoveEmployee][CALL] storeId=\(storeId) employeeId=\(employeeId) managerUid=\(authRepository.currentUserId ?? \"nil\")")
             try await employeeRepository.removeEmployeeFromStore(storeId: storeId, employeeId: employeeId)
             print("[RemoveEmployee][OK] storeId=\(storeId) employeeId=\(employeeId) result=ok")
+            employees = employees.compactMap { summary in
+                guard summary.id == employeeId else { return summary }
+                let remainingStoreIds = summary.storeIds.filter { $0 != storeId }
+                if remainingStoreIds.isEmpty { return nil }
+                let remainingStoreNames = summary.storeIds.enumerated().compactMap { index, id in
+                    id == storeId ? nil : summary.storeNames[safe: index]
+                }
+                return EmployeeSummary(
+                    id: summary.id,
+                    name: summary.name,
+                    email: summary.email,
+                    storeIds: remainingStoreIds,
+                    storeNames: remainingStoreNames,
+                    userIsActive: summary.userIsActive,
+                    hasInactiveMembership: summary.hasInactiveMembership
+                )
+            }
             successMessage = "Removed from \(storeName ?? "store")."
-            await load()
+            return true
         } catch {
             print("[RemoveEmployee][FAIL] function=\(removeEmployeeFunctionName) region=\(removeEmployeeFunctionRegion) error=\(error)")
             logFunctionsErrorIfPresent(error)
@@ -159,6 +209,7 @@ final class EmployeeManagementViewModel: ObservableObject {
                 FirestorePermissionLogger.log(operation: "removeEmployeeFromStore", path: "stores/\(storeId)/members/\(employeeId)", error: error)
             }
             employeeError = error.localizedDescription
+            return false
         }
     }
 
@@ -219,5 +270,11 @@ final class EmployeeManagementViewModel: ObservableObject {
             return StoreRemovalTarget(storeId: storeId, storeName: storeName)
         }
         .sorted { $0.storeName.localizedCaseInsensitiveCompare($1.storeName) == .orderedAscending }
+    }
+}
+
+private extension Array {
+    subscript(safe index: Int) -> Element? {
+        indices.contains(index) ? self[index] : nil
     }
 }

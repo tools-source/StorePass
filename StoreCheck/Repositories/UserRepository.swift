@@ -48,18 +48,19 @@ final class CloudFunctionsService {
     }
 
     func removeEmployeeFromStore(storeId: String, employeeId: String) async throws -> Bool {
-        print("[RemoveEmployee][CALL] storeId=\(storeId) employeeId=\(employeeId) managerUid=\(Auth.auth().currentUser?.uid ?? "nil")")
-        let ok = try await callExpectingOK(name: "removeEmployeeFromStore", payload: ["storeId": storeId, "employeeId": employeeId])
-        print("[RemoveEmployee][OK] storeId=\(storeId) employeeId=\(employeeId) result=\(ok)")
-        return ok
+        return try await invokeRemoveEmployeeFromStore(storeId: storeId, employeeId: employeeId)
+    }
+
+    private func invokeRemoveEmployeeFromStore(storeId: String, employeeId: String) async throws -> Bool {
+        return try await callExpectingOK(name: "removeEmployeeFromStore", payload: ["storeId": storeId, "employeeId": employeeId])
     }
 
     private func callExpectingOK(name: String, payload: [String: Any]) async throws -> Bool {
         do {
-            print("[Functions][CALL] name=\(name) region=\(region) payloadKeys=\(payload.keys.sorted())")
+            print("[Functions][CALL] name=\(name) region=\(region) payload=\(payload)")
             let callable = functions.httpsCallable(name)
             let result = try await callable.call(payload)
-            print("[Functions][OK] name=\(name) raw=\(String(describing: result.data))")
+            print("[Functions][OK] name=\(name) result=\(String(describing: result.data))")
 
             guard let data = result.data as? [String: Any],
                   let ok = data["ok"] as? Bool else {
@@ -70,17 +71,8 @@ final class CloudFunctionsService {
             }
             return ok
         } catch {
-            print("[Functions][ERR] name=\(name) region=\(region) error=\(error)")
-            let nsError = error as NSError
-            if nsError.domain == FunctionsErrorDomain {
-                let message = nsError.userInfo[NSLocalizedDescriptionKey] as? String ?? nsError.localizedDescription
-                let details = nsError.userInfo[FunctionsErrorDetailsKey].map { String(describing: $0) } ?? "nil"
-                print("[RemoveEmployee][FAIL] domain=\(nsError.domain) code=\(nsError.code) message=\(message) details=\(details)")
-                print("[RemoveEmployee][FAIL] function=\(name) region=\(region)")
-            } else {
-                print("[RemoveEmployee][FAIL] domain=\(nsError.domain) code=\(nsError.code) message=\(nsError.localizedDescription) details=\(nsError.userInfo)")
-                print("[RemoveEmployee][FAIL] function=\(name) region=\(region)")
-            }
+            let ns = error as NSError
+            print("[Functions][FAIL] domain=\(ns.domain) code=\(ns.code) message=\(ns.localizedDescription) userInfo=\(ns.userInfo)")
             throw mapError(error)
         }
     }
@@ -106,11 +98,10 @@ final class CloudFunctionsService {
             default:
                 message = nsError.localizedDescription
             }
-            let functionName = nsError.userInfo[FunctionsErrorDetailsKey] as? String ?? "unknown"
             return NSError(
                 domain: nsError.domain,
                 code: nsError.code,
-                userInfo: [NSLocalizedDescriptionKey: "\(message) [function=\(functionName) region=\(region) code=\(code)]"]
+                userInfo: [NSLocalizedDescriptionKey: "\(message) [region=\(region) code=\(code)]"]
             )
         }
         return nsError
