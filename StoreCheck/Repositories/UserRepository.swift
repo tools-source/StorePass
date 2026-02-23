@@ -44,8 +44,7 @@ final class CloudFunctionsService {
     private let region = "us-central1"
 
     func leaveStore(storeId: String) async throws -> Bool {
-        print("[LeaveStore][CALL] storeId=\(storeId)")
-        try await callExpectingOK(name: "leaveStore", payload: ["storeId": storeId])
+        return try await callExpectingOK(name: "leaveStore", payload: ["storeId": storeId])
     }
 
     func removeEmployeeFromStore(storeId: String, employeeId: String) async throws -> Bool {

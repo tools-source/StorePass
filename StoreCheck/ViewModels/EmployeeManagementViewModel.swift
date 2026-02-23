@@ -1,5 +1,6 @@
 import Foundation
 import FirebaseFirestore
+import FirebaseFunctions
 
 @MainActor
 final class EmployeeManagementViewModel: ObservableObject {

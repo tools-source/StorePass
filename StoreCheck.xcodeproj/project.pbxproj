@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		0B3067FC2F4C2625003A33F7 /* FirebaseFunctions in Frameworks */ = {isa = PBXBuildFile; productRef = 0B3067FB2F4C2625003A33F7 /* FirebaseFunctions */; };
 		0B6BDCF12F49726000996928 /* FirestoreStoreRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B6BDCF02F49720B00996928 /* FirestoreStoreRepository.swift */; };
 		0B885E2D2F41905D0011D606 /* FirebaseAuth in Frameworks */ = {isa = PBXBuildFile; productRef = 0B885E2C2F41905D0011D606 /* FirebaseAuth */; };
 		0B885E2F2F41905D0011D606 /* FirebaseCore in Frameworks */ = {isa = PBXBuildFile; productRef = 0B885E2E2F41905D0011D606 /* FirebaseCore */; };
@@ -125,6 +126,7 @@
 			files = (
 				BEEFABCD123400000000006F /* GoogleSignIn in Frameworks */,
 				0B885E312F41905D0011D606 /* FirebaseFirestore in Frameworks */,
+				0B3067FC2F4C2625003A33F7 /* FirebaseFunctions in Frameworks */,
 				0B885E2F2F41905D0011D606 /* FirebaseCore in Frameworks */,
 				0B885E2D2F41905D0011D606 /* FirebaseAuth in Frameworks */,
 			);
@@ -315,6 +317,7 @@
 				0B885E2C2F41905D0011D606 /* FirebaseAuth */,
 				0B885E2E2F41905D0011D606 /* FirebaseCore */,
 				0B885E302F41905D0011D606 /* FirebaseFirestore */,
+				0B3067FB2F4C2625003A33F7 /* FirebaseFunctions */,
 			);
 			productName = StoreCheck;
 			productReference = BEEFABCD1234000000000028 /* StoreCheck.app */;
@@ -553,6 +556,11 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		0B3067FB2F4C2625003A33F7 /* FirebaseFunctions */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 0B885E2B2F41905D0011D606 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseFunctions;
+		};
 		0B885E2C2F41905D0011D606 /* FirebaseAuth */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 0B885E2B2F41905D0011D606 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
