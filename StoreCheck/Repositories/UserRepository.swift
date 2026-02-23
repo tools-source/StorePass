@@ -76,7 +76,8 @@ final class CloudFunctionsService {
             return ok
         } catch {
             let ns = error as NSError
-            print("[Functions][FAIL] domain=\(ns.domain) code=\(ns.code) message=\(ns.localizedDescription) userInfo=\(ns.userInfo)")
+            let details = ns.userInfo[FunctionsErrorDetailsKey] ?? ns.userInfo["details"] ?? "<none>"
+            print("[Functions][FAIL] domain=\(ns.domain) code=\(ns.code) message=\(ns.localizedDescription) details=\(details) userInfo=\(ns.userInfo)")
             throw mapError(error)
         }
     }
@@ -87,26 +88,8 @@ final class CloudFunctionsService {
         }
 
         let nsError = error as NSError
-        if nsError.domain == FunctionsErrorDomain,
-           let code = FunctionsErrorCode(rawValue: nsError.code) {
-            let message: String
-            switch code {
-            case .permissionDenied:
-                message = "You don’t have permission."
-            case .failedPrecondition:
-                message = "This action can’t be completed right now."
-            case .notFound:
-                message = "Function may be missing: check callable name and region (us-central1)."
-            case .internal:
-                message = "Something went wrong. Try again."
-            default:
-                message = nsError.localizedDescription
-            }
-            return NSError(
-                domain: nsError.domain,
-                code: nsError.code,
-                userInfo: [NSLocalizedDescriptionKey: "\(message) [region=\(region) code=\(code)]"]
-            )
+        if nsError.domain == FunctionsErrorDomain {
+            return nsError
         }
         return nsError
     }

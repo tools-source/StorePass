@@ -115,7 +115,8 @@ final class FirestoreRoleProfileRepository: RoleProfileRepositoryProtocol {
         let incomingName = name?.trimmingCharacters(in: .whitespacesAndNewlines)
         let incomingEmail = email?.trimmingCharacters(in: .whitespacesAndNewlines)
         let existingName = (userDoc.data()?["name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let hasExistingName = existingName?.isEmpty == false
+        let existingNameIsPlaceholder = isDefaultPlaceholderName(existingName)
+        let existingNameIsEmpty = existingName?.isEmpty != false
 
         if userDoc.exists {
             // Break into a typed dictionary to avoid compiler “unable to type-check” issues
@@ -126,7 +127,7 @@ final class FirestoreRoleProfileRepository: RoleProfileRepositoryProtocol {
 
             if let incomingName, !incomingName.isEmpty {
                 update["name"] = incomingName
-            } else if !hasExistingName {
+            } else if existingNameIsEmpty || existingNameIsPlaceholder {
                 update["name"] = "StorePass User"
             }
 
@@ -210,6 +211,14 @@ final class FirestoreRoleProfileRepository: RoleProfileRepositoryProtocol {
     private func validName(from value: String?) -> String? {
         guard let value, !value.isEmpty else { return nil }
         return value
+    }
+
+
+    private func isDefaultPlaceholderName(_ value: String?) -> Bool {
+        guard let lowered = value?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(), !lowered.isEmpty else {
+            return true
+        }
+        return lowered == "storepass user" || lowered == "user"
     }
 
     private func validEmail(from value: String?) -> String? {

@@ -163,6 +163,7 @@ final class AccountSettingsViewModel: ObservableObject {
 
     private let cloudFunctions = CloudFunctionsService()
     private var appleReauthNonce: String?
+    private let functions = Functions.functions(region: "us-central1")
 
     private var auth: Auth {
         FirebaseBootstrap.assertConfigured(context: "AccountSettingsViewModel.auth")
@@ -207,8 +208,18 @@ final class AccountSettingsViewModel: ObservableObject {
             _ = try await cloudFunctions.deleteManagerAccount()
             print("[DeleteAccount][FUNCTION_OK]")
 
-            try await currentUser.delete()
-            print("[DeleteAccount][AUTH_DELETE_OK]")
+            do {
+                try await currentUser.delete()
+                print("[DeleteAccount][AUTH_DELETE_OK]")
+            } catch {
+                let nsError = error as NSError
+                if nsError.domain == AuthErrorDomain,
+                   nsError.code == AuthErrorCode.userNotFound.rawValue {
+                    print("[DeleteAccount][AUTH_DELETE_SKIPPED] user already removed by backend")
+                } else {
+                    throw error
+                }
+            }
             errorMessage = nil
         } catch {
             logDeleteAccountError(error)
@@ -237,7 +248,7 @@ final class AccountSettingsViewModel: ObservableObject {
             let firebaseCredential = OAuthProvider.appleCredential(
                 withIDToken: idToken,
                 rawNonce: nonce,
-                fullName: credential.fullName
+                fullName: nil
             )
             _ = try await currentUser.reauthenticate(with: firebaseCredential)
             print("[DeleteAccount][REAUTH_OK]")
@@ -352,8 +363,9 @@ final class AccountSettingsViewModel: ObservableObject {
     private func logDeleteAccountError(_ error: Error) {
         let nsError = error as NSError
         let userInfoKeys = Array(nsError.userInfo.keys).map { String(describing: $0) }.sorted()
+        let functionsDetails = nsError.userInfo[FunctionsErrorDetailsKey] ?? nsError.userInfo["details"] ?? "<none>"
         print("[DeleteAccount] stage=error uid=\(auth.currentUser?.uid ?? "nil") provider=\(providerForCurrentUser()) errorDomain=\(nsError.domain) code=\(nsError.code) message=\(nsError.localizedDescription)")
-        print("[DeleteAccount] stage=error_details userInfoKeys=\(userInfoKeys) userInfo=\(nsError.userInfo)")
+        print("[DeleteAccount] stage=error_details userInfoKeys=\(userInfoKeys) details=\(functionsDetails) userInfo=\(nsError.userInfo)")
     }
 
     private func userFacingDeleteError(_ error: Error) -> String {
@@ -378,38 +390,17 @@ final class AccountSettingsViewModel: ObservableObject {
     }
 
     private func callable(name: String, payload: [String: Any]) async throws -> [String: Any] {
-        guard let user = auth.currentUser else {
-            throw NSError(domain: "StorePass", code: 4001, userInfo: [NSLocalizedDescriptionKey: "You must be signed in."])
+        print("[DeleteAccount] callable_request name=\(name) region=us-central1 payload=\(payload)")
+        do {
+            let callable = functions.httpsCallable(name)
+            let result = try await callable.call(payload)
+            let responseKeys = (result.data as? [String: Any])?.keys.sorted() ?? []
+            print("[DeleteAccount] callable_response name=\(name) responseKeys=\(responseKeys) data=\(String(describing: result.data))")
+            return result.data as? [String: Any] ?? [:]
+        } catch {
+            logDeleteAccountError(error)
+            throw error
         }
-
-        let projectID = firebaseApp.options.projectID ?? ""
-        guard !projectID.isEmpty else {
-            throw NSError(domain: "StorePass", code: 4002, userInfo: [NSLocalizedDescriptionKey: "Firebase project is not configured correctly."])
-        }
-
-        let token = try await user.getIDToken()
-        guard let url = URL(string: "https://us-central1-\(projectID).cloudfunctions.net/\(name)") else {
-            throw NSError(domain: "StorePass", code: 4003, userInfo: [NSLocalizedDescriptionKey: "Unable to build backend URL."])
-        }
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        request.httpBody = try JSONSerialization.data(withJSONObject: ["data": payload])
-
-        let (data, response) = try await URLSession.shared.data(for: request)
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw NSError(domain: "StorePass", code: 4004, userInfo: [NSLocalizedDescriptionKey: "Unexpected backend response."])
-        }
-
-        let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
-        if let errorObj = object["error"] as? [String: Any] {
-            let message = errorObj["message"] as? String ?? "Backend error"
-            throw NSError(domain: "StorePass", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: message])
-        }
-
-        return object["result"] as? [String: Any] ?? object
     }
 
     private func randomNonceString(length: Int = 32) -> String {
