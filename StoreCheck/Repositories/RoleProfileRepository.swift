@@ -63,7 +63,7 @@ struct EmployeeProfile {
 protocol RoleProfileRepositoryProtocol {
     func ensureUserProfile(
         uid: String,
-        name: String,
+        name: String?,
         email: String?,
         provider: String,
         requestedRole: UserRole?
@@ -96,7 +96,7 @@ final class FirestoreRoleProfileRepository: RoleProfileRepositoryProtocol {
 
     func ensureUserProfile(
         uid: String,
-        name: String,
+        name: String?,
         email: String?,
         provider: String,
         requestedRole: UserRole?
@@ -108,16 +108,29 @@ final class FirestoreRoleProfileRepository: RoleProfileRepositoryProtocol {
             "userDocExists": userDoc.exists
         ])
 
+        let incomingName = name?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let incomingEmail = email?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let existingName = (userDoc.data()?["name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+
         if userDoc.exists {
             // Break into a typed dictionary to avoid compiler “unable to type-check” issues
             var update: [String: Any] = [
-                "name": name,
                 "provider": provider,
                 "lastLoginAt": FieldValue.serverTimestamp()
             ]
-            update["email"] = email as Any
+
+            if let incomingName, !incomingName.isEmpty {
+                update["name"] = incomingName
+            } else if existingName == nil || existingName?.isEmpty == true {
+                update["name"] = "StorePass User"
+            }
+
+            if let incomingEmail, !incomingEmail.isEmpty {
+                update["email"] = incomingEmail
+            }
 
             try await userRef.setData(update, merge: true)
+            print("[AppleSignIn] firestore_upsert uid=\(uid) savedName=\(update[\"name\"] as? String ?? \"<skipped>\") savedEmail=\(update[\"email\"] as? String ?? \"<skipped>\") skippedName=\(update[\"name\"] == nil) skippedEmail=\(update[\"email\"] == nil)")
         } else {
             // New user must pick role (or we go to setup screen)
             guard let requestedRole = requestedRole else {
@@ -126,7 +139,11 @@ final class FirestoreRoleProfileRepository: RoleProfileRepositoryProtocol {
             }
 
             // Role must be set via trusted backend (Cloud Function), not client rules
-            _ = try await setUserRole(requestedRole: requestedRole, name: name, email: email, provider: provider)
+            let seedName = validName(from: incomingName) ?? "StorePass User"
+            let seedEmail = validEmail(from: incomingEmail)
+
+            _ = try await setUserRole(requestedRole: requestedRole, name: seedName, email: seedEmail, provider: provider)
+            print("[AppleSignIn] firestore_upsert uid=\(uid) savedName=\(seedName) savedEmail=\(seedEmail ?? \"<skipped>\") skippedName=false skippedEmail=\(seedEmail == nil)")
         }
 
         // Fetch and resolve
@@ -154,7 +171,9 @@ final class FirestoreRoleProfileRepository: RoleProfileRepositoryProtocol {
             return .setupRequired
         }
 
-        _ = try await setUserRole(requestedRole: requestedRole, name: name, email: email, provider: provider)
+        let bootstrapName = validName(from: incomingName) ?? "StorePass User"
+        let bootstrapEmail = validEmail(from: incomingEmail)
+        _ = try await setUserRole(requestedRole: requestedRole, name: bootstrapName, email: bootstrapEmail, provider: provider)
 
         guard let postRole = try await fetchUserProfile(uid: uid) else {
             throw NSError(domain: "StorePass", code: 3002, userInfo: [
@@ -176,6 +195,16 @@ final class FirestoreRoleProfileRepository: RoleProfileRepositoryProtocol {
             return nil
         }
         return raw.toUserAccessProfile(role: role)
+    }
+
+    private func validName(from value: String?) -> String? {
+        guard let value, !value.isEmpty else { return nil }
+        return value
+    }
+
+    private func validEmail(from value: String?) -> String? {
+        guard let value, !value.isEmpty else { return nil }
+        return value
     }
 
     // MARK: - Raw fetch

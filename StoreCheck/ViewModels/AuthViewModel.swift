@@ -28,6 +28,8 @@ final class AuthViewModel: ObservableObject {
     private let authService: AuthService
     private let roleProfileRepository: RoleProfileRepositoryProtocol
     private(set) var currentNonce: String?
+    private var pendingAppleProfileName: String?
+    private var pendingAppleProfileEmail: String?
     private var isResolvingProfile = false
 
     init(authService: AuthService, roleProfileRepository: RoleProfileRepositoryProtocol) {
@@ -99,9 +101,28 @@ final class AuthViewModel: ObservableObject {
                     throw NSError(domain: "StorePass", code: 2001, userInfo: [NSLocalizedDescriptionKey: "Apple sign in failed. Please try again."])
                 }
 
+                let resolvedAppleName = appleDisplayName(from: credential.fullName)
+                let resolvedAppleEmail = credential.email?.trimmingCharacters(in: .whitespacesAndNewlines)
+                let hasAppleEmail = resolvedAppleEmail?.isEmpty == false
+                print("[AppleSignIn] credential_received fullNamePresent=\(credential.fullName != nil) emailPresent=\(hasAppleEmail)")
+
+                pendingAppleProfileName = resolvedAppleName
+                pendingAppleProfileEmail = resolvedAppleEmail?.isEmpty == false ? resolvedAppleEmail : nil
+
                 try await authService.signInWithApple(idToken: idToken, rawNonce: nonce, fullName: credential.fullName, email: credential.email)
-                try await resolveProfileAndRoute(requestedRole: requestedRole, isSessionRestore: false, provider: "apple")
+                try await resolveProfileAndRoute(
+                    requestedRole: requestedRole,
+                    isSessionRestore: false,
+                    provider: "apple",
+                    preferredName: pendingAppleProfileName,
+                    preferredEmail: pendingAppleProfileEmail
+                )
+
+                pendingAppleProfileName = nil
+                pendingAppleProfileEmail = nil
             } catch {
+                pendingAppleProfileName = nil
+                pendingAppleProfileEmail = nil
                 showEmployeeSetupRequired = true
                 errorMessage = userFacingMessage(for: error)
             }
@@ -120,7 +141,13 @@ final class AuthViewModel: ObservableObject {
         }
     }
 
-    func resolveProfileAndRoute(requestedRole: UserRole, isSessionRestore: Bool, provider: String? = nil) async throws {
+    func resolveProfileAndRoute(
+        requestedRole: UserRole,
+        isSessionRestore: Bool,
+        provider: String? = nil,
+        preferredName: String? = nil,
+        preferredEmail: String? = nil
+    ) async throws {
         guard let firebaseUser = authService.authUser() else { throw NSError(domain: "StorePass", code: 1004, userInfo: [NSLocalizedDescriptionKey: "Not authenticated."]) }
         guard !isResolvingProfile else { return }
         isResolvingProfile = true
@@ -131,10 +158,13 @@ final class AuthViewModel: ObservableObject {
         logAuth("role_resolution_started", uid: firebaseUser.uid, requestedRole: requestedRole, details: ["isSessionRestore": isSessionRestore])
 
         let providerValue = provider ?? authProvider(for: firebaseUser)
+        let resolvedName = preferredName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedEmail = preferredEmail?.trimmingCharacters(in: .whitespacesAndNewlines)
+
         let status = try await roleProfileRepository.ensureUserProfile(
             uid: firebaseUser.uid,
-            name: firebaseUser.displayName ?? "User",
-            email: firebaseUser.email,
+            name: resolvedName?.isEmpty == false ? resolvedName : firebaseUser.displayName,
+            email: resolvedEmail?.isEmpty == false ? resolvedEmail : firebaseUser.email,
             provider: providerValue,
             requestedRole: requestedRole
         )
@@ -210,7 +240,11 @@ final class AuthViewModel: ObservableObject {
             return
         }
 
-        try await resolveProfileAndRoute(requestedRole: resolvedRequest, isSessionRestore: isSessionRestore, provider: authProvider(for: firebaseUser))
+        try await resolveProfileAndRoute(
+            requestedRole: resolvedRequest,
+            isSessionRestore: isSessionRestore,
+            provider: authProvider(for: firebaseUser)
+        )
     }
 
     func completeSetup(with role: UserRole) async {
@@ -311,5 +345,22 @@ final class AuthViewModel: ObservableObject {
         }
 
         return error.localizedDescription
+    }
+
+    private func appleDisplayName(from fullName: PersonNameComponents?) -> String? {
+        guard let fullName else { return nil }
+
+        let formatter = PersonNameComponentsFormatter()
+        let formatted = formatter.string(from: fullName)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if !formatted.isEmpty {
+            return formatted
+        }
+
+        let parts = [fullName.givenName, fullName.familyName]
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        let fallback = parts.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+        return fallback.isEmpty ? nil : fallback
     }
 }
