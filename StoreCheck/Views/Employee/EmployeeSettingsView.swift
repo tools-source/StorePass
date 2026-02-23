@@ -2,6 +2,7 @@ import AuthenticationServices
 import CryptoKit
 import FirebaseAuth
 import FirebaseCore
+import FirebaseFirestore
 import FirebaseFunctions
 import GoogleSignIn
 import Security
@@ -17,14 +18,30 @@ struct AccountSettingsView: View {
     @StateObject private var viewModel = AccountSettingsViewModel()
     @State private var showDeleteConfirmation = false
     @State private var showReauthSheet = false
+    @State private var showEditNameSheet = false
     @State private var pendingDeleteRole: UserRole?
     @State private var deleteTask: Task<Void, Never>?
+    @State private var editedNameDraft = ""
+    @State private var localNameOverride: String?
 
     var body: some View {
         NavigationStack {
             List {
                 Section("Profile") {
-                    LabeledContent("Name", value: authViewModel.currentUser?.name ?? "StorePass User")
+                    HStack {
+                        Text("Name")
+                        Spacer()
+                        Text(displayName)
+                            .foregroundStyle(.secondary)
+
+                        if viewModel.canEditAppleName {
+                            Button("Edit") {
+                                editedNameDraft = displayName
+                                showEditNameSheet = true
+                            }
+                            .buttonStyle(.borderless)
+                        }
+                    }
                     LabeledContent("Email", value: authViewModel.currentUser?.email ?? "No email")
                     LabeledContent("Role", value: authViewModel.currentUser?.role.rawValue.capitalized ?? "Unknown")
                 }
@@ -81,12 +98,57 @@ struct AccountSettingsView: View {
                 }
                 .presentationDetents([.medium])
             }
+            .sheet(isPresented: $showEditNameSheet) {
+                NavigationStack {
+                    Form {
+                        TextField("Name", text: $editedNameDraft)
+                    }
+                    .navigationTitle("Edit Name")
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("Cancel") { showEditNameSheet = false }
+                        }
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Save") {
+                                Task {
+                                    let trimmed = editedNameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+                                    let ok = await viewModel.updateName(trimmed)
+                                    if ok {
+                                        localNameOverride = trimmed
+                                        showEditNameSheet = false
+                                    }
+                                }
+                            }
+                            .disabled(!canSaveEditedName)
+                        }
+                    }
+                }
+                .presentationDetents([.medium])
+            }
             .alert("Settings", isPresented: Binding(get: { viewModel.errorMessage != nil }, set: { _ in viewModel.errorMessage = nil })) {
                 Button("OK", role: .cancel) { viewModel.errorMessage = nil }
             } message: {
                 Text(viewModel.errorMessage ?? "")
             }
+            .onAppear {
+                localNameOverride = authViewModel.currentUser?.name
+                viewModel.refreshCanEditAppleName()
+            }
+            .onChange(of: authViewModel.currentUser?.name) { _, newValue in
+                if let newValue {
+                    localNameOverride = newValue
+                }
+            }
         }
+    }
+
+    private var displayName: String {
+        localNameOverride ?? authViewModel.currentUser?.name ?? "StorePass User"
+    }
+
+    private var canSaveEditedName: Bool {
+        let trimmed = editedNameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !trimmed.isEmpty && trimmed != displayName
     }
 
     private func startDeleteTask(_ operation: @escaping @MainActor () async -> Void) {
@@ -171,10 +233,12 @@ final class AccountSettingsViewModel: ObservableObject {
     @Published var selectedProviderForReauth: String?
     @Published var isDeleting = false
     @Published var needsReauthentication = false
+    @Published var canEditAppleName = false
 
     private let cloudFunctions = CloudFunctionsService()
     private var appleReauthNonce: String?
     private let functions = Functions.functions(region: "us-central1")
+    private let firestore = Firestore.firestore()
 
     private var auth: Auth {
         FirebaseBootstrap.assertConfigured(context: "AccountSettingsViewModel.auth")
@@ -202,6 +266,32 @@ final class AccountSettingsViewModel: ObservableObject {
             selectedProviderForReauth = "google.com"
         } else {
             selectedProviderForReauth = providers.first
+        }
+    }
+
+    func refreshCanEditAppleName() {
+        let providerIds = auth.currentUser?.providerData.map(\.providerID) ?? []
+        canEditAppleName = providerIds.contains("apple.com")
+    }
+
+    func updateName(_ newName: String) async -> Bool {
+        guard let currentUser = auth.currentUser else {
+            errorMessage = "You must be signed in."
+            return false
+        }
+
+        do {
+            try await firestore.collection("users").document(currentUser.uid).setData([
+                "name": newName,
+                "updatedAt": FieldValue.serverTimestamp()
+            ], merge: true)
+            print("[Settings][NameUpdate] success uid=\(currentUser.uid)")
+            errorMessage = nil
+            return true
+        } catch {
+            print("[Settings][NameUpdate] failure uid=\(currentUser.uid) error=\(error.localizedDescription)")
+            errorMessage = "We couldn't update your name right now. Please try again."
+            return false
         }
     }
 
