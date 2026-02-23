@@ -104,16 +104,13 @@ final class AuthViewModel: ObservableObject {
                     throw NSError(domain: "StorePass", code: 2001, userInfo: [NSLocalizedDescriptionKey: "Apple sign in failed. Please try again."])
                 }
 
-                let resolvedAppleName = [credential.fullName?.givenName, credential.fullName?.familyName]
-                    .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
-                    .filter { !$0.isEmpty }
-                    .joined(separator: " ")
+                let resolvedAppleName = appleDisplayName(from: credential.fullName)
                 let resolvedAppleEmail = credential.email?.trimmingCharacters(in: .whitespacesAndNewlines)
                 let hasAppleEmail = resolvedAppleEmail?.isEmpty == false
-                let finalAppleName = resolvedAppleName.isEmpty ? nil : resolvedAppleName
-                print("[AppleSignIn] credential_received fullNamePresent=\(credential.fullName != nil) emailPresent=\(hasAppleEmail) incomingName=\(finalAppleName ?? "<nil>")")
+                let formattedName = resolvedAppleName ?? ""
+                print("[AppleSignIn] credential_received fullNamePresent=\(credential.fullName != nil) formattedName=\"\(formattedName)\" incomingName=\"\(resolvedAppleName ?? "")\" emailPresent=\(hasAppleEmail)")
 
-                pendingAppleProfileName = finalAppleName
+                pendingAppleProfileName = resolvedAppleName
                 pendingAppleProfileEmail = resolvedAppleEmail?.isEmpty == false ? resolvedAppleEmail : nil
 
                 try await authService.signInWithApple(idToken: idToken, rawNonce: nonce, fullName: credential.fullName, email: credential.email)
