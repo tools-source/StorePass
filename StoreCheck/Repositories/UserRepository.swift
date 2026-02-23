@@ -76,8 +76,9 @@ final class CloudFunctionsService {
             return ok
         } catch {
             let ns = error as NSError
+            let functionCode = ns.userInfo[FunctionsErrorCodeKey] ?? "<none>"
             let details = ns.userInfo[FunctionsErrorDetailsKey] ?? ns.userInfo["details"] ?? "<none>"
-            print("[Functions][FAIL] domain=\(ns.domain) code=\(ns.code) message=\(ns.localizedDescription) details=\(details) userInfo=\(ns.userInfo)")
+            print("[Functions][FAIL] callable=\(name) region=\(region) domain=\(ns.domain) code=\(ns.code) functionCode=\(functionCode) functionDomain=\(FunctionsErrorDomain) message=\(ns.localizedDescription) details=\(details) userInfo=\(ns.userInfo)")
             throw mapError(error)
         }
     }

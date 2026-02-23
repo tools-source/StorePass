@@ -34,8 +34,10 @@ struct AccountSettingsView: View {
                     }
 
                     Button("Delete Account", role: .destructive) {
+                        guard !viewModel.isDeleting else { return }
                         showDeleteConfirmation = true
                     }
+                    .disabled(viewModel.isDeleting)
                 }
             }
             .scrollContentBackground(.hidden)
@@ -45,6 +47,7 @@ struct AccountSettingsView: View {
                 Button("Cancel", role: .cancel) {}
                 Button("Delete", role: .destructive) {
                     Task {
+                        guard !viewModel.isDeleting else { return }
                         let role = authViewModel.currentUser?.role
                         pendingDeleteRole = role
                         if role == .manager {
@@ -199,6 +202,10 @@ final class AccountSettingsViewModel: ObservableObject {
             errorMessage = "You must be signed in."
             return
         }
+        guard !isDeleting else {
+            print("[DeleteAccount] stage=skip_duplicate uid=\(currentUser.uid) provider=\(providerForCurrentUser())")
+            return
+        }
 
         print("[DeleteAccount][START] uid=\(currentUser.uid)")
         isDeleting = true
@@ -305,6 +312,13 @@ final class AccountSettingsViewModel: ObservableObject {
             errorMessage = "You must be signed in."
             return
         }
+        guard !isDeleting else {
+            print("[DeleteAccount] stage=skip_duplicate uid=\(currentUser.uid) provider=\(providerForCurrentUser())")
+            return
+        }
+
+        isDeleting = true
+        defer { isDeleting = false }
 
         let provider = providerForCurrentUser()
         logDeleteAccountStage("start", uid: currentUser.uid, provider: provider)
@@ -362,10 +376,11 @@ final class AccountSettingsViewModel: ObservableObject {
 
     private func logDeleteAccountError(_ error: Error) {
         let nsError = error as NSError
+        let functionsCode = nsError.userInfo[FunctionsErrorCodeKey] ?? "<none>"
         let userInfoKeys = Array(nsError.userInfo.keys).map { String(describing: $0) }.sorted()
         let functionsDetails = nsError.userInfo[FunctionsErrorDetailsKey] ?? nsError.userInfo["details"] ?? "<none>"
         print("[DeleteAccount] stage=error uid=\(auth.currentUser?.uid ?? "nil") provider=\(providerForCurrentUser()) errorDomain=\(nsError.domain) code=\(nsError.code) message=\(nsError.localizedDescription)")
-        print("[DeleteAccount] stage=error_details userInfoKeys=\(userInfoKeys) details=\(functionsDetails) userInfo=\(nsError.userInfo)")
+        print("[DeleteAccount] stage=error_details functionsDomain=\(FunctionsErrorDomain) functionsCode=\(functionsCode) userInfoKeys=\(userInfoKeys) details=\(functionsDetails) userInfo=\(nsError.userInfo)")
     }
 
     private func userFacingDeleteError(_ error: Error) -> String {
