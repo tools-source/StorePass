@@ -376,9 +376,15 @@ final class AccountSettingsViewModel: ObservableObject {
 
     private func logDeleteAccountError(_ error: Error) {
         let nsError = error as NSError
-        let functionsCode = nsError.userInfo[FunctionsErrorCodeKey] ?? "<none>"
+
+        // ✅ FirebaseFunctions doesn’t expose FunctionsErrorCodeKey/FunctionsErrorDetailsKey in Swift
+        let functionsCode = nsError.userInfo["com.firebase.functions.code"] ?? "<none>"
         let userInfoKeys = Array(nsError.userInfo.keys).map { String(describing: $0) }.sorted()
-        let functionsDetails = nsError.userInfo[FunctionsErrorDetailsKey] ?? nsError.userInfo["details"] ?? "<none>"
+        let functionsDetails =
+            nsError.userInfo["com.firebase.functions.details"]
+            ?? nsError.userInfo["details"]
+            ?? "<none>"
+
         print("[DeleteAccount] stage=error uid=\(auth.currentUser?.uid ?? "nil") provider=\(providerForCurrentUser()) errorDomain=\(nsError.domain) code=\(nsError.code) message=\(nsError.localizedDescription)")
         print("[DeleteAccount] stage=error_details functionsDomain=\(FunctionsErrorDomain) functionsCode=\(functionsCode) userInfoKeys=\(userInfoKeys) details=\(functionsDetails) userInfo=\(nsError.userInfo)")
     }

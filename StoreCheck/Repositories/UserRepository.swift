@@ -26,8 +26,6 @@ protocol EmployeeManagementRepositoryProtocol {
     func setEmployeeActive(employeeId: String, isActive: Bool) async throws
 }
 
-
-
 enum CloudFunctionClientError: LocalizedError {
     case unexpectedServerResponse(rawPayload: Any?)
 
@@ -43,6 +41,11 @@ final class CloudFunctionsService {
     private let functions = Functions.functions(region: "us-central1")
     private let region = "us-central1"
 
+    // ✅ FIX: FirebaseFunctions doesn’t expose FunctionsErrorCodeKey/FunctionsErrorDetailsKey in Swift.
+    // Use raw userInfo keys that Firebase Functions puts on the NSError.
+    private let functionsErrorCodeUserInfoKey = "com.firebase.functions.code"
+    private let functionsErrorDetailsUserInfoKey = "com.firebase.functions.details"
+
     func leaveStore(storeId: String) async throws -> Bool {
         return try await callExpectingOK(name: "leaveStore", payload: ["storeId": storeId])
     }
@@ -56,7 +59,10 @@ final class CloudFunctionsService {
     }
 
     private func invokeRemoveEmployeeFromStore(storeId: String, employeeId: String) async throws -> Bool {
-        return try await callExpectingOK(name: "removeEmployeeFromStore", payload: ["storeId": storeId, "employeeId": employeeId])
+        return try await callExpectingOK(
+            name: "removeEmployeeFromStore",
+            payload: ["storeId": storeId, "employeeId": employeeId]
+        )
     }
 
     private func callExpectingOK(name: String, payload: [String: Any]) async throws -> Bool {
@@ -76,16 +82,31 @@ final class CloudFunctionsService {
             return ok
         } catch {
             let ns = error as NSError
-            let functionCode = ns.userInfo[FunctionsErrorCodeKey] ?? "<none>"
-            let details = ns.userInfo[FunctionsErrorDetailsKey] ?? ns.userInfo["details"] ?? "<none>"
-            print("[Functions][FAIL] callable=\(name) region=\(region) domain=\(ns.domain) code=\(ns.code) functionCode=\(functionCode) functionDomain=\(FunctionsErrorDomain) message=\(ns.localizedDescription) details=\(details) userInfo=\(ns.userInfo)")
+
+            // ✅ FIX: safe extraction without missing symbols
+            let functionCode = ns.userInfo[functionsErrorCodeUserInfoKey] ?? "<none>"
+            let details =
+                ns.userInfo[functionsErrorDetailsUserInfoKey]
+                ?? ns.userInfo["details"]
+                ?? "<none>"
+
+            print(
+                "[Functions][FAIL] callable=\(name) region=\(region) domain=\(ns.domain) code=\(ns.code) " +
+                "functionCode=\(functionCode) functionDomain=\(FunctionsErrorDomain) " +
+                "message=\(ns.localizedDescription) details=\(details) userInfo=\(ns.userInfo)"
+            )
+
             throw mapError(error)
         }
     }
 
     private func mapError(_ error: Error) -> NSError {
         if case CloudFunctionClientError.unexpectedServerResponse = error {
-            return NSError(domain: "StorePass", code: 4004, userInfo: [NSLocalizedDescriptionKey: "Unexpected server response."])
+            return NSError(
+                domain: "StorePass",
+                code: 4004,
+                userInfo: [NSLocalizedDescriptionKey: "Unexpected server response."]
+            )
         }
 
         let nsError = error as NSError
@@ -289,8 +310,7 @@ final class FirestoreEmployeeManagementRepository: EmployeeManagementRepositoryP
             let storeNames = storeIdsForEmployee.compactMap { storesById[$0]?.name }
             let membershipName = membershipNameByEmployee[employeeId]
             let membershipEmail = membershipEmailByEmployee[employeeId]
-            let resolvedName = membershipName
-                ?? "Employee \(employeeId.prefix(6))"
+            let resolvedName = membershipName ?? "Employee \(employeeId.prefix(6))"
             let resolvedEmail = (membershipEmail?.isEmpty == false) ? membershipEmail : nil
 
             if membershipName == nil || membershipEmail == nil {
