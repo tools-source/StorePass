@@ -41,11 +41,6 @@ final class CloudFunctionsService {
     private let functions = Functions.functions(region: "us-central1")
     private let region = "us-central1"
 
-    // ✅ FIX: FirebaseFunctions doesn’t expose FunctionsErrorCodeKey/FunctionsErrorDetailsKey in Swift.
-    // Use raw userInfo keys that Firebase Functions puts on the NSError.
-    private let functionsErrorCodeUserInfoKey = "com.firebase.functions.code"
-    private let functionsErrorDetailsUserInfoKey = "com.firebase.functions.details"
-
     func leaveStore(storeId: String) async throws -> Bool {
         return try await callExpectingOK(name: "leaveStore", payload: ["storeId": storeId])
     }
@@ -83,17 +78,15 @@ final class CloudFunctionsService {
         } catch {
             let ns = error as NSError
 
-            // ✅ FIX: safe extraction without missing symbols
-            let functionCode = ns.userInfo[functionsErrorCodeUserInfoKey] ?? "<none>"
-            let details =
-                ns.userInfo[functionsErrorDetailsUserInfoKey]
-                ?? ns.userInfo["details"]
-                ?? "<none>"
+            // ✅ Works across FirebaseFunctions versions:
+            // - Firebase callable errors typically use domain = FunctionsErrorDomain and code = FunctionsErrorCode
+            let isFunctionsError = (ns.domain == FunctionsErrorDomain)
 
+            // Details are not consistent across versions, so print the whole userInfo.
             print(
-                "[Functions][FAIL] callable=\(name) region=\(region) domain=\(ns.domain) code=\(ns.code) " +
-                "functionCode=\(functionCode) functionDomain=\(FunctionsErrorDomain) " +
-                "message=\(ns.localizedDescription) details=\(details) userInfo=\(ns.userInfo)"
+                "[Functions][FAIL] callable=\(name) region=\(region) " +
+                "domain=\(ns.domain) code=\(ns.code) isFunctionsError=\(isFunctionsError) " +
+                "message=\(ns.localizedDescription) userInfo=\(ns.userInfo)"
             )
 
             throw mapError(error)
@@ -110,13 +103,9 @@ final class CloudFunctionsService {
         }
 
         let nsError = error as NSError
-        if nsError.domain == FunctionsErrorDomain {
-            return nsError
-        }
         return nsError
     }
 }
-
 // MARK: - User Repo
 
 final class FirestoreUserRepository: UserRepositoryProtocol {
