@@ -221,7 +221,11 @@ final class AccountSettingsViewModel: ObservableObject {
                 throw NSError(domain: "StorePass", code: 9001, userInfo: [NSLocalizedDescriptionKey: "Apple re-authentication failed."])
             }
 
-            let firebaseCredential = OAuthProvider.appleCredential(withIDToken: idToken, rawNonce: nonce)
+            let firebaseCredential = OAuthProvider.appleCredential(
+                withIDToken: idToken,
+                rawNonce: nonce,
+                fullName: credential.fullName
+            )
             _ = try await currentUser.reauthenticate(with: firebaseCredential)
             print("[DeleteAccount][REAUTH_OK]")
             return true
