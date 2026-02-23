@@ -14,6 +14,7 @@ final class EmployeeManagementViewModel: ObservableObject {
     @Published var bannerMessage: String?
     @Published var isLoading = false
     @Published private(set) var pendingRemoval: PendingRemoval?
+    @Published private(set) var pendingStoreSelection: PendingStoreSelection?
 
     private let employeeRepository: EmployeeManagementRepositoryProtocol
     private let authRepository: AuthRepositoryProtocol
@@ -32,34 +33,70 @@ final class EmployeeManagementViewModel: ObservableObject {
         let storeName: String
     }
 
+    struct StoreRemovalTarget: Identifiable, Hashable {
+        let storeId: String
+        let storeName: String
+
+        var id: String { storeId }
+    }
+
+    struct PendingStoreSelection {
+        let employeeId: String
+        let employeeName: String
+        let targets: [StoreRemovalTarget]
+    }
+
     var removalConfirmationMessage: String {
         guard let pendingRemoval else { return "" }
         return "Remove this employee from \(pendingRemoval.storeName)?"
     }
 
     func prepareRemoval(for employee: EmployeeSummary) {
+        print("[UI][RemoveEmployee] swipeTriggered selectedFilterStoreId=\(selectedStoreId) employeeId=\(employee.id)")
+
+        let targets = removalTargets(for: employee)
+        print("[UI][RemoveEmployee] targetStoreIds=\(targets.map(\.storeId)) employeeId=\(employee.id)")
+
         if selectedStoreId == Self.allStoresFilter {
-            employeeError = "Select a store first."
+            guard !targets.isEmpty else {
+                employeeError = "This employee is not assigned to a store."
+                return
+            }
+
+            if targets.count == 1, let target = targets.first {
+                pendingRemoval = PendingRemoval(employeeId: employee.id, employeeName: employee.name, storeId: target.storeId, storeName: target.storeName)
+            } else {
+                pendingStoreSelection = PendingStoreSelection(employeeId: employee.id, employeeName: employee.name, targets: targets)
+            }
             return
         }
 
-        guard employee.storeIds.contains(selectedStoreId),
-              let storeName = stores.first(where: { $0.id == selectedStoreId })?.name else {
+        guard let target = targets.first(where: { $0.storeId == selectedStoreId }) else {
             employeeError = "Select a store before removing this employee."
             return
         }
 
-        pendingRemoval = PendingRemoval(employeeId: employee.id, employeeName: employee.name, storeId: selectedStoreId, storeName: storeName)
+        pendingRemoval = PendingRemoval(employeeId: employee.id, employeeName: employee.name, storeId: target.storeId, storeName: target.storeName)
     }
 
     func cancelPendingRemoval() {
         pendingRemoval = nil
     }
 
+    func cancelPendingStoreSelection() {
+        pendingStoreSelection = nil
+    }
+
+    func confirmRemovalFromSelection(target: StoreRemovalTarget) {
+        guard let selection = pendingStoreSelection else { return }
+        pendingRemoval = PendingRemoval(employeeId: selection.employeeId, employeeName: selection.employeeName, storeId: target.storeId, storeName: target.storeName)
+        pendingStoreSelection = nil
+    }
+
     func executePendingRemoval() async {
         guard let pendingRemoval else { return }
         print("[UI][RemoveEmployee] tapped storeId=\(pendingRemoval.storeId) employeeId=\(pendingRemoval.employeeId)")
-        await removeFromStore(employeeId: pendingRemoval.employeeId, storeId: pendingRemoval.storeId)
+        await removeFromStore(employeeId: pendingRemoval.employeeId, storeId: pendingRemoval.storeId, storeName: pendingRemoval.storeName)
         cancelPendingRemoval()
     }
 
@@ -101,7 +138,7 @@ final class EmployeeManagementViewModel: ObservableObject {
         }
     }
 
-    func removeFromStore(employeeId: String, storeId: String) async {
+    func removeFromStore(employeeId: String, storeId: String, storeName: String? = nil) async {
         guard !storeId.isEmpty else {
             employeeError = "Select a store first."
             return
@@ -110,7 +147,7 @@ final class EmployeeManagementViewModel: ObservableObject {
             print("[VM][RemoveEmployee] start storeId=\(storeId) employeeId=\(employeeId)")
             try await employeeRepository.removeEmployeeFromStore(storeId: storeId, employeeId: employeeId)
             print("[VM][RemoveEmployee] success storeId=\(storeId) employeeId=\(employeeId)")
-            successMessage = "Removed from store."
+            successMessage = "Removed from \(storeName ?? "store")."
             await load()
         } catch {
             print("[VM][RemoveEmployee] FAILED error=\(error)")
@@ -163,5 +200,17 @@ final class EmployeeManagementViewModel: ObservableObject {
         let message = nsError.userInfo[NSLocalizedDescriptionKey] as? String ?? nsError.localizedDescription
         let details = nsError.userInfo[FunctionsErrorDetailsKey].map { String(describing: $0) } ?? "nil"
         print("[VM][RemoveEmployee] FAILED domain=\(nsError.domain) code=\(nsError.code) message=\(message) details=\(details)")
+    }
+
+    private func removalTargets(for employee: EmployeeSummary) -> [StoreRemovalTarget] {
+        let fallbackStoreNames = Dictionary(uniqueKeysWithValues: zip(employee.storeIds, employee.storeNames))
+
+        return employee.storeIds.map { storeId in
+            let storeName = stores.first(where: { $0.id == storeId })?.name
+                ?? fallbackStoreNames[storeId]
+                ?? storeId
+            return StoreRemovalTarget(storeId: storeId, storeName: storeName)
+        }
+        .sorted { $0.storeName.localizedCaseInsensitiveCompare($1.storeName) == .orderedAscending }
     }
 }

@@ -64,6 +64,22 @@ struct EmployeeManagementView: View {
             } message: {
                 Text(viewModel.removalConfirmationMessage)
             }
+            .confirmationDialog(
+                "Remove from which store?",
+                isPresented: Binding(get: { viewModel.pendingStoreSelection != nil }, set: { if !$0 { viewModel.cancelPendingStoreSelection() } }),
+                presenting: viewModel.pendingStoreSelection
+            ) { selection in
+                ForEach(selection.targets) { target in
+                    Button("\(target.storeName) (\(target.storeId))", role: .destructive) {
+                        viewModel.confirmRemovalFromSelection(target: target)
+                    }
+                }
+                Button("Cancel", role: .cancel) {
+                    viewModel.cancelPendingStoreSelection()
+                }
+            } message: { selection in
+                Text("Choose the store membership to remove for \(selection.employeeName).")
+            }
         }
     }
 
@@ -103,8 +119,6 @@ struct EmployeeManagementView: View {
                     .padding(.vertical, 4)
                     .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                         Button("Remove", role: .destructive) {
-                            let storeId = viewModel.selectedStoreId
-                            print("[UI][RemoveEmployee] tapped storeId=\(storeId) employeeId=\(employee.id)")
                             viewModel.prepareRemoval(for: employee)
                         }
                     }
