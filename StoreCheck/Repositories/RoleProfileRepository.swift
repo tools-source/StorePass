@@ -117,6 +117,7 @@ final class FirestoreRoleProfileRepository: RoleProfileRepositoryProtocol {
         let existingName = (userDoc.data()?["name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
         let existingNameIsPlaceholder = isDefaultPlaceholderName(existingName)
         let existingNameIsEmpty = existingName?.isEmpty != false
+        let fallbackName = fallbackDisplayName(email: incomingEmail)
 
         if userDoc.exists {
             // Break into a typed dictionary to avoid compiler “unable to type-check” issues
@@ -128,7 +129,7 @@ final class FirestoreRoleProfileRepository: RoleProfileRepositoryProtocol {
             if let incomingName, !incomingName.isEmpty {
                 update["name"] = incomingName
             } else if existingNameIsEmpty || existingNameIsPlaceholder {
-                update["name"] = "StorePass User"
+                update["name"] = fallbackName
             }
 
             if let incomingEmail, !incomingEmail.isEmpty {
@@ -136,7 +137,7 @@ final class FirestoreRoleProfileRepository: RoleProfileRepositoryProtocol {
             }
 
             try await userRef.setData(update, merge: true)
-            let finalSavedName = (update["name"] as? String) ?? existingName ?? "StorePass User"
+            let finalSavedName = (update["name"] as? String) ?? existingName ?? fallbackName
             let savedEmailStr = (update["email"] as? String) ?? "<skipped>"
             print("[AppleSignIn] incomingName=\(incomingName ?? "<nil>") existingName=\(existingName ?? "<nil>") finalSavedName=\(finalSavedName)")
             print("[AppleSignIn] firestore_upsert uid=\(uid) savedName=\(finalSavedName) savedEmail=\(savedEmailStr)")
@@ -148,7 +149,7 @@ final class FirestoreRoleProfileRepository: RoleProfileRepositoryProtocol {
             }
 
             // Role must be set via trusted backend (Cloud Function), not client rules
-            let seedName = validName(from: incomingName) ?? "StorePass User"
+            let seedName = validName(from: incomingName) ?? fallbackName
             let seedEmail = validEmail(from: incomingEmail)
 
             _ = try await setUserRole(requestedRole: requestedRole, name: seedName, email: seedEmail, provider: provider)
@@ -211,6 +212,25 @@ final class FirestoreRoleProfileRepository: RoleProfileRepositoryProtocol {
     private func validName(from value: String?) -> String? {
         guard let value, !value.isEmpty else { return nil }
         return value
+    }
+
+    private func fallbackDisplayName(email: String?) -> String {
+        guard let email, !email.isEmpty else { return "StorePass User" }
+        let localPart = email.split(separator: "@").first.map(String.init) ?? ""
+        let cleaned = localPart
+            .replacingOccurrences(of: ".", with: " ")
+            .replacingOccurrences(of: "_", with: " ")
+            .replacingOccurrences(of: "-", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty else { return "StorePass User" }
+
+        return cleaned
+            .split(separator: " ")
+            .map { token in
+                let lowered = String(token).lowercased()
+                return lowered.prefix(1).uppercased() + lowered.dropFirst()
+            }
+            .joined(separator: " ")
     }
 
 

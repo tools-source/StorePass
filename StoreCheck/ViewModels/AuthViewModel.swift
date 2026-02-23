@@ -354,17 +354,20 @@ final class AuthViewModel: ObservableObject {
     private func appleDisplayName(from fullName: PersonNameComponents?) -> String? {
         guard let fullName else { return nil }
 
+        let parts = [fullName.givenName, fullName.familyName]
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        let componentName = parts.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+        if !componentName.isEmpty {
+            return componentName
+        }
+
         let formatter = PersonNameComponentsFormatter()
         let formatted = formatter.string(from: fullName)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         if !formatted.isEmpty {
             return formatted
         }
-
-        let parts = [fullName.givenName, fullName.familyName]
-            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-        let fallback = parts.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
-        return fallback.isEmpty ? nil : fallback
+        return nil
     }
 }
