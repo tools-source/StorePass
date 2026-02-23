@@ -28,6 +28,8 @@ struct EmployeeDashboardView: View {
 struct EmployeeHomeView: View {
     @ObservedObject var viewModel: EmployeeDashboardViewModel
 
+    @State private var pendingLeaveStore: Store?
+
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -76,13 +78,52 @@ struct EmployeeHomeView: View {
             } message: {
                 Text(viewModel.errorMessage ?? "")
             }
+            .alert(
+                "Leave store",
+                isPresented: Binding(
+                    get: { pendingLeaveStore != nil },
+                    set: { newValue in
+                        if !newValue { pendingLeaveStore = nil }
+                    }
+                )
+            ) {
+                Button("Leave", role: .destructive) {
+                    if let store = pendingLeaveStore {
+                        Task { await viewModel.leaveStore(storeId: store.id) }
+                    }
+                    pendingLeaveStore = nil
+                }
+                Button("Cancel", role: .cancel) {
+                    pendingLeaveStore = nil
+                }
+            } message: {
+                if let store = pendingLeaveStore {
+                    Text("Leave '\(store.name)'? You may need a new code to rejoin.")
+                }
+            }
         }
     }
 
     private var currentStoreCard: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Current Store")
-                .font(.headline)
+            HStack {
+                Text("Current Store")
+                    .font(.headline)
+                Spacer()
+                if !viewModel.stores.isEmpty {
+                    Menu {
+                        ForEach(viewModel.stores) { store in
+                            Button("Leave \(store.name)", role: .destructive) {
+                                pendingLeaveStore = store
+                            }
+                        }
+                    } label: {
+                        Label("Manage", systemImage: "ellipsis.circle")
+                            .labelStyle(.titleAndIcon)
+                            .font(.subheadline.weight(.semibold))
+                    }
+                }
+            }
 
             if viewModel.stores.isEmpty {
                 Text("No assigned stores yet. Join with a store code.")

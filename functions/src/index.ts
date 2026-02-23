@@ -397,3 +397,142 @@ export const setUserRole = onRequest({ region: 'us-central1' }, async (req, res)
     res.status(err.status).json(err.body);
   }
 });
+
+export const leaveStore = onRequest({ region: 'us-central1' }, async (req, res) => {
+  if (req.method !== 'POST') {
+    res.status(405).json({ error: { message: 'Method not allowed' } });
+    return;
+  }
+
+  try {
+    const decodedToken = await verifyBearerToken(req as { headers: Record<string, unknown> });
+    const uid = decodedToken.uid;
+    const data = extractDataPayload(req.body);
+    const storeId = String(data.storeId ?? '');
+
+    if (!uid) {
+      throw new HttpsError('unauthenticated', 'Authentication required');
+    }
+    if (!storeId) {
+      throw new HttpsError('invalid-argument', 'storeId is required');
+    }
+
+    const storeRef = db.collection('stores').doc(storeId);
+    const memberRef = storeRef.collection('members').doc(uid);
+    const employeeStoreRef = db.collection('employeeStores').doc(uid).collection('stores').doc(storeId);
+    const userRef = db.collection('users').doc(uid);
+
+    const [storeSnap, memberSnap, employeeStoreSnap, userSnap] = await Promise.all([
+      storeRef.get(),
+      memberRef.get(),
+      employeeStoreRef.get(),
+      userRef.get(),
+    ]);
+
+    if (!storeSnap.exists) {
+      throw new HttpsError('not-found', 'Store not found');
+    }
+
+    const assignedStoreIds = (userSnap.data()?.assignedStoreIds as string[] | undefined) ?? [];
+    const isMember = memberSnap.exists || employeeStoreSnap.exists || assignedStoreIds.includes(storeId);
+    if (!isMember) {
+      throw new HttpsError('failed-precondition', 'Employee is not assigned to this store');
+    }
+
+    const batch = db.batch();
+    if (memberSnap.exists) {
+      batch.delete(memberRef);
+    }
+    if (employeeStoreSnap.exists) {
+      batch.delete(employeeStoreRef);
+    }
+    if (Array.isArray(userSnap.data()?.assignedStoreIds)) {
+      batch.set(
+        userRef,
+        {
+          assignedStoreIds: admin.firestore.FieldValue.arrayRemove(storeId),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true },
+      );
+    }
+
+    await batch.commit();
+    res.status(200).json({ result: { ok: true } });
+  } catch (error) {
+    console.error('[LEAVE_STORE] request failed', error);
+    const err = toErrorResponse(error);
+    res.status(err.status).json(err.body);
+  }
+});
+
+export const removeEmployeeFromStore = onRequest({ region: 'us-central1' }, async (req, res) => {
+  if (req.method !== 'POST') {
+    res.status(405).json({ error: { message: 'Method not allowed' } });
+    return;
+  }
+
+  try {
+    const decodedToken = await verifyBearerToken(req as { headers: Record<string, unknown> });
+    const managerId = decodedToken.uid;
+    const data = extractDataPayload(req.body);
+    const storeId = String(data.storeId ?? '');
+    const employeeId = String(data.employeeId ?? '');
+
+    if (!storeId || !employeeId) {
+      throw new HttpsError('invalid-argument', 'storeId and employeeId are required');
+    }
+
+    await requireActiveManager(db, managerId);
+
+    const storeRef = db.collection('stores').doc(storeId);
+    const memberRef = storeRef.collection('members').doc(employeeId);
+    const employeeStoreRef = db.collection('employeeStores').doc(employeeId).collection('stores').doc(storeId);
+    const userRef = db.collection('users').doc(employeeId);
+
+    const [storeSnap, memberSnap, employeeStoreSnap, userSnap] = await Promise.all([
+      storeRef.get(),
+      memberRef.get(),
+      employeeStoreRef.get(),
+      userRef.get(),
+    ]);
+
+    if (!storeSnap.exists) {
+      throw new HttpsError('not-found', 'Store not found');
+    }
+    if ((storeSnap.data()?.managerId as string | undefined) !== managerId) {
+      throw new HttpsError('permission-denied', 'You can only remove employees from your own store');
+    }
+
+    const assignedStoreIds = (userSnap.data()?.assignedStoreIds as string[] | undefined) ?? [];
+    const hasMembership = memberSnap.exists || employeeStoreSnap.exists || assignedStoreIds.includes(storeId);
+    if (!hasMembership) {
+      throw new HttpsError('failed-precondition', 'Employee is not assigned to this store');
+    }
+
+    const batch = db.batch();
+    if (memberSnap.exists) {
+      batch.delete(memberRef);
+    }
+    if (employeeStoreSnap.exists) {
+      batch.delete(employeeStoreRef);
+    }
+    if (Array.isArray(userSnap.data()?.assignedStoreIds)) {
+      batch.set(
+        userRef,
+        {
+          assignedStoreIds: admin.firestore.FieldValue.arrayRemove(storeId),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true },
+      );
+    }
+
+    await batch.commit();
+    res.status(200).json({ result: { ok: true } });
+  } catch (error) {
+    console.error('[REMOVE_EMPLOYEE_FROM_STORE] request failed', error);
+    const err = toErrorResponse(error);
+    res.status(err.status).json(err.body);
+  }
+});
