@@ -410,6 +410,7 @@ export const leaveStore = onCall({ region: 'us-central1' }, async (request) => {
   }
 
   try {
+    console.log(`[LEAVE_STORE][START] uid=${uid} storeId=${storeId}`);
     const storeRef = db.collection('stores').doc(storeId);
     const memberRef = storeRef.collection('members').doc(uid);
     const employeeStoreRef = db.collection('employeeStores').doc(uid).collection('stores').doc(storeId);
@@ -423,14 +424,12 @@ export const leaveStore = onCall({ region: 'us-central1' }, async (request) => {
     ]);
 
     if (!storeSnap.exists) {
-      throw new HttpsError('not-found', 'Store not found');
+      console.log(`[LEAVE_STORE] storeMissing storeId=${storeId}`);
     }
 
     const assignedStoreIds = (userSnap.data()?.assignedStoreIds as string[] | undefined) ?? [];
-    const hasMembership = memberSnap.exists || employeeStoreSnap.exists || assignedStoreIds.includes(storeId);
-    if (!hasMembership) {
-      throw new HttpsError('failed-precondition', 'Store or membership not found');
-    }
+    const beforeCount = assignedStoreIds.length;
+    console.log(`[LEAVE_STORE] memberExists=${memberSnap.exists} employeeStoreExists=${employeeStoreSnap.exists} assignedBeforeCount=${beforeCount}`);
 
     const batch = db.batch();
     if (memberSnap.exists) {
@@ -450,6 +449,7 @@ export const leaveStore = onCall({ region: 'us-central1' }, async (request) => {
     );
 
     await batch.commit();
+    console.log(`[LEAVE_STORE][END] ok=true uid=${uid} storeId=${storeId} assignedAfterCount=${Math.max(0, beforeCount - (assignedStoreIds.includes(storeId) ? 1 : 0))}`);
     return { ok: true, storeId, uid };
   } catch (error) {
     console.error('[LEAVE_STORE] callable failed', error);
@@ -473,8 +473,10 @@ export const removeEmployeeFromStore = onCall({ region: 'us-central1' }, async (
   }
 
   try {
+    console.log(`[REMOVE_EMPLOYEE_FROM_STORE][START] managerId=${managerId} storeId=${storeId} employeeId=${employeeId}`);
     const managerLookup = await requireActiveManager(db, managerId);
-    if (!managerLookup.managerDocActive) {
+    console.log(`[REMOVE_EMPLOYEE_FROM_STORE] managerLookup role=${managerLookup.userRole} userIsActive=${managerLookup.userIsActive} managerDocActive=${managerLookup.managerDocActive}`);
+    if (!managerLookup.managerDocActive || managerLookup.userRole !== 'manager' || managerLookup.userIsActive !== true) {
       throw new HttpsError('failed-precondition', 'This action can’t be completed right now.');
     }
 
@@ -495,6 +497,7 @@ export const removeEmployeeFromStore = onCall({ region: 'us-central1' }, async (
     }
 
     const storeData = storeSnap.data() ?? {};
+    console.log(`[REMOVE_EMPLOYEE_FROM_STORE] storeSnapshot managerId=${String(storeData.managerId ?? 'nil')} isActive=${String(storeData.isActive ?? 'nil')}`);
     if (storeData.managerId !== managerId) {
       throw new HttpsError('permission-denied', 'You don’t have permission.');
     }
@@ -503,10 +506,8 @@ export const removeEmployeeFromStore = onCall({ region: 'us-central1' }, async (
     }
 
     const assignedStoreIds = (userSnap.data()?.assignedStoreIds as string[] | undefined) ?? [];
-    const hasMembership = memberSnap.exists || employeeStoreSnap.exists || assignedStoreIds.includes(storeId);
-    if (!hasMembership) {
-      throw new HttpsError('not-found', 'Store or membership not found');
-    }
+    const beforeCount = assignedStoreIds.length;
+    console.log(`[REMOVE_EMPLOYEE_FROM_STORE] memberExists=${memberSnap.exists} employeeStoreExists=${employeeStoreSnap.exists} assignedBeforeCount=${beforeCount}`);
 
     const batch = db.batch();
     if (memberSnap.exists) {
@@ -525,6 +526,7 @@ export const removeEmployeeFromStore = onCall({ region: 'us-central1' }, async (
     );
 
     await batch.commit();
+    console.log(`[REMOVE_EMPLOYEE_FROM_STORE][END] ok=true managerId=${managerId} storeId=${storeId} employeeId=${employeeId}`);
     return { ok: true, storeId, employeeId, managerId };
   } catch (error) {
     console.error('[REMOVE_EMPLOYEE_FROM_STORE] callable failed', error);

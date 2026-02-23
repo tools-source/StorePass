@@ -53,14 +53,6 @@ struct EmployeeManagementView: View {
             } message: {
                 Text(viewModel.successMessage ?? "")
             }
-            .confirmationDialog("Choose store", isPresented: $viewModel.showStoreChooser, titleVisibility: .visible) {
-                ForEach(viewModel.removalStoreChoices, id: \.id) { choice in
-                    Button(choice.name) {
-                        viewModel.confirmRemovalChoice(storeId: choice.id)
-                    }
-                }
-                Button("Cancel", role: .cancel) { viewModel.cancelPendingRemoval() }
-            }
             .alert(
                 "Remove from store",
                 isPresented: Binding(get: { viewModel.pendingRemoval != nil }, set: { if !$0 { viewModel.cancelPendingRemoval() } })
