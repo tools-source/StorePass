@@ -5,6 +5,8 @@ import FirebaseFunctions
 @MainActor
 final class EmployeeManagementViewModel: ObservableObject {
     static let allStoresFilter = "all"
+    private let removeEmployeeFunctionName = "removeEmployeeFromStore"
+    private let removeEmployeeFunctionRegion = "us-central1"
 
     @Published var stores: [Store] = []
     @Published var employees: [EmployeeSummary] = []
@@ -52,10 +54,10 @@ final class EmployeeManagementViewModel: ObservableObject {
     }
 
     func prepareRemoval(for employee: EmployeeSummary) {
-        print("[UI][RemoveEmployee] swipeTriggered selectedFilterStoreId=\(selectedStoreId) employeeId=\(employee.id)")
+        print("[UI][RemoveEmployee] swipe storeFilter=\(selectedStoreId) employeeId=\(employee.id)")
 
         let targets = removalTargets(for: employee)
-        print("[UI][RemoveEmployee] targetStoreIds=\(targets.map(\.storeId)) employeeId=\(employee.id)")
+        print("[RemoveEmployee] computeTargets filter=\(selectedStoreId) employeeStores=\(targets.map(\.storeId))")
 
         if selectedStoreId == Self.allStoresFilter {
             guard !targets.isEmpty else {
@@ -144,13 +146,13 @@ final class EmployeeManagementViewModel: ObservableObject {
             return
         }
         do {
-            print("[VM][RemoveEmployee] start storeId=\(storeId) employeeId=\(employeeId)")
+            print("[RemoveEmployee][CALL] storeId=\(storeId) employeeId=\(employeeId) managerUid=\(authRepository.currentUserId ?? \"nil\")")
             try await employeeRepository.removeEmployeeFromStore(storeId: storeId, employeeId: employeeId)
-            print("[VM][RemoveEmployee] success storeId=\(storeId) employeeId=\(employeeId)")
+            print("[RemoveEmployee][OK] storeId=\(storeId) employeeId=\(employeeId) result=ok")
             successMessage = "Removed from \(storeName ?? "store")."
             await load()
         } catch {
-            print("[VM][RemoveEmployee] FAILED error=\(error)")
+            print("[RemoveEmployee][FAIL] function=\(removeEmployeeFunctionName) region=\(removeEmployeeFunctionRegion) error=\(error)")
             logFunctionsErrorIfPresent(error)
             if isFirestorePermissionDenied(error) {
                 bannerMessage = "Permission denied. Check Firestore rules."
@@ -195,11 +197,16 @@ final class EmployeeManagementViewModel: ObservableObject {
 
     private func logFunctionsErrorIfPresent(_ error: Error) {
         let nsError = error as NSError
-        guard nsError.domain == FunctionsErrorDomain else { return }
+        if nsError.domain == FunctionsErrorDomain {
+            let message = nsError.userInfo[NSLocalizedDescriptionKey] as? String ?? nsError.localizedDescription
+            let details = nsError.userInfo[FunctionsErrorDetailsKey].map { String(describing: $0) } ?? "nil"
+            print("[RemoveEmployee][FAIL] domain=\(nsError.domain) code=\(nsError.code) message=\(message) details=\(details)")
+            print("[RemoveEmployee][FAIL] function=\(removeEmployeeFunctionName) region=\(removeEmployeeFunctionRegion)")
+            return
+        }
 
-        let message = nsError.userInfo[NSLocalizedDescriptionKey] as? String ?? nsError.localizedDescription
-        let details = nsError.userInfo[FunctionsErrorDetailsKey].map { String(describing: $0) } ?? "nil"
-        print("[VM][RemoveEmployee] FAILED domain=\(nsError.domain) code=\(nsError.code) message=\(message) details=\(details)")
+        print("[RemoveEmployee][FAIL] domain=\(nsError.domain) code=\(nsError.code) message=\(nsError.localizedDescription) details=\(nsError.userInfo)")
+        print("[RemoveEmployee][FAIL] function=\(removeEmployeeFunctionName) region=\(removeEmployeeFunctionRegion)")
     }
 
     private func removalTargets(for employee: EmployeeSummary) -> [StoreRemovalTarget] {

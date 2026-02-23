@@ -118,8 +118,10 @@ struct EmployeeManagementView: View {
                     )
                     .padding(.vertical, 4)
                     .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                        Button("Remove", role: .destructive) {
-                            viewModel.prepareRemoval(for: employee)
+                        if !employee.storeIds.isEmpty {
+                            Button("Remove", role: .destructive) {
+                                viewModel.prepareRemoval(for: employee)
+                            }
                         }
                     }
                     .listRowInsets(EdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12))

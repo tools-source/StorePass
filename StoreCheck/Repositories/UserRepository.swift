@@ -48,7 +48,10 @@ final class CloudFunctionsService {
     }
 
     func removeEmployeeFromStore(storeId: String, employeeId: String) async throws -> Bool {
-        return try await callExpectingOK(name: "removeEmployeeFromStore", payload: ["storeId": storeId, "employeeId": employeeId])
+        print("[RemoveEmployee][CALL] storeId=\(storeId) employeeId=\(employeeId) managerUid=\(Auth.auth().currentUser?.uid ?? "nil")")
+        let ok = try await callExpectingOK(name: "removeEmployeeFromStore", payload: ["storeId": storeId, "employeeId": employeeId])
+        print("[RemoveEmployee][OK] storeId=\(storeId) employeeId=\(employeeId) result=\(ok)")
+        return ok
     }
 
     private func callExpectingOK(name: String, payload: [String: Any]) async throws -> Bool {
@@ -67,12 +70,16 @@ final class CloudFunctionsService {
             }
             return ok
         } catch {
-            print("[Functions][ERR] name=\(name) error=\(error)")
+            print("[Functions][ERR] name=\(name) region=\(region) error=\(error)")
             let nsError = error as NSError
             if nsError.domain == FunctionsErrorDomain {
                 let message = nsError.userInfo[NSLocalizedDescriptionKey] as? String ?? nsError.localizedDescription
                 let details = nsError.userInfo[FunctionsErrorDetailsKey].map { String(describing: $0) } ?? "nil"
-                print("[Functions][ERR] name=\(name) domain=\(nsError.domain) code=\(nsError.code) message=\(message) details=\(details)")
+                print("[RemoveEmployee][FAIL] domain=\(nsError.domain) code=\(nsError.code) message=\(message) details=\(details)")
+                print("[RemoveEmployee][FAIL] function=\(name) region=\(region)")
+            } else {
+                print("[RemoveEmployee][FAIL] domain=\(nsError.domain) code=\(nsError.code) message=\(nsError.localizedDescription) details=\(nsError.userInfo)")
+                print("[RemoveEmployee][FAIL] function=\(name) region=\(region)")
             }
             throw mapError(error)
         }
@@ -167,7 +174,7 @@ final class FirestoreUserRepository: UserRepositoryProtocol {
 // MARK: - Employee Management Repo
 
 final class FirestoreEmployeeManagementRepository: EmployeeManagementRepositoryProtocol {
-    private let cloudFunctionsService = CloudFunctionsService()
+    private let cloudFunctions = CloudFunctionsService()
     private var db: Firestore {
         FirebaseBootstrap.assertConfigured(context: "FirestoreEmployeeManagementRepository.db")
         return Firestore.firestore()
@@ -334,7 +341,7 @@ final class FirestoreEmployeeManagementRepository: EmployeeManagementRepositoryP
     }
 
     func removeEmployeeFromStore(storeId: String, employeeId: String) async throws {
-        _ = try await cloudFunctionsService.removeEmployeeFromStore(storeId: storeId, employeeId: employeeId)
+        _ = try await cloudFunctions.removeEmployeeFromStore(storeId: storeId, employeeId: employeeId)
     }
 
     func removeEmployeeFromAllManagerStores(employeeId: String, managerId: String) async throws {
