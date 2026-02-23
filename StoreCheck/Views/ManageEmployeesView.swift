@@ -103,6 +103,8 @@ struct EmployeeManagementView: View {
                     .padding(.vertical, 4)
                     .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                         Button("Remove", role: .destructive) {
+                            let storeId = viewModel.selectedStoreId
+                            print("[UI][RemoveEmployee] tapped storeId=\(storeId) employeeId=\(employee.id)")
                             viewModel.prepareRemoval(for: employee)
                         }
                     }

@@ -49,40 +49,31 @@ final class CloudFunctionsService {
     }
 
     func removeEmployeeFromStore(storeId: String, employeeId: String) async throws -> Bool {
-        print("[RemoveEmployee][CALL] storeId=\(storeId) employeeId=\(employeeId)")
-        try await callExpectingOK(name: "removeEmployeeFromStore", payload: ["storeId": storeId, "employeeId": employeeId])
+        return try await callExpectingOK(name: "removeEmployeeFromStore", payload: ["storeId": storeId, "employeeId": employeeId])
     }
 
     private func callExpectingOK(name: String, payload: [String: Any]) async throws -> Bool {
         do {
+            print("[Functions][CALL] name=\(name) region=\(region) payloadKeys=\(payload.keys.sorted())")
             let callable = functions.httpsCallable(name)
             let result = try await callable.call(payload)
-            if name == "leaveStore" {
-                print("[LeaveStore][RESP] raw=\(String(describing: result.data))")
-            } else if name == "removeEmployeeFromStore" {
-                print("[RemoveEmployee][RESP] raw=\(String(describing: result.data))")
-            }
+            print("[Functions][OK] name=\(name) raw=\(String(describing: result.data))")
 
             guard let data = result.data as? [String: Any],
                   let ok = data["ok"] as? Bool else {
-                print("[Functions] Unexpected payload for \(name): \(String(describing: result.data))")
                 throw CloudFunctionClientError.unexpectedServerResponse(rawPayload: result.data)
             }
             guard ok else {
-                print("[Functions] Non-ok payload for \(name): \(data)")
                 throw CloudFunctionClientError.unexpectedServerResponse(rawPayload: data)
-            }
-            if name == "leaveStore" {
-                print("[LeaveStore][OK] storeId=\(payload["storeId"] ?? "")")
-            } else if name == "removeEmployeeFromStore" {
-                print("[RemoveEmployee][OK] storeId=\(payload["storeId"] ?? "") employeeId=\(payload["employeeId"] ?? "")")
             }
             return ok
         } catch {
-            if name == "leaveStore" {
-                print("[LeaveStore][ERR] error=\(error.localizedDescription)")
-            } else if name == "removeEmployeeFromStore" {
-                print("[RemoveEmployee][ERR] error=\(error.localizedDescription)")
+            print("[Functions][ERR] name=\(name) error=\(error)")
+            let nsError = error as NSError
+            if nsError.domain == FunctionsErrorDomain {
+                let message = nsError.userInfo[NSLocalizedDescriptionKey] as? String ?? nsError.localizedDescription
+                let details = nsError.userInfo[FunctionsErrorDetailsKey].map { String(describing: $0) } ?? "nil"
+                print("[Functions][ERR] name=\(name) domain=\(nsError.domain) code=\(nsError.code) message=\(message) details=\(details)")
             }
             throw mapError(error)
         }
