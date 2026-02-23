@@ -41,12 +41,15 @@ enum CloudFunctionClientError: LocalizedError {
 
 final class CloudFunctionsService {
     private let functions = Functions.functions(region: "us-central1")
+    private let region = "us-central1"
 
     func leaveStore(storeId: String) async throws -> Bool {
+        print("[LeaveStore][CALL] storeId=\(storeId)")
         try await callExpectingOK(name: "leaveStore", payload: ["storeId": storeId])
     }
 
     func removeEmployeeFromStore(storeId: String, employeeId: String) async throws -> Bool {
+        print("[RemoveEmployee][CALL] storeId=\(storeId) employeeId=\(employeeId)")
         try await callExpectingOK(name: "removeEmployeeFromStore", payload: ["storeId": storeId, "employeeId": employeeId])
     }
 
@@ -54,6 +57,12 @@ final class CloudFunctionsService {
         do {
             let callable = functions.httpsCallable(name)
             let result = try await callable.call(payload)
+            if name == "leaveStore" {
+                print("[LeaveStore][RESP] raw=\(String(describing: result.data))")
+            } else if name == "removeEmployeeFromStore" {
+                print("[RemoveEmployee][RESP] raw=\(String(describing: result.data))")
+            }
+
             guard let data = result.data as? [String: Any],
                   let ok = data["ok"] as? Bool else {
                 print("[Functions] Unexpected payload for \(name): \(String(describing: result.data))")
@@ -63,8 +72,18 @@ final class CloudFunctionsService {
                 print("[Functions] Non-ok payload for \(name): \(data)")
                 throw CloudFunctionClientError.unexpectedServerResponse(rawPayload: data)
             }
+            if name == "leaveStore" {
+                print("[LeaveStore][OK] storeId=\(payload["storeId"] ?? "")")
+            } else if name == "removeEmployeeFromStore" {
+                print("[RemoveEmployee][OK] storeId=\(payload["storeId"] ?? "") employeeId=\(payload["employeeId"] ?? "")")
+            }
             return ok
         } catch {
+            if name == "leaveStore" {
+                print("[LeaveStore][ERR] error=\(error.localizedDescription)")
+            } else if name == "removeEmployeeFromStore" {
+                print("[RemoveEmployee][ERR] error=\(error.localizedDescription)")
+            }
             throw mapError(error)
         }
     }
@@ -84,13 +103,18 @@ final class CloudFunctionsService {
             case .failedPrecondition:
                 message = "This action can’t be completed right now."
             case .notFound:
-                message = "Store or membership not found."
+                message = "Function may be missing: check callable name and region (us-central1)."
             case .internal:
                 message = "Something went wrong. Try again."
             default:
                 message = nsError.localizedDescription
             }
-            return NSError(domain: nsError.domain, code: nsError.code, userInfo: [NSLocalizedDescriptionKey: message])
+            let functionName = nsError.userInfo[FunctionsErrorDetailsKey] as? String ?? "unknown"
+            return NSError(
+                domain: nsError.domain,
+                code: nsError.code,
+                userInfo: [NSLocalizedDescriptionKey: "\(message) [function=\(functionName) region=\(region) code=\(code)]"]
+            )
         }
         return nsError
     }

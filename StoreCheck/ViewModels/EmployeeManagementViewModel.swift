@@ -12,8 +12,6 @@ final class EmployeeManagementViewModel: ObservableObject {
     @Published var successMessage: String?
     @Published var bannerMessage: String?
     @Published var isLoading = false
-    @Published var showStoreChooser = false
-
     @Published private(set) var pendingRemoval: PendingRemoval?
 
     private let employeeRepository: EmployeeManagementRepositoryProtocol
@@ -33,16 +31,6 @@ final class EmployeeManagementViewModel: ObservableObject {
         let storeName: String
     }
 
-    var removalStoreChoices: [(id: String, name: String)] {
-        guard let pendingRemoval else { return [] }
-        guard let employee = employees.first(where: { $0.id == pendingRemoval.employeeId }) else { return [] }
-
-        return employee.storeIds.enumerated().map { index, id in
-            let name = index < employee.storeNames.count ? employee.storeNames[index] : id
-            return (id, name)
-        }
-    }
-
     var removalConfirmationMessage: String {
         guard let pendingRemoval else { return "" }
         return "Remove this employee from \(pendingRemoval.storeName)?"
@@ -50,8 +38,7 @@ final class EmployeeManagementViewModel: ObservableObject {
 
     func prepareRemoval(for employee: EmployeeSummary) {
         if selectedStoreId == Self.allStoresFilter {
-            pendingRemoval = PendingRemoval(employeeId: employee.id, employeeName: employee.name, storeId: "", storeName: "")
-            showStoreChooser = true
+            employeeError = "Select a store first."
             return
         }
 
@@ -64,25 +51,8 @@ final class EmployeeManagementViewModel: ObservableObject {
         pendingRemoval = PendingRemoval(employeeId: employee.id, employeeName: employee.name, storeId: selectedStoreId, storeName: storeName)
     }
 
-    func confirmRemovalChoice(storeId: String) {
-        guard let pending = pendingRemoval,
-              let selected = removalStoreChoices.first(where: { $0.id == storeId }) else {
-            cancelPendingRemoval()
-            return
-        }
-
-        pendingRemoval = PendingRemoval(
-            employeeId: pending.employeeId,
-            employeeName: pending.employeeName,
-            storeId: storeId,
-            storeName: selected.name
-        )
-        showStoreChooser = false
-    }
-
     func cancelPendingRemoval() {
         pendingRemoval = nil
-        showStoreChooser = false
     }
 
     func executePendingRemoval() async {
@@ -130,11 +100,18 @@ final class EmployeeManagementViewModel: ObservableObject {
     }
 
     func removeFromStore(employeeId: String, storeId: String) async {
+        guard !storeId.isEmpty else {
+            employeeError = "Select a store first."
+            return
+        }
         do {
+            print("[RemoveEmployee][CALL] storeId=\(storeId) employeeId=\(employeeId)")
             try await employeeRepository.removeEmployeeFromStore(storeId: storeId, employeeId: employeeId)
+            print("[RemoveEmployee][OK] storeId=\(storeId) employeeId=\(employeeId)")
             successMessage = "Removed from store."
             await load()
         } catch {
+            print("[RemoveEmployee][ERR] error=\(error.localizedDescription)")
             if isFirestorePermissionDenied(error) {
                 bannerMessage = "Permission denied. Check Firestore rules."
                 FirestorePermissionLogger.log(operation: "removeEmployeeFromStore", path: "stores/\(storeId)/members/\(employeeId)", error: error)

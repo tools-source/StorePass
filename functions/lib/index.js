@@ -352,6 +352,7 @@ exports.leaveStore = (0, https_1.onCall)({ region: 'us-central1' }, async (reque
         throw new https_1.HttpsError('failed-precondition', 'storeId is required');
     }
     try {
+        console.log(`[LEAVE_STORE][START] uid=${uid} storeId=${storeId}`);
         const storeRef = db.collection('stores').doc(storeId);
         const memberRef = storeRef.collection('members').doc(uid);
         const employeeStoreRef = db.collection('employeeStores').doc(uid).collection('stores').doc(storeId);
@@ -363,13 +364,11 @@ exports.leaveStore = (0, https_1.onCall)({ region: 'us-central1' }, async (reque
             userRef.get(),
         ]);
         if (!storeSnap.exists) {
-            throw new https_1.HttpsError('not-found', 'Store not found');
+            console.log(`[LEAVE_STORE] storeMissing storeId=${storeId}`);
         }
         const assignedStoreIds = userSnap.data()?.assignedStoreIds ?? [];
-        const hasMembership = memberSnap.exists || employeeStoreSnap.exists || assignedStoreIds.includes(storeId);
-        if (!hasMembership) {
-            throw new https_1.HttpsError('failed-precondition', 'Store or membership not found');
-        }
+        const beforeCount = assignedStoreIds.length;
+        console.log(`[LEAVE_STORE] memberExists=${memberSnap.exists} employeeStoreExists=${employeeStoreSnap.exists} assignedBeforeCount=${beforeCount}`);
         const batch = db.batch();
         if (memberSnap.exists) {
             batch.delete(memberRef);
@@ -382,6 +381,7 @@ exports.leaveStore = (0, https_1.onCall)({ region: 'us-central1' }, async (reque
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         }, { merge: true });
         await batch.commit();
+        console.log(`[LEAVE_STORE][END] ok=true uid=${uid} storeId=${storeId} assignedAfterCount=${Math.max(0, beforeCount - (assignedStoreIds.includes(storeId) ? 1 : 0))}`);
         return { ok: true, storeId, uid };
     }
     catch (error) {
@@ -403,8 +403,10 @@ exports.removeEmployeeFromStore = (0, https_1.onCall)({ region: 'us-central1' },
         throw new https_1.HttpsError('failed-precondition', 'storeId and employeeId are required');
     }
     try {
+        console.log(`[REMOVE_EMPLOYEE_FROM_STORE][START] managerId=${managerId} storeId=${storeId} employeeId=${employeeId}`);
         const managerLookup = await (0, helpers_1.requireActiveManager)(db, managerId);
-        if (!managerLookup.managerDocActive) {
+        console.log(`[REMOVE_EMPLOYEE_FROM_STORE] managerLookup role=${managerLookup.userRole} userIsActive=${managerLookup.userIsActive} managerDocActive=${managerLookup.managerDocActive}`);
+        if (!managerLookup.managerDocActive || managerLookup.userRole !== 'manager' || managerLookup.userIsActive !== true) {
             throw new https_1.HttpsError('failed-precondition', 'This action can’t be completed right now.');
         }
         const storeRef = db.collection('stores').doc(storeId);
@@ -421,6 +423,7 @@ exports.removeEmployeeFromStore = (0, https_1.onCall)({ region: 'us-central1' },
             throw new https_1.HttpsError('not-found', 'Store not found');
         }
         const storeData = storeSnap.data() ?? {};
+        console.log(`[REMOVE_EMPLOYEE_FROM_STORE] storeSnapshot managerId=${String(storeData.managerId ?? 'nil')} isActive=${String(storeData.isActive ?? 'nil')}`);
         if (storeData.managerId !== managerId) {
             throw new https_1.HttpsError('permission-denied', 'You don’t have permission.');
         }
@@ -428,10 +431,8 @@ exports.removeEmployeeFromStore = (0, https_1.onCall)({ region: 'us-central1' },
             throw new https_1.HttpsError('failed-precondition', 'This action can’t be completed right now.');
         }
         const assignedStoreIds = userSnap.data()?.assignedStoreIds ?? [];
-        const hasMembership = memberSnap.exists || employeeStoreSnap.exists || assignedStoreIds.includes(storeId);
-        if (!hasMembership) {
-            throw new https_1.HttpsError('not-found', 'Store or membership not found');
-        }
+        const beforeCount = assignedStoreIds.length;
+        console.log(`[REMOVE_EMPLOYEE_FROM_STORE] memberExists=${memberSnap.exists} employeeStoreExists=${employeeStoreSnap.exists} assignedBeforeCount=${beforeCount}`);
         const batch = db.batch();
         if (memberSnap.exists) {
             batch.delete(memberRef);
@@ -444,6 +445,7 @@ exports.removeEmployeeFromStore = (0, https_1.onCall)({ region: 'us-central1' },
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         }, { merge: true });
         await batch.commit();
+        console.log(`[REMOVE_EMPLOYEE_FROM_STORE][END] ok=true managerId=${managerId} storeId=${storeId} employeeId=${employeeId}`);
         return { ok: true, storeId, employeeId, managerId };
     }
     catch (error) {

@@ -29,6 +29,7 @@ struct EmployeeHomeView: View {
     @ObservedObject var viewModel: EmployeeDashboardViewModel
 
     @State private var pendingLeaveStore: Store?
+    @State private var showManageStores = false
 
     var body: some View {
         NavigationStack {
@@ -101,6 +102,35 @@ struct EmployeeHomeView: View {
                     Text("Leave '\(store.name)'? You may need a new code to rejoin.")
                 }
             }
+            .sheet(isPresented: $showManageStores) {
+                NavigationStack {
+                    List {
+                        if viewModel.stores.isEmpty {
+                            Text("No assigned stores yet. Join with a store code.")
+                                .foregroundStyle(.secondary)
+                        } else {
+                            ForEach(viewModel.stores) { store in
+                                HStack(spacing: 10) {
+                                    Image(systemName: viewModel.selectedStore?.id == store.id ? "checkmark.circle.fill" : "circle")
+                                        .foregroundStyle(viewModel.selectedStore?.id == store.id ? .blue : .secondary)
+                                    Text(store.name)
+                                }
+                                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                    Button("Leave", role: .destructive) {
+                                        pendingLeaveStore = store
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    .navigationTitle("Manage Stores")
+                    .toolbar {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            Button("Done") { showManageStores = false }
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -110,6 +140,12 @@ struct EmployeeHomeView: View {
                 Text("Current Store")
                     .font(.headline)
                 Spacer()
+                if !viewModel.stores.isEmpty {
+                    Button("Manage") {
+                        showManageStores = true
+                    }
+                    .font(.subheadline.weight(.semibold))
+                }
             }
 
             if viewModel.stores.isEmpty {
@@ -132,11 +168,6 @@ struct EmployeeHomeView: View {
                         .padding(.horizontal, 12)
                         .padding(.vertical, 10)
                         .background(.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                            Button("Leave", role: .destructive) {
-                                pendingLeaveStore = store
-                            }
-                        }
                     }
                 }
             }
