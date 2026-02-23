@@ -57,6 +57,7 @@ final class EmployeeManagementViewModel: ObservableObject {
 
     func executePendingRemoval() async {
         guard let pendingRemoval else { return }
+        print("[UI][RemoveEmployee] tapped storeId=\(pendingRemoval.storeId) employeeId=\(pendingRemoval.employeeId)")
         await removeFromStore(employeeId: pendingRemoval.employeeId, storeId: pendingRemoval.storeId)
         cancelPendingRemoval()
     }
@@ -105,13 +106,14 @@ final class EmployeeManagementViewModel: ObservableObject {
             return
         }
         do {
-            print("[RemoveEmployee][CALL] storeId=\(storeId) employeeId=\(employeeId)")
+            print("[VM][RemoveEmployee] start storeId=\(storeId) employeeId=\(employeeId)")
             try await employeeRepository.removeEmployeeFromStore(storeId: storeId, employeeId: employeeId)
-            print("[RemoveEmployee][OK] storeId=\(storeId) employeeId=\(employeeId)")
+            print("[VM][RemoveEmployee] success storeId=\(storeId) employeeId=\(employeeId)")
             successMessage = "Removed from store."
             await load()
         } catch {
-            print("[RemoveEmployee][ERR] error=\(error.localizedDescription)")
+            print("[VM][RemoveEmployee] FAILED error=\(error)")
+            logFunctionsErrorIfPresent(error)
             if isFirestorePermissionDenied(error) {
                 bannerMessage = "Permission denied. Check Firestore rules."
                 FirestorePermissionLogger.log(operation: "removeEmployeeFromStore", path: "stores/\(storeId)/members/\(employeeId)", error: error)
@@ -151,5 +153,14 @@ final class EmployeeManagementViewModel: ObservableObject {
     private func isFirestorePermissionDenied(_ error: Error) -> Bool {
         let nsError = error as NSError
         return nsError.domain == FirestoreErrorDomain && nsError.code == 7
+    }
+
+    private func logFunctionsErrorIfPresent(_ error: Error) {
+        let nsError = error as NSError
+        guard nsError.domain == FunctionsErrorDomain else { return }
+
+        let message = nsError.userInfo[NSLocalizedDescriptionKey] as? String ?? nsError.localizedDescription
+        let details = nsError.userInfo[FunctionsErrorDetailsKey].map { String(describing: $0) } ?? "nil"
+        print("[VM][RemoveEmployee] FAILED domain=\(nsError.domain) code=\(nsError.code) message=\(message) details=\(details)")
     }
 }
