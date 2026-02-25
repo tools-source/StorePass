@@ -1,11 +1,7 @@
-import AuthenticationServices
 import FirebaseAuth
 import FirebaseFirestore
 import Foundation
 import SwiftUI
-
-// What changed:
-// - Capture Apple full name (given + family) on first authorization and pass it into profile bootstrap.
 
 @MainActor
 final class AuthViewModel: ObservableObject {
@@ -30,9 +26,6 @@ final class AuthViewModel: ObservableObject {
 
     private let authService: AuthService
     private let roleProfileRepository: RoleProfileRepositoryProtocol
-    private(set) var currentNonce: String?
-    private var pendingAppleProfileName: String?
-    private var pendingAppleProfileEmail: String?
     private var isResolvingProfile = false
 
     init(authService: AuthService, roleProfileRepository: RoleProfileRepositoryProtocol) {
@@ -125,60 +118,6 @@ final class AuthViewModel: ObservableObject {
         } catch {
             showEmployeeSetupRequired = true
             errorMessage = userFacingMessage(for: error)
-        }
-    }
-
-    func prepareAppleSignInRequest(_ request: ASAuthorizationAppleIDRequest) {
-        let nonce = authService.randomNonceString(length: 32)
-        currentNonce = nonce
-        request.requestedScopes = [.fullName, .email]
-        request.nonce = authService.sha256(nonce)
-    }
-
-    func handleAppleSignInResult(_ result: Result<ASAuthorization, Error>, requestedRole: UserRole) {
-        Task {
-            guard !isResolvingProfile else { return }
-            signInNoticeMessage = nil
-            isLoading = true
-            isRoleResolutionLoading = true
-            defer { isLoading = false }
-            defer { isRoleResolutionLoading = false }
-
-            do {
-                guard case .success(let authorization) = result,
-                      let credential = authorization.credential as? ASAuthorizationAppleIDCredential,
-                      let nonce = currentNonce,
-                      let tokenData = credential.identityToken,
-                      let idToken = String(data: tokenData, encoding: .utf8) else {
-                    throw NSError(domain: "StorePass", code: 2001, userInfo: [NSLocalizedDescriptionKey: "Apple sign in failed. Please try again."])
-                }
-
-                let resolvedAppleName = appleDisplayName(from: credential.fullName)
-                let resolvedAppleEmail = credential.email?.trimmingCharacters(in: .whitespacesAndNewlines)
-                let hasAppleEmail = resolvedAppleEmail?.isEmpty == false
-                let formattedName = resolvedAppleName ?? ""
-                print("[AppleSignIn] credential_received fullNamePresent=\(credential.fullName != nil) formattedName=\"\(formattedName)\" incomingName=\"\(resolvedAppleName ?? "")\" emailPresent=\(hasAppleEmail)")
-
-                pendingAppleProfileName = resolvedAppleName
-                pendingAppleProfileEmail = resolvedAppleEmail?.isEmpty == false ? resolvedAppleEmail : nil
-
-                try await authService.signInWithApple(idToken: idToken, rawNonce: nonce, fullName: credential.fullName, email: credential.email)
-                try await resolveProfileAndRoute(
-                    requestedRole: requestedRole,
-                    isSessionRestore: false,
-                    provider: "apple",
-                    preferredName: pendingAppleProfileName,
-                    preferredEmail: pendingAppleProfileEmail
-                )
-
-                pendingAppleProfileName = nil
-                pendingAppleProfileEmail = nil
-            } catch {
-                pendingAppleProfileName = nil
-                pendingAppleProfileEmail = nil
-                showEmployeeSetupRequired = true
-                errorMessage = userFacingMessage(for: error)
-            }
         }
     }
 
@@ -393,13 +332,11 @@ final class AuthViewModel: ObservableObject {
     private func authProvider(for user: FirebaseAuth.User) -> String {
         let providerId = user.providerData
             .map(\.providerID)
-            .first { $0 == "google.com" || $0 == "apple.com" || $0 == "password" }
+            .first { $0 == "google.com" || $0 == "password" }
 
         switch providerId {
         case "google.com":
             return "google"
-        case "apple.com":
-            return "apple"
         case "password":
             return "password"
         default:
@@ -422,23 +359,4 @@ final class AuthViewModel: ObservableObject {
         return error.localizedDescription
     }
 
-    private func appleDisplayName(from fullName: PersonNameComponents?) -> String? {
-        guard let fullName else { return nil }
-
-        let parts = [fullName.givenName, fullName.familyName]
-            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-        let componentName = parts.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
-        if !componentName.isEmpty {
-            return componentName
-        }
-
-        let formatter = PersonNameComponentsFormatter()
-        let formatted = formatter.string(from: fullName)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        if !formatted.isEmpty {
-            return formatted
-        }
-        return nil
-    }
 }
