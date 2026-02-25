@@ -1,4 +1,5 @@
 import Foundation
+import FirebaseAuth
 import FirebaseFirestore
 import FirebaseFunctions
 
@@ -182,7 +183,7 @@ final class EmployeeManagementViewModel: ObservableObject {
             return false
         }
         do {
-            print("[RemoveEmployee][CALL] storeId=\(storeId) employeeId=\(employeeId) managerUid=\(String(describing: authRepository.currentUserId))")
+            await logRemovalContext(storeId: storeId, employeeId: employeeId)
             try await employeeRepository.removeEmployeeFromStore(storeId: storeId, employeeId: employeeId)
             print("[RemoveEmployee][OK] storeId=\(storeId) employeeId=\(employeeId) result=ok")
             employees = employees.compactMap { summary in
@@ -242,6 +243,27 @@ final class EmployeeManagementViewModel: ObservableObject {
             }
             employeeError = error.localizedDescription
         }
+    }
+
+    private func logRemovalContext(storeId: String, employeeId: String) async {
+        let uid = Auth.auth().currentUser?.uid ?? "nil"
+        let providerIDs = Auth.auth().currentUser?.providerData.map(\.providerID) ?? []
+        var role = "nil"
+        var isActive = "nil"
+
+        if uid != "nil" {
+            do {
+                let userDoc = try await Firestore.firestore().collection("users").document(uid).getDocument()
+                role = (userDoc.data()?["role"] as? String) ?? "nil"
+                if let active = userDoc.data()?["isActive"] as? Bool {
+                    isActive = String(active)
+                }
+            } catch {
+                print("[RemoveEmployee][CALL] uid=\(uid) profileLookupError=\(error.localizedDescription)")
+            }
+        }
+
+        print("[RemoveEmployee][CALL] operation=removeEmployeeFromStore uid=\(uid) providerIDs=\(providerIDs) role=\(role) isActive=\(isActive) path=stores/\(storeId)/members/\(employeeId)")
     }
 
     private func isFirestorePermissionDenied(_ error: Error) -> Bool {

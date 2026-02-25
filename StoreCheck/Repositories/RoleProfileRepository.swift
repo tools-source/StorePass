@@ -108,7 +108,10 @@ final class FirestoreRoleProfileRepository: RoleProfileRepositoryProtocol {
 
         let userRef = db.collection("users").document(uid)
         let userDoc = try await userRef.getDocument()
+        let providerIDs = auth.currentUser?.providerData.map(\.providerID) ?? []
         log(event: "ensure_start", uid: uid, requestedRole: requestedRole, fields: [
+            "providerIDs": providerIDs,
+            "provider": provider,
             "userDocExists": userDoc.exists
         ])
 

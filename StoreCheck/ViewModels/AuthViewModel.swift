@@ -79,6 +79,55 @@ final class AuthViewModel: ObservableObject {
         }
     }
 
+    func signInWithEmail(email: String, password: String) async {
+        guard !isResolvingProfile else { return }
+        guard let requestedRole = requestedRole else {
+            errorMessage = "Select Employee or Manager mode first."
+            return
+        }
+
+        signInNoticeMessage = nil
+        isLoading = true
+        isRoleResolutionLoading = true
+        defer { isLoading = false }
+        defer { isRoleResolutionLoading = false }
+
+        do {
+            try await authService.signInWithEmail(email: email, password: password)
+            try await resolveProfileAndRoute(
+                requestedRole: requestedRole,
+                isSessionRestore: false,
+                provider: "password",
+                preferredEmail: email
+            )
+        } catch {
+            showEmployeeSetupRequired = true
+            errorMessage = userFacingMessage(for: error)
+        }
+    }
+
+    func createAccountWithEmail(email: String, password: String, requestedRole: UserRole) async {
+        guard !isResolvingProfile else { return }
+        signInNoticeMessage = nil
+        isLoading = true
+        isRoleResolutionLoading = true
+        defer { isLoading = false }
+        defer { isRoleResolutionLoading = false }
+
+        do {
+            try await authService.createUserWithEmail(email: email, password: password)
+            try await resolveProfileAndRoute(
+                requestedRole: requestedRole,
+                isSessionRestore: false,
+                provider: "password",
+                preferredEmail: email
+            )
+        } catch {
+            showEmployeeSetupRequired = true
+            errorMessage = userFacingMessage(for: error)
+        }
+    }
+
     func prepareAppleSignInRequest(_ request: ASAuthorizationAppleIDRequest) {
         let nonce = authService.randomNonceString(length: 32)
         currentNonce = nonce
@@ -164,6 +213,8 @@ final class AuthViewModel: ObservableObject {
         let providerValue = provider ?? authProvider(for: firebaseUser)
         let resolvedName = preferredName?.trimmingCharacters(in: .whitespacesAndNewlines)
         let resolvedEmail = preferredEmail?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let providerIDs = firebaseUser.providerData.map(\.providerID)
+        print("[AuthStartup] uid=\(firebaseUser.uid) providerIDs=\(providerIDs)")
 
         let status = try await roleProfileRepository.ensureUserProfile(
             uid: firebaseUser.uid,
@@ -182,6 +233,12 @@ final class AuthViewModel: ObservableObject {
             return
         }
         logAuth("role_resolution_loaded", uid: firebaseUser.uid, requestedRole: requestedRole, details: ["resolvedRole": profile.role.rawValue, "isActive": profile.isActive])
+        do {
+            let userDoc = try await Firestore.firestore().collection("users").document(firebaseUser.uid).getDocument()
+            print("[AuthStartup] uid=\(firebaseUser.uid) resolvedRole=\(profile.role.rawValue) isActive=\(profile.isActive) userDocExists=\(userDoc.exists)")
+        } catch {
+            print("[AuthStartup] uid=\(firebaseUser.uid) resolvedRole=\(profile.role.rawValue) isActive=\(profile.isActive) userDocExists=unknown error=\(error.localizedDescription)")
+        }
 
         showManagerAccessRequired = false
         showEmployeeSetupRequired = false
@@ -221,7 +278,19 @@ final class AuthViewModel: ObservableObject {
             return
         }
 
-        guard let profile = try await roleProfileRepository.fetchUserProfile(uid: firebaseUser.uid) else {
+        let providerValue = authProvider(for: firebaseUser)
+        let providerIDs = firebaseUser.providerData.map(\.providerID)
+        print("[AuthStartup] uid=\(firebaseUser.uid) providerIDs=\(providerIDs)")
+
+        let status = try await roleProfileRepository.ensureUserProfile(
+            uid: firebaseUser.uid,
+            name: firebaseUser.displayName,
+            email: firebaseUser.email,
+            provider: providerValue,
+            requestedRole: requestedRole
+        )
+
+        guard case .resolved(let profile) = status else {
             showEmployeeSetupRequired = true
             authState = .signedOut
             resolvedRole = nil
@@ -324,13 +393,15 @@ final class AuthViewModel: ObservableObject {
     private func authProvider(for user: FirebaseAuth.User) -> String {
         let providerId = user.providerData
             .map(\.providerID)
-            .first { $0 == "google.com" || $0 == "apple.com" }
+            .first { $0 == "google.com" || $0 == "apple.com" || $0 == "password" }
 
         switch providerId {
         case "google.com":
             return "google"
         case "apple.com":
             return "apple"
+        case "password":
+            return "password"
         default:
             return "unknown"
         }
