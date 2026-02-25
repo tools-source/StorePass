@@ -688,29 +688,33 @@ export const deleteMyAccount = onCall({ region: 'us-central1' }, async (request)
 
   try {
     const firebaseToken = request.auth?.token?.firebase as { sign_in_provider?: string; identities?: Record<string, unknown> } | undefined;
-    const providers = [
+    const providerIds = [
       ...(typeof firebaseToken?.sign_in_provider === 'string' && firebaseToken.sign_in_provider.length > 0
         ? [firebaseToken.sign_in_provider]
         : []),
       ...Object.keys(firebaseToken?.identities ?? {}),
     ].filter((value, index, self) => self.indexOf(value) === index);
 
-    step = 'loadUserDoc';
-    const userRef = db.collection('users').doc(uid);
-    let userSnap: FirebaseFirestore.DocumentSnapshot | null = null;
-    try {
-      userSnap = await userRef.get();
-    } catch (error: any) {
-      console.error(`[deleteMyAccount][ERROR] step=${step} uid=${uid} payload=${JSON.stringify(request.data ?? {})} stack=${error?.stack ?? '<none>'}`, error);
-      throw error;
-    }
-    const userData = userSnap?.data() ?? {};
-    const assignedStoreIds = Array.isArray(userData.assignedStoreIds)
-      ? userData.assignedStoreIds.filter((value): value is string => typeof value === 'string' && value.length > 0)
-      : [];
+    const runStep = async (name: string, action: () => Promise<void>): Promise<void> => {
+      step = name;
+      console.log(`[deleteMyAccount] step=${step} traceId=${traceId} uid=${uid} status=start`);
+      await action();
+      console.log(`[deleteMyAccount] step=${step} traceId=${traceId} uid=${uid} status=ok`);
+    };
 
-    step = 'inferRole';
-    try {
+    const userRef = db.collection('users').doc(uid);
+    let userDocExists = false;
+    let assignedStoreIds: string[] = [];
+    let membershipCount = 0;
+
+    await runStep('loadUserDoc', async () => {
+      const userSnap = await userRef.get();
+      userDocExists = userSnap.exists;
+      const userData = userSnap.data() ?? {};
+      assignedStoreIds = Array.isArray(userData.assignedStoreIds)
+        ? userData.assignedStoreIds.filter((value): value is string => typeof value === 'string' && value.length > 0)
+        : [];
+
       if (typeof userData.role === 'string' && userData.role.toLowerCase() === 'manager') {
         inferredRole = 'manager';
       } else {
@@ -722,53 +726,56 @@ export const deleteMyAccount = onCall({ region: 'us-central1' }, async (request)
           inferredRole = 'manager';
         }
       }
-    } catch (error: any) {
-      console.error(`[deleteMyAccount][ERROR] step=${step} uid=${uid} payload=${JSON.stringify(request.data ?? {})} stack=${error?.stack ?? '<none>'}`, error);
-      throw error;
-    }
+    });
 
-    const hasEmail = typeof userData.email === 'string' && userData.email.trim().length > 0;
-    const hasName =
-      (typeof userData.displayName === 'string' && userData.displayName.trim().length > 0) ||
-      (typeof userData.name === 'string' && userData.name.trim().length > 0);
+    await runStep('scanMemberships', async () => {
+      const [membersByUserIdSnap, membersByDocIdSnap] = await Promise.all([
+        db.collectionGroup('members').where('userId', '==', uid).get(),
+        db.collectionGroup('members').where(admin.firestore.FieldPath.documentId(), '==', uid).get(),
+      ]);
+      const deduped = new Set<string>();
+      for (const doc of [...membersByUserIdSnap.docs, ...membersByDocIdSnap.docs]) {
+        deduped.add(doc.ref.path);
+      }
+      membershipCount = deduped.size;
+    });
+
     console.log(
-      `[deleteMyAccount] start traceId=${traceId} uid=${uid} providers=${providers.join(',') || 'unknown'} mode=${mode} role=${payloadRole ?? 'none'} inferredRole=${inferredRole} userDocExists=${userSnap?.exists ?? false} hasEmail=${hasEmail} hasName=${hasName} assignedStoreIdsCount=${assignedStoreIds.length}`,
+      `[deleteMyAccount] start traceId=${traceId} uid=${uid} mode=${mode} rolePayload=${payloadRole ?? 'none'} providerIds=${providerIds.join(',') || 'unknown'} userDocExists=${userDocExists} storeIdsCount=${assignedStoreIds.length} membershipCount=${membershipCount}`,
     );
 
-    if (mode === 'cleanup_memberships') {
-      step = 'cleanup_memberships';
-      await cleanupMemberships({ uid, userRef, assignedStoreIds, traceId });
-      console.log(`[deleteMyAccount] step=${step} traceId=${traceId} uid=${uid} status=ok`);
-      return { ok: true };
+    if (!['cleanup_memberships', 'delete_auth'].includes(mode)) {
+      throw new HttpsError('invalid-argument', `Unsupported deleteMyAccount mode: ${mode}`);
     }
 
-    if (mode === 'delete_auth') {
-      step = 'delete_auth';
-      console.log(`[deleteMyAccount] step=${step} traceId=${traceId} uid=${uid} status=start`);
+    if (mode !== 'delete_auth') {
+      await runStep('cleanupFirestore', async () => {
+        await cleanupMemberships({ uid, userRef, assignedStoreIds, traceId });
+      });
+    }
+
+    await runStep('deleteAuthUser', async () => {
       try {
         await admin.auth().deleteUser(uid);
       } catch (error: any) {
         if (error?.code !== 'auth/user-not-found') {
           throw error;
         }
+        console.log(`[deleteMyAccount] step=deleteAuthUser traceId=${traceId} uid=${uid} status=already_deleted`);
       }
-      console.log(`[deleteMyAccount] step=${step} traceId=${traceId} uid=${uid} status=ok`);
-      return { ok: true };
-    }
+    });
 
-    throw new HttpsError('invalid-argument', `Unsupported deleteMyAccount mode: ${mode}`);
-  } catch (error: any) {
-    console.error(
-      `[deleteMyAccount][ERROR] step=${step} uid=${uid} payload=${JSON.stringify(request.data ?? {})} stack=${error?.stack ?? '<none>'}`,
-      error,
-    );
-    if (error instanceof HttpsError) {
-      throw error;
+    return { ok: true };
+  } catch (err: any) {
+    console.error('deleteMyAccount failed', { uid, step }, err);
+    if (err instanceof HttpsError) {
+      throw err;
     }
     throw new HttpsError('internal', 'deleteMyAccount failed', {
       step,
       uid,
-      inferredRole,
+      message: err?.message ?? 'unknown error',
+      stack: err?.stack ?? null,
     });
   }
 });
