@@ -351,17 +351,26 @@ exports.setEmployeeActive = onCall(async (request) => {
 });
 
 async function cleanupMemberships(uid) {
+  const maxDeletesPerBatch = 450;
   const memberDocs = await db.collectionGroup('members')
     .where(admin.firestore.FieldPath.documentId(), '==', uid)
     .get();
+  console.log(`[cleanupMemberships] uid=${uid} memberDocsFound=${memberDocs.size}`);
 
   const storeIds = new Set();
-  const batch = db.batch();
-  memberDocs.docs.forEach((doc) => {
+  const memberRefs = memberDocs.docs.map((doc) => {
     const storeId = doc.ref.parent.parent && doc.ref.parent.parent.id;
     if (storeId) storeIds.add(storeId);
-    batch.delete(doc.ref);
+    return doc.ref;
   });
+
+  for (let i = 0; i < memberRefs.length; i += maxDeletesPerBatch) {
+    const chunk = memberRefs.slice(i, i + maxDeletesPerBatch);
+    const batch = db.batch();
+    chunk.forEach((ref) => batch.delete(ref));
+    await batch.commit();
+    console.log(`[cleanupMemberships] uid=${uid} committed member chunk ${Math.floor(i / maxDeletesPerBatch) + 1} size=${chunk.length}`);
+  }
 
   const now = admin.firestore.FieldValue.serverTimestamp();
   for (const storeId of storeIds) {
@@ -369,14 +378,50 @@ async function cleanupMemberships(uid) {
     await storeRef.set({ updatedAt: now }, { merge: true });
   }
 
-  batch.delete(db.collection('users').doc(uid));
-  await batch.commit();
+  try {
+    const employeeStoresSnap = await db.collection('employeeStores').doc(uid).collection('stores').get();
+    console.log(`[cleanupMemberships] uid=${uid} employeeStoresDocsFound=${employeeStoresSnap.size}`);
+    for (let i = 0; i < employeeStoresSnap.docs.length; i += maxDeletesPerBatch) {
+      const chunk = employeeStoresSnap.docs.slice(i, i + maxDeletesPerBatch);
+      const batch = db.batch();
+      chunk.forEach((doc) => batch.delete(doc.ref));
+      await batch.commit();
+      console.log(`[cleanupMemberships] uid=${uid} committed employeeStores chunk ${Math.floor(i / maxDeletesPerBatch) + 1} size=${chunk.length}`);
+    }
+  } catch (error) {
+    console.error(`[cleanupMemberships] uid=${uid} failed deleting employeeStores`, error);
+  }
+
+  try {
+    const employeeCheckinsSnap = await db.collection('employeeCheckins').doc(uid).collection('checkins').get();
+    console.log(`[cleanupMemberships] uid=${uid} employeeCheckinsDocsFound=${employeeCheckinsSnap.size}`);
+    for (let i = 0; i < employeeCheckinsSnap.docs.length; i += maxDeletesPerBatch) {
+      const chunk = employeeCheckinsSnap.docs.slice(i, i + maxDeletesPerBatch);
+      const batch = db.batch();
+      chunk.forEach((doc) => batch.delete(doc.ref));
+      await batch.commit();
+      console.log(`[cleanupMemberships] uid=${uid} committed employeeCheckins chunk ${Math.floor(i / maxDeletesPerBatch) + 1} size=${chunk.length}`);
+    }
+  } catch (error) {
+    console.error(`[cleanupMemberships] uid=${uid} failed deleting employeeCheckins`, error);
+  }
+
+  try {
+    await db.collection('users').doc(uid).set({ assignedStoreIds: [] }, { merge: true });
+    console.log(`[cleanupMemberships] uid=${uid} cleared assignedStoreIds`);
+  } catch (error) {
+    console.error(`[cleanupMemberships] uid=${uid} failed clearing assignedStoreIds`, error);
+  }
+
+  await db.collection('users').doc(uid).delete();
+  console.log(`[cleanupMemberships] uid=${uid} deleted users/${uid}`);
 }
 
 exports.deleteMyAccount = onCall(async (request) => {
   if (!request.auth) throw new HttpsError('unauthenticated', 'You must be signed in.');
   const uid = request.auth.uid;
   const mode = typeof request.data.mode === 'string' ? request.data.mode : 'cleanup_memberships';
+  console.log(`[deleteMyAccount] VERSION=2026-02-25a uid=${uid} mode=${mode}`);
 
   try {
     await requireActiveUser(uid);
@@ -394,7 +439,7 @@ exports.deleteMyAccount = onCall(async (request) => {
 
     throw new HttpsError('invalid-argument', `Unsupported deleteMyAccount mode: ${mode}`);
   } catch (error) {
-    console.error(`[deleteMyAccount] fail uid=${uid} mode=${mode}`, error);
+    console.error(`[deleteMyAccount] fail uid=${uid} mode=${mode} stack=${error?.stack || 'n/a'}`, error);
     if (error instanceof HttpsError) throw error;
     throw new HttpsError('internal', error?.message || String(error));
   }
