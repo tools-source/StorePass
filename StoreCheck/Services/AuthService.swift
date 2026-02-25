@@ -1,10 +1,7 @@
-import AuthenticationServices
-import CryptoKit
 import FirebaseAuth
 import FirebaseCore
 import Foundation
 import GoogleSignIn
-import Security
 import UIKit
 
 @MainActor
@@ -14,14 +11,11 @@ protocol AuthServiceProtocol: AnyObject {
 
     func restoreSession(forceSignOutOnLaunch: Bool) async
     func signInWithGoogle() async throws
-    func signInWithApple(idToken: String, rawNonce: String, fullName: PersonNameComponents?, email: String?) async throws
     func signInWithEmail(email: String, password: String) async throws
     func createUserWithEmail(email: String, password: String) async throws
     func authUser() -> FirebaseAuth.User?
     func signOut() async throws
     func deleteAuthAccount() async throws
-    func randomNonceString(length: Int) -> String
-    func sha256(_ input: String) -> String
 }
 
 @MainActor
@@ -78,11 +72,6 @@ final class AuthService: ObservableObject, AuthServiceProtocol {
         _ = try await auth.signIn(with: credential)
     }
 
-    func signInWithApple(idToken: String, rawNonce: String, fullName: PersonNameComponents?, email: String?) async throws {
-        let credential = OAuthProvider.appleCredential(withIDToken: idToken, rawNonce: rawNonce, fullName: fullName)
-        _ = try await auth.signIn(with: credential)
-    }
-
     func signInWithEmail(email: String, password: String) async throws {
         _ = try await auth.signIn(withEmail: email, password: password)
     }
@@ -118,33 +107,5 @@ final class AuthService: ObservableObject, AuthServiceProtocol {
     func deleteAuthAccount() async throws {
         guard let user = auth.currentUser else { return }
         try await user.delete()
-    }
-
-    func randomNonceString(length: Int = 32) -> String {
-        precondition(length > 0)
-        let charset = Array("0123456789ABCDEFGHIJKLMNOPQRSTUVXYZabcdefghijklmnopqrstuvwxyz-._")
-        var result = ""
-        var remaining = length
-
-        while remaining > 0 {
-            var randomBytes = [UInt8](repeating: 0, count: 16)
-            let status = SecRandomCopyBytes(kSecRandomDefault, randomBytes.count, &randomBytes)
-            if status != errSecSuccess {
-                fatalError("Unable to generate nonce")
-            }
-
-            for byte in randomBytes where remaining > 0 {
-                if byte < charset.count {
-                    result.append(charset[Int(byte)])
-                    remaining -= 1
-                }
-            }
-        }
-
-        return result
-    }
-
-    func sha256(_ input: String) -> String {
-        SHA256.hash(data: Data(input.utf8)).map { String(format: "%02x", $0) }.joined()
     }
 }

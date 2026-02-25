@@ -1,47 +1,24 @@
-import AuthenticationServices
-import CryptoKit
 import FirebaseAuth
 import FirebaseCore
-import FirebaseFirestore
 import FirebaseFunctions
 import GoogleSignIn
-import Security
 import SwiftUI
 import UIKit
-
-// What changed:
-// - Added delete-account reauth retry flow for Apple/Google users.
-// - Added targeted delete-account stage logging and resilient callable error parsing.
 
 struct AccountSettingsView: View {
     @EnvironmentObject private var authViewModel: AuthViewModel
     @StateObject private var viewModel = AccountSettingsViewModel()
     @State private var showDeleteConfirmation = false
     @State private var showReauthSheet = false
-    @State private var showEditNameSheet = false
     @State private var pendingDeleteRole: UserRole?
     @State private var deleteTask: Task<Void, Never>?
-    @State private var editedNameDraft = ""
     @State private var localNameOverride: String?
 
     var body: some View {
         NavigationStack {
             List {
                 Section("Profile") {
-                    HStack {
-                        Text("Name")
-                        Spacer()
-                        Text(displayName)
-                            .foregroundStyle(.secondary)
-
-                        if viewModel.canEditAppleName {
-                            Button("Edit") {
-                                editedNameDraft = displayName
-                                showEditNameSheet = true
-                            }
-                            .buttonStyle(.borderless)
-                        }
-                    }
+                    LabeledContent("Name", value: displayName)
                     LabeledContent("Email", value: authViewModel.currentUser?.email ?? "No email")
                     LabeledContent("Role", value: authViewModel.currentUser?.role.rawValue.capitalized ?? "Unknown")
                 }
@@ -98,33 +75,6 @@ struct AccountSettingsView: View {
                 }
                 .presentationDetents([.medium])
             }
-            .sheet(isPresented: $showEditNameSheet) {
-                NavigationStack {
-                    Form {
-                        TextField("Name", text: $editedNameDraft)
-                    }
-                    .navigationTitle("Edit Name")
-                    .toolbar {
-                        ToolbarItem(placement: .cancellationAction) {
-                            Button("Cancel") { showEditNameSheet = false }
-                        }
-                        ToolbarItem(placement: .confirmationAction) {
-                            Button("Save") {
-                                Task {
-                                    let trimmed = editedNameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-                                    let ok = await viewModel.updateName(trimmed)
-                                    if ok {
-                                        localNameOverride = trimmed
-                                        showEditNameSheet = false
-                                    }
-                                }
-                            }
-                            .disabled(!canSaveEditedName)
-                        }
-                    }
-                }
-                .presentationDetents([.medium])
-            }
             .alert("Settings", isPresented: Binding(get: { viewModel.errorMessage != nil }, set: { _ in viewModel.errorMessage = nil })) {
                 Button("OK", role: .cancel) { viewModel.errorMessage = nil }
             } message: {
@@ -132,7 +82,6 @@ struct AccountSettingsView: View {
             }
             .onAppear {
                 localNameOverride = authViewModel.currentUser?.name
-                viewModel.refreshCanEditAppleName()
             }
             .onChange(of: authViewModel.currentUser?.name) { _, newValue in
                 if let newValue {
@@ -146,11 +95,6 @@ struct AccountSettingsView: View {
         localNameOverride ?? authViewModel.currentUser?.name ?? "StorePass User"
     }
 
-    private var canSaveEditedName: Bool {
-        let trimmed = editedNameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        return !trimmed.isEmpty && trimmed != displayName
-    }
-
     private func startDeleteTask(_ operation: @escaping @MainActor () async -> Void) {
         guard deleteTask == nil, !viewModel.isDeleting else { return }
         deleteTask = Task { @MainActor in
@@ -161,6 +105,7 @@ struct AccountSettingsView: View {
 }
 
 private struct ReauthenticateSheet: View {
+    @Environment(\.dismiss) private var dismiss
     @ObservedObject var viewModel: AccountSettingsViewModel
     let onSuccess: () -> Void
 
@@ -175,18 +120,9 @@ private struct ReauthenticateSheet: View {
                     .multilineTextAlignment(.center)
 
                 if viewModel.selectedProviderForReauth == "apple.com" {
-                    SignInWithAppleButton(.signIn) { request in
-                        viewModel.prepareAppleReauthRequest(request)
-                    } onCompletion: { result in
-                        Task {
-                            let ok = await viewModel.handleAppleReauthResult(result)
-                            if ok {
-                                onSuccess()
-                            }
-                        }
-                    }
-                    .frame(height: 44)
-                    .cornerRadius(8)
+                    Text("This account was created with Apple Sign-In, which is no longer supported. Please contact support or sign in with another method.")
+                        .foregroundStyle(.red)
+                        .multilineTextAlignment(.center)
                 } else if viewModel.selectedProviderForReauth == "google.com" {
                     Button {
                         Task {
@@ -217,6 +153,11 @@ private struct ReauthenticateSheet: View {
             .onAppear {
                 viewModel.prepareProviderForReauth()
             }
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") { dismiss() }
+                }
+            }
         }
     }
 }
@@ -234,12 +175,9 @@ final class AccountSettingsViewModel: ObservableObject {
     @Published var isDeleting = false
     @Published var isDeletingAccount = false
     @Published var needsReauthentication = false
-    @Published var canEditAppleName = false
     private var deleteAccountTask: Task<Void, Never>? = nil
     private let cloudFunctions = CloudFunctionsService()
-    private var appleReauthNonce: String?
     private let functions = Functions.functions(region: "us-central1")
-    private let firestore = Firestore.firestore()
 
     private var auth: Auth {
         FirebaseBootstrap.assertConfigured(context: "AccountSettingsViewModel.auth")
@@ -267,32 +205,6 @@ final class AccountSettingsViewModel: ObservableObject {
             selectedProviderForReauth = "google.com"
         } else {
             selectedProviderForReauth = providers.first
-        }
-    }
-
-    func refreshCanEditAppleName() {
-        let providerIds = auth.currentUser?.providerData.map(\.providerID) ?? []
-        canEditAppleName = providerIds.contains("apple.com")
-    }
-
-    func updateName(_ newName: String) async -> Bool {
-        guard let currentUser = auth.currentUser else {
-            errorMessage = "You must be signed in."
-            return false
-        }
-
-        do {
-            try await firestore.collection("users").document(currentUser.uid).setData([
-                "name": newName,
-                "updatedAt": FieldValue.serverTimestamp()
-            ], merge: true)
-            print("[Settings][NameUpdate] success uid=\(currentUser.uid)")
-            errorMessage = nil
-            return true
-        } catch {
-            print("[Settings][NameUpdate] failure uid=\(currentUser.uid) error=\(error.localizedDescription)")
-            errorMessage = "We couldn't update your name right now. Please try again."
-            return false
         }
     }
 
@@ -330,39 +242,6 @@ final class AccountSettingsViewModel: ObservableObject {
         } catch {
             logDeleteAccountError(error)
             errorMessage = userFacingDeleteError(error)
-        }
-    }
-
-    func prepareAppleReauthRequest(_ request: ASAuthorizationAppleIDRequest) {
-        let nonce = randomNonceString(length: 32)
-        appleReauthNonce = nonce
-        request.requestedScopes = []
-        request.nonce = sha256(nonce)
-    }
-
-    func handleAppleReauthResult(_ result: Result<ASAuthorization, Error>) async -> Bool {
-        do {
-            guard case .success(let authorization) = result,
-                  let credential = authorization.credential as? ASAuthorizationAppleIDCredential,
-                  let nonce = appleReauthNonce,
-                  let tokenData = credential.identityToken,
-                  let idToken = String(data: tokenData, encoding: .utf8),
-                  let currentUser = auth.currentUser else {
-                throw NSError(domain: "StorePass", code: 9001, userInfo: [NSLocalizedDescriptionKey: "Apple re-authentication failed."])
-            }
-
-            let firebaseCredential = OAuthProvider.appleCredential(
-                withIDToken: idToken,
-                rawNonce: nonce,
-                fullName: nil
-            )
-            _ = try await currentUser.reauthenticate(with: firebaseCredential)
-            print("[DeleteAccount][REAUTH_OK]")
-            return true
-        } catch {
-            logDeleteAccountError(error)
-            errorMessage = userFacingDeleteError(error)
-            return false
         }
     }
 
@@ -495,6 +374,9 @@ final class AccountSettingsViewModel: ObservableObject {
         }
         if nsError.domain == AuthErrorDomain,
            nsError.code == AuthErrorCode.requiresRecentLogin.rawValue {
+            if auth.currentUser?.providerData.map(\.providerID).contains("apple.com") == true {
+                return "This account was created with Apple Sign-In, which is no longer supported. Please contact support or sign in with another method."
+            }
             return "For security, please sign in again and retry account deletion."
         }
         return nsError.localizedDescription
@@ -503,7 +385,6 @@ final class AccountSettingsViewModel: ObservableObject {
     private func providerForCurrentUser() -> String {
         guard let user = auth.currentUser else { return "unknown" }
         let providerIds = user.providerData.map(\.providerID)
-        if providerIds.contains("apple.com") { return "apple.com" }
         if providerIds.contains("google.com") { return "google.com" }
         if providerIds.contains("password") { return "password" }
         return providerIds.first ?? "unknown"
@@ -523,31 +404,5 @@ final class AccountSettingsViewModel: ObservableObject {
         }
     }
 
-    private func randomNonceString(length: Int = 32) -> String {
-        precondition(length > 0)
-        let charset = Array("0123456789ABCDEFGHIJKLMNOPQRSTUVXYZabcdefghijklmnopqrstuvwxyz-._")
-        var result = ""
-        var remaining = length
 
-        while remaining > 0 {
-            var randomBytes = [UInt8](repeating: 0, count: 16)
-            let status = SecRandomCopyBytes(kSecRandomDefault, randomBytes.count, &randomBytes)
-            if status != errSecSuccess {
-                fatalError("Unable to generate nonce")
-            }
-
-            for byte in randomBytes where remaining > 0 {
-                if byte < charset.count {
-                    result.append(charset[Int(byte)])
-                    remaining -= 1
-                }
-            }
-        }
-
-        return result
-    }
-
-    private func sha256(_ input: String) -> String {
-        SHA256.hash(data: Data(input.utf8)).map { String(format: "%02x", $0) }.joined()
-    }
 }
