@@ -1,4 +1,5 @@
 import Foundation
+import FirebaseAuth
 import FirebaseFirestore
 import FirebaseFunctions
 
@@ -182,7 +183,8 @@ final class EmployeeManagementViewModel: ObservableObject {
             return false
         }
         do {
-            print("[RemoveEmployee][CALL] storeId=\(storeId) employeeId=\(employeeId) managerUid=\(String(describing: authRepository.currentUserId))")
+            let providerIds = Auth.auth().currentUser?.providerData.map(\.providerID) ?? []
+            print("[RemoveEmployee][CALL] function=\(removeEmployeeFunctionName) region=\(removeEmployeeFunctionRegion) storeId=\(storeId) employeeId=\(employeeId) managerUid=\(String(describing: authRepository.currentUserId)) currentUid=\(Auth.auth().currentUser?.uid ?? "nil") providerIds=\(providerIds)")
             try await employeeRepository.removeEmployeeFromStore(storeId: storeId, employeeId: employeeId)
             print("[RemoveEmployee][OK] storeId=\(storeId) employeeId=\(employeeId) result=ok")
             employees = employees.compactMap { summary in
@@ -251,10 +253,12 @@ final class EmployeeManagementViewModel: ObservableObject {
 
     private func logFunctionsErrorIfPresent(_ error: Error) {
         let nsError = error as NSError
-        if nsError.domain == "com.firebase.functions" || nsError.domain == "FunctionsErrorDomain" {
-            let message = nsError.userInfo[NSLocalizedDescriptionKey] as? String ?? nsError.localizedDescription
+        if nsError.domain == FunctionsErrorDomain {
+            let message = (nsError.userInfo[FunctionsErrorDescriptionKey] as? String) ?? nsError.localizedDescription
+            let details = nsError.userInfo[FunctionsErrorDetailsKey]
             let userInfoKeys = Array(nsError.userInfo.keys).map { String(describing: $0) }.sorted()
-            print("[RemoveEmployee][FAIL] domain=\(nsError.domain) code=\(nsError.code) message=\(message) userInfoKeys=\(userInfoKeys)")
+            let codeText = String(describing: FunctionsErrorCode(rawValue: nsError.code) ?? .internal)
+            print("[RemoveEmployee][FAIL] domain=\(nsError.domain) code=\(nsError.code) functionsCode=\(codeText) message=\(message) details=\(String(describing: details)) userInfoKeys=\(userInfoKeys)")
             print("[RemoveEmployee][FAIL] function=\(removeEmployeeFunctionName) region=\(removeEmployeeFunctionRegion)")
             return
         }

@@ -1,4 +1,8 @@
+import CoreLocation
+import FirebaseAuth
+import FirebaseFirestore
 import Foundation
+import UserNotifications
 
 @MainActor
 final class EmployeeDashboardViewModel: ObservableObject {
@@ -56,6 +60,7 @@ final class EmployeeDashboardViewModel: ObservableObject {
             } else {
                 selectedStore = stores.first
             }
+            await EmployeeGeofenceNotificationManager.shared.refreshMonitoredStores(stores)
             refreshLocation()
             try await loadTodaySessions()
         } catch {
@@ -132,6 +137,7 @@ final class EmployeeDashboardViewModel: ObservableObject {
                 stores.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
             }
             selectedStore = selectedStore ?? joinedStore
+            await EmployeeGeofenceNotificationManager.shared.refreshMonitoredStores(stores)
             refreshLocation()
             joinStatusMessage = result.alreadyJoined
                 ? "You're already linked to \(result.storeName)."
@@ -160,4 +166,151 @@ final class EmployeeDashboardViewModel: ObservableObject {
         }
     }
 
+}
+
+struct EmployeeNotificationPrefs: Equatable {
+    var remindersEnabled = true
+    var checkInEnabled = true
+    var checkOutEnabled = true
+    var radiusMeters: Double = 150
+    var quietHoursEnabled = false
+    var quietStartHour = 22
+    var quietEndHour = 7
+
+    init() {}
+
+    init?(data: [String: Any]) {
+        remindersEnabled = data["remindersEnabled"] as? Bool ?? true
+        checkInEnabled = data["checkInEnabled"] as? Bool ?? true
+        checkOutEnabled = data["checkOutEnabled"] as? Bool ?? true
+        radiusMeters = min(max(data["radiusMeters"] as? Double ?? 150, 50), 1000)
+        quietHoursEnabled = data["quietHoursEnabled"] as? Bool ?? false
+        quietStartHour = min(max(data["quietStartHour"] as? Int ?? 22, 0), 23)
+        quietEndHour = min(max(data["quietEndHour"] as? Int ?? 7, 0), 23)
+    }
+
+    var firestorePayload: [String: Any] {
+        [
+            "remindersEnabled": remindersEnabled,
+            "checkInEnabled": checkInEnabled,
+            "checkOutEnabled": checkOutEnabled,
+            "radiusMeters": radiusMeters,
+            "quietHoursEnabled": quietHoursEnabled,
+            "quietStartHour": quietStartHour,
+            "quietEndHour": quietEndHour,
+            "updatedAt": FieldValue.serverTimestamp(),
+        ]
+    }
+}
+
+final class EmployeeGeofenceNotificationManager: NSObject, CLLocationManagerDelegate {
+    static let shared = EmployeeGeofenceNotificationManager()
+
+    private let locationManager = CLLocationManager()
+    private let notificationCenter = UNUserNotificationCenter.current()
+    private let firestore = Firestore.firestore()
+    private let cooldownSeconds: TimeInterval = 10 * 60
+
+    private var storesById: [String: Store] = [:]
+    private var lastEventAt: [String: Date] = [:]
+    private var prefs = EmployeeNotificationPrefs()
+
+    var currentPrefs: EmployeeNotificationPrefs { prefs }
+
+    private override init() {
+        super.init()
+        locationManager.delegate = self
+        locationManager.allowsBackgroundLocationUpdates = true // Needed for geofence entry/exit callbacks in background.
+        Task { await loadPrefs() }
+    }
+
+    func loadPrefs() async {
+        guard let uid = Auth.auth().currentUser?.uid else { return }
+        do {
+            let snap = try await firestore.collection("users").document(uid).collection("notificationPrefs").document("employeeLocal").getDocument()
+            if let data = snap.data(), let decoded = EmployeeNotificationPrefs(data: data) {
+                prefs = decoded
+            }
+        } catch {
+            print("[EmployeeNotifications] loadPrefs failed: \(error.localizedDescription)")
+        }
+    }
+
+    func savePrefs(_ prefs: EmployeeNotificationPrefs) async {
+        self.prefs = prefs
+        guard let uid = Auth.auth().currentUser?.uid else { return }
+        do {
+            try await firestore.collection("users").document(uid).collection("notificationPrefs").document("employeeLocal").setData(prefs.firestorePayload, merge: true)
+        } catch {
+            print("[EmployeeNotifications] savePrefs failed: \(error.localizedDescription)")
+        }
+        await refreshMonitoredStores(Array(storesById.values))
+    }
+
+    func requestPermissions() {
+        notificationCenter.requestAuthorization(options: [.alert, .badge, .sound]) { _, _ in }
+        locationManager.requestAlwaysAuthorization()
+    }
+
+    func refreshMonitoredStores(_ stores: [Store]) async {
+        storesById = Dictionary(uniqueKeysWithValues: stores.map { ($0.id, $0) })
+        for region in locationManager.monitoredRegions {
+            locationManager.stopMonitoring(for: region)
+        }
+
+        guard prefs.remindersEnabled else { return }
+
+        requestPermissions()
+
+        for store in stores.prefix(20) {
+            let radius = min(max(prefs.radiusMeters, 50), 1000)
+            let region = CLCircularRegion(center: store.coordinate, radius: radius, identifier: store.id)
+            region.notifyOnEntry = true
+            region.notifyOnExit = true
+            locationManager.startMonitoring(for: region)
+        }
+    }
+
+    func locationManager(_ manager: CLLocationManager, didEnterRegion region: CLRegion) {
+        trigger(region: region, type: .enter)
+    }
+
+    func locationManager(_ manager: CLLocationManager, didExitRegion region: CLRegion) {
+        trigger(region: region, type: .exit)
+    }
+
+    private enum EventType { case enter, exit }
+
+    private func trigger(region: CLRegion, type: EventType) {
+        guard prefs.remindersEnabled else { return }
+        if type == .enter && !prefs.checkInEnabled { return }
+        if type == .exit && !prefs.checkOutEnabled { return }
+        if prefs.quietHoursEnabled && isQuietHoursNow() { return }
+
+        let key = "\(region.identifier)-\(type == .enter ? "enter" : "exit")"
+        if let lastAt = lastEventAt[key], Date().timeIntervalSince(lastAt) < cooldownSeconds {
+            return
+        }
+        lastEventAt[key] = Date()
+
+        let storeName = storesById[region.identifier]?.name ?? "your store"
+        let content = UNMutableNotificationContent()
+        content.title = type == .enter ? "Reminder to Check In" : "Reminder to Check Out"
+        content.body = type == .enter
+            ? "You're near \(storeName). Reminder: Check in."
+            : "You left \(storeName). Reminder: Check out."
+        content.sound = .default
+
+        let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
+        notificationCenter.add(request)
+    }
+
+    private func isQuietHoursNow() -> Bool {
+        let hour = Calendar.current.component(.hour, from: Date())
+        if prefs.quietStartHour == prefs.quietEndHour { return true }
+        if prefs.quietStartHour < prefs.quietEndHour {
+            return hour >= prefs.quietStartHour && hour < prefs.quietEndHour
+        }
+        return hour >= prefs.quietStartHour || hour < prefs.quietEndHour
+    }
 }

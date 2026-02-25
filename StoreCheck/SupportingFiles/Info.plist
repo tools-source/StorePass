@@ -34,7 +34,9 @@
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-	<string>StorePass uses your location to validate geo-fenced check-ins.</string>
+	<string>StorePass uses your location to validate geo-fenced check-ins and reminder notifications.</string>
+	<key>NSLocationAlwaysUsageDescription</key>
+	<string>StorePass uses your location in the background to trigger check-in/check-out reminders near your assigned store.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>StorePass uses your location to verify you are at your assigned store when checking in.</string>
 	<key>UIApplicationSceneManifest</key>
@@ -42,6 +44,11 @@
 		<key>UIApplicationSupportsMultipleScenes</key>
 		<false/>
 	</dict>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>location</string>
+		<string>remote-notification</string>
+	</array>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIRequiredDeviceCapabilities</key>
