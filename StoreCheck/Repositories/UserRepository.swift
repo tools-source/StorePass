@@ -77,16 +77,16 @@ final class CloudFunctionsService {
             return ok
         } catch {
             let ns = error as NSError
-
-            // ✅ Works across FirebaseFunctions versions:
-            // - Firebase callable errors typically use domain = FunctionsErrorDomain and code = FunctionsErrorCode
             let isFunctionsError = (ns.domain == FunctionsErrorDomain)
+            let details = ns.userInfo[FunctionsErrorDetailsKey]
+            let messageFromInfo = ns.userInfo[FunctionsErrorDescriptionKey] as? String
+            let codeDescription = String(describing: FunctionsErrorCode(rawValue: ns.code) ?? .internal)
 
-            // Details are not consistent across versions, so print the whole userInfo.
             print(
                 "[Functions][FAIL] callable=\(name) region=\(region) " +
                 "domain=\(ns.domain) code=\(ns.code) isFunctionsError=\(isFunctionsError) " +
-                "message=\(ns.localizedDescription) userInfo=\(ns.userInfo)"
+                "functionsCode=\(codeDescription) message=\(messageFromInfo ?? ns.localizedDescription) " +
+                "details=\(String(describing: details)) userInfo=\(ns.userInfo)"
             )
 
             throw mapError(error)

@@ -46,6 +46,29 @@ struct AccountSettingsView: View {
                     LabeledContent("Role", value: authViewModel.currentUser?.role.rawValue.capitalized ?? "Unknown")
                 }
 
+                if authViewModel.currentUser?.role == .employee {
+                    Section("Reminders") {
+                        Toggle("Enable reminders", isOn: $viewModel.notificationPrefs.remindersEnabled)
+                        Toggle("Check-in reminder", isOn: $viewModel.notificationPrefs.checkInEnabled)
+                            .disabled(!viewModel.notificationPrefs.remindersEnabled)
+                        Toggle("Check-out reminder", isOn: $viewModel.notificationPrefs.checkOutEnabled)
+                            .disabled(!viewModel.notificationPrefs.remindersEnabled)
+
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Distance threshold: \(Int(viewModel.notificationPrefs.radiusMeters))m")
+                            Slider(value: $viewModel.notificationPrefs.radiusMeters, in: 50...1000, step: 10)
+                                .disabled(!viewModel.notificationPrefs.remindersEnabled)
+                        }
+
+                        Toggle("Quiet hours", isOn: $viewModel.notificationPrefs.quietHoursEnabled)
+                            .disabled(!viewModel.notificationPrefs.remindersEnabled)
+                        if viewModel.notificationPrefs.quietHoursEnabled {
+                            Stepper("Quiet start: \(viewModel.notificationPrefs.quietStartHour):00", value: $viewModel.notificationPrefs.quietStartHour, in: 0...23)
+                            Stepper("Quiet end: \(viewModel.notificationPrefs.quietEndHour):00", value: $viewModel.notificationPrefs.quietEndHour, in: 0...23)
+                        }
+                    }
+                }
+
                 Section("Account") {
                     Button("Sign Out", role: .destructive) {
                         Task { await authViewModel.signOut() }
@@ -133,11 +156,16 @@ struct AccountSettingsView: View {
             .onAppear {
                 localNameOverride = authViewModel.currentUser?.name
                 viewModel.refreshCanEditAppleName()
+                viewModel.loadNotificationPrefsIfNeeded(role: authViewModel.currentUser?.role)
             }
             .onChange(of: authViewModel.currentUser?.name) { _, newValue in
                 if let newValue {
                     localNameOverride = newValue
                 }
+            }
+            .onChange(of: viewModel.notificationPrefs) { _, newPrefs in
+                guard authViewModel.currentUser?.role == .employee else { return }
+                Task { await viewModel.persistNotificationPrefs(newPrefs) }
             }
         }
     }
@@ -234,6 +262,7 @@ final class AccountSettingsViewModel: ObservableObject {
     @Published var isDeleting = false
     @Published var needsReauthentication = false
     @Published var canEditAppleName = false
+    @Published var notificationPrefs = EmployeeNotificationPrefs()
 
     private let cloudFunctions = CloudFunctionsService()
     private var appleReauthNonce: String?
@@ -272,6 +301,18 @@ final class AccountSettingsViewModel: ObservableObject {
     func refreshCanEditAppleName() {
         let providerIds = auth.currentUser?.providerData.map(\.providerID) ?? []
         canEditAppleName = providerIds.contains("apple.com")
+    }
+
+    func loadNotificationPrefsIfNeeded(role: UserRole?) {
+        guard role == .employee else { return }
+        Task {
+            await EmployeeGeofenceNotificationManager.shared.loadPrefs()
+            notificationPrefs = EmployeeGeofenceNotificationManager.shared.currentPrefs
+        }
+    }
+
+    func persistNotificationPrefs(_ prefs: EmployeeNotificationPrefs) async {
+        await EmployeeGeofenceNotificationManager.shared.savePrefs(prefs)
     }
 
     func updateName(_ newName: String) async -> Bool {
@@ -483,7 +524,7 @@ final class AccountSettingsViewModel: ObservableObject {
 
     private func userFacingDeleteError(_ error: Error) -> String {
         let nsError = error as NSError
-        if nsError.domain == "com.firebase.functions" || nsError.domain == "FunctionsErrorDomain" {
+        if nsError.domain == FunctionsErrorDomain {
             return "Could not delete account data right now. Please try again."
         }
         if nsError.domain == AuthErrorDomain,
