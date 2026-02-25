@@ -352,10 +352,24 @@ exports.setEmployeeActive = onCall(async (request) => {
 
 async function cleanupMemberships(uid) {
   const maxDeletesPerBatch = 450;
+  let batchChunksCommitted = 0;
+
+  const deleteRefsInChunks = async (refs, label) => {
+    for (let i = 0; i < refs.length; i += maxDeletesPerBatch) {
+      const chunk = refs.slice(i, i + maxDeletesPerBatch);
+      const batch = db.batch();
+      chunk.forEach((ref) => batch.delete(ref));
+      await batch.commit();
+      batchChunksCommitted += 1;
+      console.log(`[cleanupMemberships] uid=${uid} committed ${label} chunk=${batchChunksCommitted} size=${chunk.length}`);
+    }
+  };
+
   const memberDocs = await db.collectionGroup('members')
     .where(admin.firestore.FieldPath.documentId(), '==', uid)
     .get();
-  console.log(`[cleanupMemberships] uid=${uid} memberDocsFound=${memberDocs.size}`);
+  const membershipCount = memberDocs.size;
+  console.log(`[cleanupMemberships] uid=${uid} memberDocsFound=${membershipCount}`);
 
   const storeIds = new Set();
   const memberRefs = memberDocs.docs.map((doc) => {
@@ -364,13 +378,7 @@ async function cleanupMemberships(uid) {
     return doc.ref;
   });
 
-  for (let i = 0; i < memberRefs.length; i += maxDeletesPerBatch) {
-    const chunk = memberRefs.slice(i, i + maxDeletesPerBatch);
-    const batch = db.batch();
-    chunk.forEach((ref) => batch.delete(ref));
-    await batch.commit();
-    console.log(`[cleanupMemberships] uid=${uid} committed member chunk ${Math.floor(i / maxDeletesPerBatch) + 1} size=${chunk.length}`);
-  }
+  await deleteRefsInChunks(memberRefs, 'members');
 
   const now = admin.firestore.FieldValue.serverTimestamp();
   for (const storeId of storeIds) {
@@ -380,41 +388,27 @@ async function cleanupMemberships(uid) {
 
   try {
     const employeeStoresSnap = await db.collection('employeeStores').doc(uid).collection('stores').get();
-    console.log(`[cleanupMemberships] uid=${uid} employeeStoresDocsFound=${employeeStoresSnap.size}`);
-    for (let i = 0; i < employeeStoresSnap.docs.length; i += maxDeletesPerBatch) {
-      const chunk = employeeStoresSnap.docs.slice(i, i + maxDeletesPerBatch);
-      const batch = db.batch();
-      chunk.forEach((doc) => batch.delete(doc.ref));
-      await batch.commit();
-      console.log(`[cleanupMemberships] uid=${uid} committed employeeStores chunk ${Math.floor(i / maxDeletesPerBatch) + 1} size=${chunk.length}`);
-    }
-  } catch (error) {
-    console.error(`[cleanupMemberships] uid=${uid} failed deleting employeeStores`, error);
-  }
+    const employeeStoresCount = employeeStoresSnap.size;
+    console.log(`[cleanupMemberships] uid=${uid} employeeStoresDocsFound=${employeeStoresCount}`);
+    await deleteRefsInChunks(employeeStoresSnap.docs.map((doc) => doc.ref), 'employeeStores');
 
-  try {
     const employeeCheckinsSnap = await db.collection('employeeCheckins').doc(uid).collection('checkins').get();
-    console.log(`[cleanupMemberships] uid=${uid} employeeCheckinsDocsFound=${employeeCheckinsSnap.size}`);
-    for (let i = 0; i < employeeCheckinsSnap.docs.length; i += maxDeletesPerBatch) {
-      const chunk = employeeCheckinsSnap.docs.slice(i, i + maxDeletesPerBatch);
-      const batch = db.batch();
-      chunk.forEach((doc) => batch.delete(doc.ref));
-      await batch.commit();
-      console.log(`[cleanupMemberships] uid=${uid} committed employeeCheckins chunk ${Math.floor(i / maxDeletesPerBatch) + 1} size=${chunk.length}`);
-    }
-  } catch (error) {
-    console.error(`[cleanupMemberships] uid=${uid} failed deleting employeeCheckins`, error);
-  }
+    const employeeCheckinsCount = employeeCheckinsSnap.size;
+    console.log(`[cleanupMemberships] uid=${uid} employeeCheckinsDocsFound=${employeeCheckinsCount}`);
+    await deleteRefsInChunks(employeeCheckinsSnap.docs.map((doc) => doc.ref), 'employeeCheckins');
 
-  try {
-    await db.collection('users').doc(uid).set({ assignedStoreIds: [] }, { merge: true });
-    console.log(`[cleanupMemberships] uid=${uid} cleared assignedStoreIds`);
+    await db.collection('users').doc(uid).delete();
+    console.log(`[cleanupMemberships] uid=${uid} deleted users/${uid}`);
+    return {
+      membershipCount,
+      employeeStoresCount,
+      employeeCheckinsCount,
+      batchChunksCommitted,
+    };
   } catch (error) {
-    console.error(`[cleanupMemberships] uid=${uid} failed clearing assignedStoreIds`, error);
+    console.error(`[cleanupMemberships] uid=${uid} failed`, error);
+    throw error;
   }
-
-  await db.collection('users').doc(uid).delete();
-  console.log(`[cleanupMemberships] uid=${uid} deleted users/${uid}`);
 }
 
 exports.deleteMyAccount = onCall(async (request) => {
@@ -428,7 +422,8 @@ exports.deleteMyAccount = onCall(async (request) => {
     console.log(`[deleteMyAccount] start uid=${uid} mode=${mode}`);
 
     if (mode === 'cleanup_memberships') {
-      await cleanupMemberships(uid);
+      const cleanupSummary = await cleanupMemberships(uid);
+      console.log(`[deleteMyAccount] membershipCount=${cleanupSummary.membershipCount} employeeStoresCount=${cleanupSummary.employeeStoresCount} employeeCheckinsCount=${cleanupSummary.employeeCheckinsCount} batchChunksCommitted=${cleanupSummary.batchChunksCommitted}`);
       return { ok: true, mode };
     }
 
