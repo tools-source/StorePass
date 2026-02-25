@@ -62,7 +62,7 @@ final class CloudFunctionsService {
 
     private func callExpectingOK(name: String, payload: [String: Any]) async throws -> Bool {
         do {
-            print("[Functions][CALL] name=\(name) region=\(region) payload=\(payload)")
+            print("[Functions][CALL] name=\(name) region=\(region) payloadKeys=\(Array(payload.keys).sorted()) payload=\(payload)")
             let callable = functions.httpsCallable(name)
             let result = try await callable.call(payload)
             print("[Functions][OK] name=\(name) result=\(String(describing: result.data))")
@@ -83,10 +83,12 @@ final class CloudFunctionsService {
             let isFunctionsError = (ns.domain == FunctionsErrorDomain)
 
             // Details are not consistent across versions, so print the whole userInfo.
+            let details = ns.userInfo["details"]
+            let backendCode = ns.userInfo["code"]
             print(
                 "[Functions][FAIL] callable=\(name) region=\(region) " +
                 "domain=\(ns.domain) code=\(ns.code) isFunctionsError=\(isFunctionsError) " +
-                "message=\(ns.localizedDescription) userInfo=\(ns.userInfo)"
+                "message=\(ns.localizedDescription) backendCode=\(String(describing: backendCode)) details=\(String(describing: details)) userInfo=\(ns.userInfo)"
             )
 
             throw mapError(error)

@@ -243,6 +243,14 @@ final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
     }
 
     func deleteCheckIn(checkinId: String, employeeId: String, storeId: String, managerId: String?) async throws {
+        await logOperationContext(
+            operation: "employee_delete_checkin",
+            paths: [
+                "checkins/\(checkinId)",
+                "employeeCheckins/\(employeeId)/checkins/\(checkinId)",
+                "managerCheckins/<resolved>/stores/\(storeId)/checkins/\(checkinId)"
+            ]
+        )
         let managerId = try await resolveManagerId(storeId: storeId, preferredManagerId: managerId)
         let batch = db.batch()
         batch.deleteDocument(db.collection("checkins").document(checkinId))
@@ -252,6 +260,14 @@ final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
     }
 
     func deleteCheckIn(checkinId: String, storeId: String, managerId: String) async throws {
+        await logOperationContext(
+            operation: "manager_delete_checkin",
+            paths: [
+                "checkins/\(checkinId)",
+                "managerCheckins/\(managerId)/stores/\(storeId)/checkins/\(checkinId)",
+                "employeeCheckins/<resolvedEmployee>/checkins/\(checkinId)"
+            ]
+        )
         let managerMirrorRef = db.collection("managerCheckins")
             .document(managerId)
             .collection("stores")
@@ -272,6 +288,14 @@ final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
     }
 
     func clearAllCheckIns(isManagerScope: Bool, storeId: String?, managerId: String?) async throws {
+        await logOperationContext(
+            operation: isManagerScope ? "manager_clear_all_checkins" : "employee_clear_all_checkins",
+            paths: [
+                isManagerScope
+                    ? "managerCheckins/\(managerId ?? "<resolved>")/stores/\(storeId ?? "<missing>")/checkins/*"
+                    : "employeeCheckins/\(Auth.auth().currentUser?.uid ?? "<nil>")/checkins/*"
+            ]
+        )
         guard let uid = Auth.auth().currentUser?.uid else {
             throw NSError(domain: "StorePass", code: 4001, userInfo: [NSLocalizedDescriptionKey: "You must be signed in."])
         }
@@ -639,6 +663,28 @@ final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
         }
 
         return nil
+    }
+
+
+    private func logOperationContext(operation: String, paths: [String]) async {
+        let uid = Auth.auth().currentUser?.uid ?? "nil"
+        let providerIDs = Auth.auth().currentUser?.providerData.map(\.providerID) ?? []
+        var role = "nil"
+        var isActive = "nil"
+
+        if uid != "nil" {
+            do {
+                let doc = try await db.collection("users").document(uid).getDocument()
+                role = (doc.data()?["role"] as? String) ?? "nil"
+                if let active = doc.data()?["isActive"] as? Bool {
+                    isActive = String(active)
+                }
+            } catch {
+                print("[CheckInOp] operation=\(operation) uid=\(uid) profileLookupError=\(error.localizedDescription)")
+            }
+        }
+
+        print("[CheckInOp] operation=\(operation) uid=\(uid) providerIDs=\(providerIDs) role=\(role) isActive=\(isActive) paths=\(paths)")
     }
 
     private func mapFirestoreError(_ error: Error) -> Error {

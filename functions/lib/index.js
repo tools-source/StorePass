@@ -408,7 +408,7 @@ exports.removeEmployeeFromStore = (0, https_1.onCall)({ region: 'us-central1' },
         console.log(`[REMOVE_EMPLOYEE_FROM_STORE][START] managerId=${managerId} storeId=${storeId} employeeId=${employeeId}`);
         const managerLookup = await (0, helpers_1.requireActiveManager)(db, managerId);
         console.log(`[REMOVE_EMPLOYEE_FROM_STORE] managerLookup role=${managerLookup.userRole} userIsActive=${managerLookup.userIsActive} managerDocActive=${managerLookup.managerDocActive}`);
-        if (!managerLookup.managerDocActive || managerLookup.userRole !== 'manager' || managerLookup.userIsActive !== true) {
+        if (managerLookup.userRole !== 'manager' || managerLookup.userIsActive !== true) {
             throw new https_1.HttpsError('failed-precondition', 'This action can’t be completed right now.');
         }
         const storeRef = db.collection('stores').doc(storeId);
