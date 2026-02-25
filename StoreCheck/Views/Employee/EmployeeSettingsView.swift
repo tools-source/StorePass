@@ -441,9 +441,14 @@ final class AccountSettingsViewModel: ObservableObject {
             }
 
             do {
+                var payload: [String: Any] = ["mode": "cleanup_memberships"]
+                let roleValue: Any = role?.rawValue ?? NSNull()
+                payload["role"] = roleValue
+                print("[DeleteAccount] role_debug rawValue=\(String(describing: role?.rawValue)) roleValueType=\(type(of: roleValue))")
+
                 _ = try await self.callable(
                     name: "deleteMyAccount",
-                    payload: ["mode": "cleanup_memberships", "role": role?.rawValue as Any]
+                    payload: payload
                 )
 
                 await MainActor.run {
