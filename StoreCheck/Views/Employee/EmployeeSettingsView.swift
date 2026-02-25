@@ -235,7 +235,7 @@ final class AccountSettingsViewModel: ObservableObject {
     @Published var isDeletingAccount = false
     @Published var needsReauthentication = false
     @Published var canEditAppleName = false
-
+    private var deleteAccountTask: Task<Void, Never>? = nil
     private let cloudFunctions = CloudFunctionsService()
     private var appleReauthNonce: String?
     private let functions = Functions.functions(region: "us-central1")
@@ -406,39 +406,61 @@ final class AccountSettingsViewModel: ObservableObject {
         await executeDeleteAccount(role: role, allowReauthPrompt: false)
     }
 
+    @MainActor
     private func executeDeleteAccount(role: UserRole?, allowReauthPrompt: Bool) async {
         _ = allowReauthPrompt
+
         guard let currentUser = auth.currentUser else {
             errorMessage = "You must be signed in."
             return
         }
-        guard !isDeletingAccount else {
-            print("[DeleteAccount] stage=skip_duplicate_cloud_call uid=\(currentUser.uid) provider=\(providerForCurrentUser())")
-            return
-        }
-        guard !isDeleting else {
-            print("[DeleteAccount] stage=skip_duplicate uid=\(currentUser.uid) provider=\(providerForCurrentUser())")
+
+        // ✅ Single-flight guard (stronger than booleans)
+        if deleteAccountTask != nil {
+            print("[DeleteAccount] stage=skip_duplicate_task uid=\(currentUser.uid) provider=\(providerForCurrentUser())")
             return
         }
 
+        // set UI flags immediately (main actor)
         isDeleting = true
         isDeletingAccount = true
-        defer { isDeleting = false }
-        defer { isDeletingAccount = false }
 
         let provider = providerForCurrentUser()
         logDeleteAccountStage("start", uid: currentUser.uid, provider: provider)
 
-        do {
-            _ = try await callable(name: "deleteMyAccount", payload: ["mode": "cleanup_memberships", "role": role?.rawValue as Any])
-            logDeleteAccountStage("deleteMyAccount_ok", uid: currentUser.uid, provider: provider)
+        let uid = currentUser.uid
 
-            needsReauthentication = false
-            errorMessage = nil
-        } catch {
-            logDeleteAccountError(error)
-            errorMessage = userFacingDeleteError(error)
+        deleteAccountTask = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                Task { @MainActor in
+                    self.isDeleting = false
+                    self.isDeletingAccount = false
+                    self.deleteAccountTask = nil
+                }
+            }
+
+            do {
+                _ = try await self.callable(
+                    name: "deleteMyAccount",
+                    payload: ["mode": "cleanup_memberships", "role": role?.rawValue as Any]
+                )
+
+                await MainActor.run {
+                    self.logDeleteAccountStage("deleteMyAccount_ok", uid: uid, provider: provider)
+                    self.needsReauthentication = false
+                    self.errorMessage = nil
+                }
+            } catch {
+                await MainActor.run {
+                    self.logDeleteAccountError(error)
+                    self.errorMessage = self.userFacingDeleteError(error)
+                }
+            }
         }
+
+        // wait for completion if caller expects it
+        await deleteAccountTask?.value
     }
 
     private func logDeleteAccountStage(_ stage: String, uid: String, provider: String, error: Error? = nil) {
