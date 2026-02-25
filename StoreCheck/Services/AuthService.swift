@@ -1,7 +1,6 @@
 import AuthenticationServices
 import CryptoKit
 import FirebaseAuth
-import FirebaseCore
 import Foundation
 import GoogleSignIn
 import Security
@@ -13,7 +12,6 @@ protocol AuthServiceProtocol: AnyObject {
     func setCurrentUser(_ user: AppUser?)
 
     func restoreSession(forceSignOutOnLaunch: Bool) async
-    func signInWithGoogle() async throws
     func signInWithApple(idToken: String, rawNonce: String, fullName: PersonNameComponents?, email: String?) async throws
     func authUser() -> FirebaseAuth.User?
     func signOut() async throws
@@ -29,14 +27,6 @@ final class AuthService: ObservableObject, AuthServiceProtocol {
     private lazy var auth: Auth = authFactory()
     private let authFactory: () -> Auth
 
-    private var firebaseApp: FirebaseApp {
-        FirebaseBootstrap.assertConfigured(context: "AuthService.firebaseApp")
-        guard let app = FirebaseApp.app() else {
-            fatalError("Firebase app is unexpectedly unavailable.")
-        }
-        return app
-    }
-
     init(authFactory: @escaping () -> Auth = {
         FirebaseBootstrap.assertConfigured(context: "AuthService.authFactory")
         return Auth.auth()
@@ -50,30 +40,6 @@ final class AuthService: ObservableObject, AuthServiceProtocol {
             GIDSignIn.sharedInstance.signOut()
             currentUser = nil
         }
-    }
-
-    func signInWithGoogle() async throws {
-        FirebaseBootstrap.assertConfigured(context: "AuthService.signInWithGoogle")
-
-        guard let clientID = firebaseApp.options.clientID else {
-            throw NSError(domain: "StorePass", code: 1001, userInfo: [NSLocalizedDescriptionKey: "Firebase is not configured. Verify GoogleService-Info.plist is included in the app target."])
-        }
-
-        GIDSignIn.sharedInstance.configuration = GIDConfiguration(clientID: clientID)
-        guard let presenter = UIApplication.shared.connectedScenes
-            .compactMap({ $0 as? UIWindowScene })
-            .flatMap({ $0.windows })
-            .first(where: { $0.isKeyWindow })?.rootViewController else {
-            throw NSError(domain: "StorePass", code: 1002, userInfo: [NSLocalizedDescriptionKey: "Unable to present Google sign-in."])
-        }
-
-        let result = try await GIDSignIn.sharedInstance.signIn(withPresenting: presenter)
-        guard let idToken = result.user.idToken?.tokenString else {
-            throw NSError(domain: "StorePass", code: 1003, userInfo: [NSLocalizedDescriptionKey: "Google ID token is missing."])
-        }
-
-        let credential = GoogleAuthProvider.credential(withIDToken: idToken, accessToken: result.user.accessToken.tokenString)
-        _ = try await auth.signIn(with: credential)
     }
 
     func signInWithApple(idToken: String, rawNonce: String, fullName: PersonNameComponents?, email: String?) async throws {

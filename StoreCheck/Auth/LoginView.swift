@@ -28,13 +28,6 @@ struct LoginView: View {
             .frame(maxWidth: 420)
 
             VStack(spacing: 12) {
-                Button("Continue with Google") {
-                    guard let requestedRole = viewModel.requestedRole else { return }
-                    Task { await viewModel.signInWithGoogle(requestedRole: requestedRole) }
-                }
-                .buttonStyle(PrimaryButtonStyle())
-                .disabled(viewModel.isLoading || viewModel.requestedRole == nil)
-
                 SignInWithAppleButton(.signIn) { request in
                     viewModel.prepareAppleSignInRequest(request)
                 } onCompletion: { result in
@@ -70,6 +63,9 @@ struct LoginView: View {
         }
         .onChange(of: viewModel.errorMessage) { _, newValue in
             showError = newValue != nil
+        }
+        .onAppear {
+            print("[AuthUI] apple_only_login_enabled=true")
         }
     }
 }

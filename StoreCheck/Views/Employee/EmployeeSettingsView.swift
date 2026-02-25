@@ -235,7 +235,6 @@ final class AccountSettingsViewModel: ObservableObject {
     @Published var needsReauthentication = false
     @Published var canEditAppleName = false
 
-    private let cloudFunctions = CloudFunctionsService()
     private var appleReauthNonce: String?
     private let functions = Functions.functions(region: "us-central1")
     private let firestore = Firestore.firestore()
@@ -301,26 +300,27 @@ final class AccountSettingsViewModel: ObservableObject {
             return
         }
         guard !isDeleting else {
-            print("[DeleteAccount] stage=skip_duplicate uid=\(currentUser.uid) provider=\(providerForCurrentUser())")
+            print("[DeleteFlow] skip_duplicate uid=\(currentUser.uid) role=manager provider=\(providerForCurrentUser()) function=deleteManagerAccount")
             return
         }
 
-        print("[DeleteAccount][START] uid=\(currentUser.uid)")
+        let provider = providerForCurrentUser()
+        print("[DeleteFlow] calling function=deleteManagerAccount uid=\(currentUser.uid) role=manager provider=\(provider)")
         isDeleting = true
         defer { isDeleting = false }
 
         do {
-            _ = try await cloudFunctions.deleteManagerAccount()
-            print("[DeleteAccount][FUNCTION_OK]")
+            let response = try await callable(name: "deleteManagerAccount", payload: [:])
+            print("[DeleteFlow] result function=deleteManagerAccount uid=\(currentUser.uid) payload=\(response)")
 
             do {
                 try await currentUser.delete()
-                print("[DeleteAccount][AUTH_DELETE_OK]")
+                print("[DeleteFlow] auth_delete_ok uid=\(currentUser.uid) function=deleteManagerAccount")
             } catch {
                 let nsError = error as NSError
                 if nsError.domain == AuthErrorDomain,
                    nsError.code == AuthErrorCode.userNotFound.rawValue {
-                    print("[DeleteAccount][AUTH_DELETE_SKIPPED] user already removed by backend")
+                    print("[DeleteFlow] auth_delete_skipped uid=\(currentUser.uid) function=deleteManagerAccount reason=user_not_found")
                 } else {
                     throw error
                 }
@@ -411,7 +411,7 @@ final class AccountSettingsViewModel: ObservableObject {
             return
         }
         guard !isDeleting else {
-            print("[DeleteAccount] stage=skip_duplicate uid=\(currentUser.uid) provider=\(providerForCurrentUser())")
+            print("[DeleteFlow] skip_duplicate uid=\(currentUser.uid) role=\(role?.rawValue ?? "unknown") provider=\(providerForCurrentUser()) function=deleteMyAccount")
             return
         }
 
@@ -419,10 +419,12 @@ final class AccountSettingsViewModel: ObservableObject {
         defer { isDeleting = false }
 
         let provider = providerForCurrentUser()
+        print("[DeleteFlow] calling function=deleteMyAccount uid=\(currentUser.uid) role=\(role?.rawValue ?? "unknown") provider=\(provider)")
         logDeleteAccountStage("start", uid: currentUser.uid, provider: provider)
 
         do {
-            _ = try await callable(name: "deleteMyAccount", payload: ["mode": "cleanup_memberships", "role": role?.rawValue as Any])
+            let response = try await callable(name: "deleteMyAccount", payload: ["mode": "cleanup_memberships", "role": role?.rawValue as Any])
+            print("[DeleteFlow] result function=deleteMyAccount uid=\(currentUser.uid) payload=\(response)")
             logDeleteAccountStage("cleanup_ok", uid: currentUser.uid, provider: provider)
 
             if auth.currentUser != nil {
@@ -466,10 +468,10 @@ final class AccountSettingsViewModel: ObservableObject {
     private func logDeleteAccountStage(_ stage: String, uid: String, provider: String, error: Error? = nil) {
         if let error {
             let nsError = error as NSError
-            print("[DeleteAccount] stage=\(stage) uid=\(uid) provider=\(provider) errorDomain=\(nsError.domain) code=\(nsError.code) message=\(nsError.localizedDescription)")
+            print("[DeleteFlow] stage=\(stage) uid=\(uid) provider=\(provider) errorDomain=\(nsError.domain) code=\(nsError.code) message=\(nsError.localizedDescription)")
             return
         }
-        print("[DeleteAccount] stage=\(stage) uid=\(uid) provider=\(provider) errorDomain=none code=0 message=ok")
+        print("[DeleteFlow] stage=\(stage) uid=\(uid) provider=\(provider) errorDomain=none code=0 message=ok")
     }
 
     private func logDeleteAccountError(_ error: Error) {
@@ -477,8 +479,8 @@ final class AccountSettingsViewModel: ObservableObject {
         let userInfoKeys = Array(nsError.userInfo.keys).map { String(describing: $0) }.sorted()
         let isFunctionsDomain = nsError.domain == FunctionsErrorDomain
 
-        print("[DeleteAccount] stage=error uid=\(auth.currentUser?.uid ?? "nil") provider=\(providerForCurrentUser()) errorDomain=\(nsError.domain) code=\(nsError.code) message=\(nsError.localizedDescription)")
-        print("[DeleteAccount] stage=error_details functionsDomain=\(FunctionsErrorDomain) isFunctionsDomain=\(isFunctionsDomain) userInfoKeys=\(userInfoKeys) userInfo=\(nsError.userInfo)")
+        print("[DeleteFlow] error domain=\(nsError.domain) code=\(nsError.code) details=\(nsError.userInfo) uid=\(auth.currentUser?.uid ?? "nil") provider=\(providerForCurrentUser()) message=\(nsError.localizedDescription)")
+        print("[DeleteFlow] error_debug functionsDomain=\(FunctionsErrorDomain) isFunctionsDomain=\(isFunctionsDomain) userInfoKeys=\(userInfoKeys)")
     }
 
     private func userFacingDeleteError(_ error: Error) -> String {
@@ -498,17 +500,16 @@ final class AccountSettingsViewModel: ObservableObject {
         let providerIds = user.providerData.map(\.providerID)
         if providerIds.contains("apple.com") { return "apple.com" }
         if providerIds.contains("google.com") { return "google.com" }
-        if providerIds.contains("password") { return "password" }
         return providerIds.first ?? "unknown"
     }
 
     private func callable(name: String, payload: [String: Any]) async throws -> [String: Any] {
-        print("[DeleteAccount] callable_request name=\(name) region=us-central1 payload=\(payload)")
+        print("[DeleteFlow] calling function=\(name) uid=\(auth.currentUser?.uid ?? "nil") payload=\(payload)")
         do {
             let callable = functions.httpsCallable(name)
             let result = try await callable.call(payload)
             let responseKeys = (result.data as? [String: Any])?.keys.sorted() ?? []
-            print("[DeleteAccount] callable_response name=\(name) responseKeys=\(responseKeys) data=\(String(describing: result.data))")
+            print("[DeleteFlow] result function=\(name) responseKeys=\(responseKeys) data=\(String(describing: result.data))")
             return result.data as? [String: Any] ?? [:]
         } catch {
             logDeleteAccountError(error)

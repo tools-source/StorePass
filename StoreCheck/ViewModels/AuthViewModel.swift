@@ -62,23 +62,6 @@ final class AuthViewModel: ObservableObject {
         }
     }
 
-    func signInWithGoogle(requestedRole: UserRole) async {
-        guard !isResolvingProfile else { return }
-        signInNoticeMessage = nil
-        isLoading = true
-        isRoleResolutionLoading = true
-        defer { isLoading = false }
-        defer { isRoleResolutionLoading = false }
-
-        do {
-            try await authService.signInWithGoogle()
-            try await resolveProfileAndRoute(requestedRole: requestedRole, isSessionRestore: false, provider: "google")
-        } catch {
-            showEmployeeSetupRequired = true
-            errorMessage = userFacingMessage(for: error)
-        }
-    }
-
     func prepareAppleSignInRequest(_ request: ASAuthorizationAppleIDRequest) {
         let nonce = authService.randomNonceString(length: 32)
         currentNonce = nonce
