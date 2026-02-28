@@ -22,6 +22,7 @@ struct CheckInHistoryView: View {
     @State private var editingCheckIn: CheckIn?
     @State private var editStatus: CheckInStatus = .approved
     @State private var editReason = ""
+
     private let timeFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.locale = .current
@@ -164,33 +165,32 @@ struct CheckInHistoryView: View {
                 .foregroundStyle(.secondary)
                 .listRowBackground(DS.Colors.card)
         } else {
-            Section {
-                TimesheetListCard {
-                    TimesheetColumnHeaderRow(leadingTitle: "Store")
-                } rows: {
-                    ForEach(viewModel.visibleCheckIns) { item in
-                        timesheetRow(for: item)
-                            .swipeActions(edge: .leading) {
-                                Button("Edit") {
-                                    editingCheckIn = item
-                                    editStatus = item.status
-                                    editReason = item.rejectReason ?? ""
-                                }
-                                .tint(.blue)
+            TimesheetListCard {
+                TimesheetColumnHeaderRow(leadingTitle: "Store")
+            } rows: {
+                ForEach(Array(viewModel.visibleCheckIns.enumerated()), id: \.element.id) { index, item in
+                    timesheetRow(for: item, showDivider: index < viewModel.visibleCheckIns.count - 1)
+                        .contentShape(Rectangle())
+                        .swipeActions(edge: .leading) {
+                            Button("Edit") {
+                                editingCheckIn = item
+                                editStatus = item.status
+                                editReason = item.rejectReason ?? ""
                             }
-                            .swipeActions(edge: .trailing) {
-                                Button("Copy") {
-                                    viewModel.copySingle(item)
-                                }
-                                .tint(.indigo)
+                            .tint(.blue)
+                        }
+                        .swipeActions(edge: .trailing) {
+                            Button("Copy") {
+                                viewModel.copySingle(item)
+                            }
+                            .tint(.indigo)
 
-                                if item.checkOutTime == nil {
-                                    Button("Delete", role: .destructive) {
-                                        Task { await viewModel.delete(item) }
-                                    }
+                            if item.checkOutTime == nil {
+                                Button("Delete", role: .destructive) {
+                                    Task { await viewModel.delete(item) }
                                 }
                             }
-                    }
+                        }
                 }
             }
             .listRowBackground(Color.clear)
@@ -199,7 +199,7 @@ struct CheckInHistoryView: View {
         }
     }
 
-    private func timesheetRow(for item: CheckIn) -> some View {
+    private func timesheetRow(for item: CheckIn, showDivider: Bool) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
                 Text(item.storeName)
@@ -222,10 +222,12 @@ struct CheckInHistoryView: View {
             Text("\(item.status.rawValue.capitalized) • \(Int(item.distanceMeters))m • ±\(Int(item.accuracyMeters))m")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
+
+            if showDivider {
+                Divider()
+                    .opacity(0.2)
+            }
         }
-        .padding(.vertical, 4)
-        .overlay(alignment: .bottom) {
-            Divider().opacity(0.2)
-        }
+        .padding(.vertical, 8)
     }
 }
