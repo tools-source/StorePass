@@ -3,6 +3,7 @@ import Foundation
 
 enum FirebaseBootstrap {
     private static let lock = NSLock()
+    private static var hasLoggedConfiguration = false
 
     static func configureIfNeeded(
         caller: String = #function,
@@ -14,7 +15,14 @@ enum FirebaseBootstrap {
 
         if FirebaseApp.app() == nil {
             FirebaseApp.configure()
-            print("✅ Firebase configured:", FirebaseApp.app()?.options.projectID ?? "nil")
+        }
+
+        if !hasLoggedConfiguration {
+            let bundleId = Bundle.main.bundleIdentifier ?? "unknown"
+            let projectId = FirebaseApp.app()?.options.projectID ?? "nil"
+            let configured = FirebaseApp.app() != nil
+            print("[FirebaseBootstrap] bundleId=\(bundleId) projectId=\(projectId) configured=\(configured)")
+            hasLoggedConfiguration = true
         }
 
         #if DEBUG
