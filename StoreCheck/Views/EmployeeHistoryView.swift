@@ -22,6 +22,9 @@ struct CheckInHistoryView: View {
     @State private var editingCheckIn: CheckIn?
     @State private var editStatus: CheckInStatus = .approved
     @State private var editReason = ""
+    @State private var filterByDay = true
+
+    private let calendar = Calendar.current
     private let timeFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.locale = .current
@@ -30,87 +33,130 @@ struct CheckInHistoryView: View {
         return formatter
     }()
 
+    private struct DaySection: Identifiable {
+        let day: Date
+        let items: [CheckIn]
+
+        var id: Date { day }
+        var dailyTotalSeconds: Int { items.compactMap(\.computedDurationSeconds).reduce(0, +) }
+    }
+
+    private var storeFilteredCheckIns: [CheckIn] {
+        viewModel.checkIns
+            .filter { viewModel.selectedStoreId == nil || $0.storeId == viewModel.selectedStoreId }
+            .sorted { $0.checkInTime > $1.checkInTime }
+    }
+
+    private var daySections: [DaySection] {
+        let source = filterByDay
+            ? storeFilteredCheckIns.filter { calendar.isDate($0.checkInTime, inSameDayAs: viewModel.selectedDate) }
+            : storeFilteredCheckIns
+
+        let grouped = Dictionary(grouping: source) { calendar.startOfDay(for: $0.checkInTime) }
+
+        return grouped
+            .map { day, items in
+                DaySection(day: day, items: items.sorted { $0.checkInTime > $1.checkInTime })
+            }
+            .sorted { $0.day > $1.day }
+    }
+
+    private var selectedDayTotalSeconds: Int {
+        storeFilteredCheckIns
+            .filter { calendar.isDate($0.checkInTime, inSameDayAs: viewModel.selectedDate) }
+            .compactMap(\.computedDurationSeconds)
+            .reduce(0, +)
+    }
+
+    private var visibleItems: [CheckIn] {
+        daySections.flatMap(\.items)
+    }
+
     var body: some View {
         NavigationStack {
             List {
-                Section {
-                    HStack {
-                        Text("Selected day")
-                            .foregroundStyle(.secondary)
-                        Spacer()
-                        DatePicker("", selection: $viewModel.selectedDate, displayedComponents: .date)
-                            .labelsHidden()
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 6)
-                            .background(.white.opacity(0.08), in: Capsule())
-                    }
-
-                    HStack {
-                        Text(viewModel.selectedDate.formatted(date: .abbreviated, time: .omitted))
-                            .font(.headline)
-                        Spacer()
-                        Text("Daily total \(viewModel.formattedDuration(seconds: viewModel.dailyTotalSeconds))")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(.blue)
-                    }
-                }
-                .listRowBackground(DS.Colors.card)
+                filterCard
+                    .listRowInsets(EdgeInsets(top: 12, leading: 16, bottom: 12, trailing: 16))
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
 
                 if let errorMessage = viewModel.errorMessage {
                     Text(errorMessage)
                         .font(.subheadline)
                         .foregroundStyle(.red)
-                }
-
-                if viewModel.visibleCheckIns.isEmpty, viewModel.errorMessage == nil {
+                        .listRowBackground(DS.Colors.card)
+                } else if daySections.isEmpty {
                     Text("No check-ins yet. Make a check-in to see history.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
+                        .listRowBackground(DS.Colors.card)
                 } else {
-                    Section {
-                        rowHeader
-                        ForEach(viewModel.visibleCheckIns) { item in
-                            timesheetRow(for: item)
-                                .swipeActions(edge: .leading) {
-                                    Button("Edit") {
-                                        editingCheckIn = item
-                                        editStatus = item.status
-                                        editReason = item.rejectReason ?? ""
-                                    }
-                                    .tint(.blue)
-                                }
-                                .swipeActions(edge: .trailing) {
-                                    Button("Copy") {
-                                        viewModel.copySingle(item)
-                                    }
-                                    .tint(.indigo)
+                    ForEach(daySections) { section in
+                        Section {
+                            TimesheetListCard {
+                                TimesheetColumnHeaderRow(leadingTitle: "Store")
+                            } rows: {
+                                VStack(spacing: 0) {
+                                    ForEach(Array(section.items.enumerated()), id: \.element.id) { index, item in
+                                        timesheetRow(for: item)
+                                            .contentShape(Rectangle())
+                                            .swipeActions(edge: .leading) {
+                                                Button("Edit") {
+                                                    editingCheckIn = item
+                                                    editStatus = item.status
+                                                    editReason = item.rejectReason ?? ""
+                                                }
+                                                .tint(.blue)
+                                            }
+                                            .swipeActions(edge: .trailing) {
+                                                Button("Copy") {
+                                                    viewModel.copySingle(item)
+                                                }
+                                                .tint(.indigo)
 
-                                    if item.checkOutTime == nil {
-                                        Button("Delete", role: .destructive) {
-                                            Task { await viewModel.delete(item) }
+                                                if item.checkOutTime == nil {
+                                                    Button("Delete", role: .destructive) {
+                                                        Task { await viewModel.delete(item) }
+                                                    }
+                                                }
+                                            }
+
+                                        if index < section.items.count - 1 {
+                                            Divider().opacity(0.2)
                                         }
                                     }
                                 }
-                        }
-                    } header: {
-                        Text("Timesheet")
+                            }
+                            .padding(.bottom, 6)
+                        } header: {
+                            HStack {
+                                Text(section.day.timesheetDayString())
+                                Spacer()
+                                Text("Daily total: \(viewModel.formattedDuration(seconds: section.dailyTotalSeconds))")
+                            }
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.white)
                             .textCase(nil)
+                        }
+                        .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(Color.clear)
                     }
-                    .listRowBackground(DS.Colors.card)
                 }
             }
+            .listStyle(.plain)
             .scrollContentBackground(.hidden)
             .background(DS.Colors.background)
             .navigationTitle("Check-in History")
             .toolbar {
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     Button {
-                        viewModel.copyAllVisible()
+                        viewModel.copy(items: visibleItems)
                     } label: {
                         Image(systemName: "doc.on.doc")
                     }
 
-                    if let exportURL = viewModel.exportURL() {
+                    if let exportURL = viewModel.exportURL(for: visibleItems) {
                         ShareLink(item: exportURL) {
                             Image(systemName: "square.and.arrow.up")
                         }
@@ -160,48 +206,77 @@ struct CheckInHistoryView: View {
         }
     }
 
-    private var rowHeader: some View {
-        HStack(spacing: 8) {
-            Text("Store")
-                .frame(maxWidth: .infinity, alignment: .leading)
-            Text("Start")
-                .frame(width: 100, alignment: .leading)
-            Text("End")
-                .frame(width: 100, alignment: .leading)
-            Text("Time")
-                .frame(width: 76, alignment: .trailing)
+    private var filterCard: some View {
+        TimesheetHeaderCard {
+            TimesheetLabeledMenu(
+                title: "Store",
+                selectionTitle: viewModel.selectedStoreName,
+                isInteractive: viewModel.hasMultipleStores
+            ) {
+                ForEach(viewModel.storeOptions) { store in
+                    Button {
+                        viewModel.selectedStoreId = store.id
+                    } label: {
+                        if viewModel.selectedStoreId == store.id {
+                            Label(store.name, systemImage: "checkmark")
+                        } else {
+                            Text(store.name)
+                        }
+                    }
+                }
+            }
+
+            Toggle("Filter by day", isOn: $filterByDay)
+                .tint(DS.Colors.primary)
+                .font(.subheadline.weight(.semibold))
+
+            if filterByDay {
+                DatePicker("Selected day", selection: $viewModel.selectedDate, displayedComponents: .date)
+                    .datePickerStyle(.compact)
+                    .font(.subheadline.weight(.semibold))
+                    .tint(DS.Colors.primary)
+            }
+
+            Divider().opacity(0.2)
+
+            HStack {
+                Text(viewModel.selectedDate.timesheetDayString())
+                    .font(.headline)
+                Spacer()
+                Text("Daily total: \(viewModel.formattedDuration(seconds: selectedDayTotalSeconds))")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(DS.Colors.primary)
+            }
         }
-        .font(.caption.weight(.semibold))
-        .foregroundStyle(.secondary)
-        .padding(.bottom, 2)
     }
 
     private func timesheetRow(for item: CheckIn) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
                 Text(item.storeName)
-                    .font(.subheadline.weight(.semibold))
                     .lineLimit(1)
+                    .truncationMode(.tail)
                     .frame(maxWidth: .infinity, alignment: .leading)
+
                 Text(timeFormatter.string(from: item.checkInTime))
-                    .font(.caption.monospacedDigit())
-                    .frame(width: 100, alignment: .leading)
-                Text(item.checkOutTime.map { timeFormatter.string(from: $0) } ?? "Open")
-                    .font(.caption.monospacedDigit())
-                    .frame(width: 100, alignment: .leading)
+                    .font(.system(.caption, design: .monospaced))
+                    .frame(width: 95, alignment: .leading)
+
+                Text(item.checkOutTime.map { timeFormatter.string(from: $0) } ?? "—")
+                    .font(.system(.caption, design: .monospaced))
+                    .frame(width: 95, alignment: .leading)
+
                 Text(viewModel.formattedDuration(seconds: item.computedDurationSeconds ?? 0))
-                    .font(.caption.weight(.semibold).monospacedDigit())
-                    .foregroundStyle(.blue)
-                    .frame(width: 76, alignment: .trailing)
+                    .font(.system(.caption, design: .monospaced).weight(.semibold))
+                    .foregroundStyle(DS.Colors.primary)
+                    .frame(width: 72, alignment: .trailing)
             }
+            .font(.subheadline)
 
             Text("\(item.status.rawValue.capitalized) • \(Int(item.distanceMeters))m • ±\(Int(item.accuracyMeters))m")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }
-        .padding(.vertical, 4)
-        .overlay(alignment: .bottom) {
-            Divider().opacity(0.2)
-        }
+        .padding(.vertical, 8)
     }
 }

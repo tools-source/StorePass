@@ -109,15 +109,23 @@ final class EmployeeHistoryViewModel: ObservableObject {
     }
 
     func copyAllVisible() {
-        UIPasteboard.general.string = csvText(for: visibleCheckIns)
+        copy(items: visibleCheckIns)
     }
 
     func copySingle(_ checkIn: CheckIn) {
-        UIPasteboard.general.string = csvText(for: [checkIn])
+        copy(items: [checkIn])
+    }
+
+    func copy(items: [CheckIn]) {
+        UIPasteboard.general.string = csvText(for: items)
     }
 
     func exportURL() -> URL? {
-        csvExporter.generateCSV(from: visibleCheckIns, filePrefix: "checkins_\(authService.currentUser?.name ?? "employee")")
+        exportURL(for: visibleCheckIns)
+    }
+
+    func exportURL(for items: [CheckIn]) -> URL? {
+        csvExporter.generateCSV(from: items, filePrefix: "checkins_\(authService.currentUser?.name ?? "employee")")
     }
 
     func formattedDuration(seconds: Int) -> String {

@@ -1,5 +1,11 @@
 import SwiftUI
 
+extension Date {
+    func timesheetDayString() -> String {
+        formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day())
+    }
+}
+
 struct TimesheetHeaderCard<Content: View>: View {
     @ViewBuilder var content: Content
 
@@ -88,7 +94,7 @@ struct TimesheetListCard<Header: View, Rows: View>: View {
                 .padding(.bottom, 8)
         }
         .background(DS.Colors.card)
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 }
 

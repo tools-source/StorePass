@@ -41,12 +41,6 @@ final class ManagerCheckInsViewModel: ObservableObject {
         return formatter
     }()
 
-    private static let dayFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "EEE, MMM d"
-        return formatter
-    }()
-
     init(
         storeRepository: StoreRepositoryProtocol,
         checkInRepository: CheckInRepositoryProtocol,
@@ -197,7 +191,7 @@ final class ManagerCheckInsViewModel: ObservableObject {
     }
 
     func formattedDay(_ date: Date) -> String {
-        Self.dayFormatter.string(from: date)
+        date.timesheetDayString()
     }
 
     func formattedDuration(_ checkIn: CheckIn) -> String {
