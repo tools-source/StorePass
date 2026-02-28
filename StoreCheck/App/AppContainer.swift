@@ -2,7 +2,6 @@ import Foundation
 
 @MainActor
 final class AppContainer: ObservableObject {
-    @Published var incomingAuthURL: URL?
     private let authRepositoryFactory: () -> AuthRepositoryProtocol
     private let userRepositoryFactory: () -> UserRepositoryProtocol
     private let roleProfileRepositoryFactory: () -> RoleProfileRepositoryProtocol
@@ -32,10 +31,6 @@ final class AppContainer: ObservableObject {
         locationService: locationService,
         offlineQueue: offlineQueue
     )
-
-    func setIncomingAuthURL(_ url: URL?) {
-        incomingAuthURL = url
-    }
 
 
     init(

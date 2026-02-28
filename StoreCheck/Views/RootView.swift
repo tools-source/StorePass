@@ -62,12 +62,13 @@ private struct RootContentView: View {
 
             bootState = .authenticated(user: newUser)
         }
-        .onChange(of: appContainer.incomingAuthURL) { _, newURL in
-            guard let newURL else { return }
-            Task {
-                await authViewModel.handleIncomingEmailLink(url: newURL)
-                appContainer.setIncomingAuthURL(nil)
-            }
+        .sheet(isPresented: $authViewModel.shouldShowAppleNamePrompt) {
+            AppleNamePromptSheet(
+                name: $authViewModel.pendingNameUpdate,
+                onSave: { Task { await authViewModel.saveAppleDisplayName() } }
+            )
+            .presentationDetents([.medium])
+            .interactiveDismissDisabled()
         }
     }
 
@@ -82,5 +83,39 @@ private struct RootContentView: View {
         }
 
         bootState = .authenticated(user: user)
+    }
+}
+
+private struct AppleNamePromptSheet: View {
+    @Binding var name: String
+    let onSave: () -> Void
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 14) {
+                Text("Update your name")
+                    .font(.headline)
+                Text("Please add your display name to finish setting up your account.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+
+                TextField("Full name", text: $name)
+                    .textInputAutocapitalization(.words)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+
+                Button("Save") {
+                    onSave()
+                }
+                .buttonStyle(PrimaryButtonStyle())
+                .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+                Spacer()
+            }
+            .padding()
+            .navigationTitle("Profile")
+        }
     }
 }

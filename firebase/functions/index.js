@@ -350,7 +350,7 @@ exports.setEmployeeActive = onCall(async (request) => {
   return { employeeId, isActive: !!isActive };
 });
 
-async function cleanupMemberships(uid) {
+async function cleanupMemberships(uid, correlationId) {
   const maxDeletesPerBatch = 450;
   let batchChunksCommitted = 0;
 
@@ -361,7 +361,7 @@ async function cleanupMemberships(uid) {
       chunk.forEach((ref) => batch.delete(ref));
       await batch.commit();
       batchChunksCommitted += 1;
-      console.log(`[cleanupMemberships] uid=${uid} committed ${label} chunk=${batchChunksCommitted} size=${chunk.length}`);
+      console.log(`[cleanupMemberships] uid=${uid} correlationId=${correlationId} committed ${label} chunk=${batchChunksCommitted} size=${chunk.length}`);
     }
   };
 
@@ -369,7 +369,7 @@ async function cleanupMemberships(uid) {
     .where(admin.firestore.FieldPath.documentId(), '==', uid)
     .get();
   const membershipCount = memberDocs.size;
-  console.log(`[cleanupMemberships] uid=${uid} memberDocsFound=${membershipCount}`);
+  console.log(`[cleanupMemberships] uid=${uid} correlationId=${correlationId} memberDocsFound=${membershipCount}`);
 
   const storeIds = new Set();
   const memberRefs = memberDocs.docs.map((doc) => {
@@ -389,16 +389,16 @@ async function cleanupMemberships(uid) {
   try {
     const employeeStoresSnap = await db.collection('employeeStores').doc(uid).collection('stores').get();
     const employeeStoresCount = employeeStoresSnap.size;
-    console.log(`[cleanupMemberships] uid=${uid} employeeStoresDocsFound=${employeeStoresCount}`);
+    console.log(`[cleanupMemberships] uid=${uid} correlationId=${correlationId} employeeStoresDocsFound=${employeeStoresCount}`);
     await deleteRefsInChunks(employeeStoresSnap.docs.map((doc) => doc.ref), 'employeeStores');
 
     const employeeCheckinsSnap = await db.collection('employeeCheckins').doc(uid).collection('checkins').get();
     const employeeCheckinsCount = employeeCheckinsSnap.size;
-    console.log(`[cleanupMemberships] uid=${uid} employeeCheckinsDocsFound=${employeeCheckinsCount}`);
+    console.log(`[cleanupMemberships] uid=${uid} correlationId=${correlationId} employeeCheckinsDocsFound=${employeeCheckinsCount}`);
     await deleteRefsInChunks(employeeCheckinsSnap.docs.map((doc) => doc.ref), 'employeeCheckins');
 
     await db.collection('users').doc(uid).delete();
-    console.log(`[cleanupMemberships] uid=${uid} deleted users/${uid}`);
+    console.log(`[cleanupMemberships] uid=${uid} correlationId=${correlationId} deleted users/${uid}`);
     return {
       membershipCount,
       employeeStoresCount,
@@ -406,7 +406,7 @@ async function cleanupMemberships(uid) {
       batchChunksCommitted,
     };
   } catch (error) {
-    console.error(`[cleanupMemberships] uid=${uid} failed`, error);
+    console.error(`[cleanupMemberships] uid=${uid} correlationId=${correlationId} failed stack=${error?.stack || "n/a"}`, error);
     throw error;
   }
 }
@@ -415,15 +415,17 @@ exports.deleteMyAccount = onCall(async (request) => {
   if (!request.auth) throw new HttpsError('unauthenticated', 'You must be signed in.');
   const uid = request.auth.uid;
   const mode = typeof request.data.mode === 'string' ? request.data.mode : 'cleanup_memberships';
-  console.log(`[deleteMyAccount] VERSION=2026-02-25a uid=${uid} mode=${mode}`);
+  const role = typeof request.data.role === 'string' ? request.data.role : 'none';
+  const correlationId = typeof request.data.correlationId === 'string' && request.data.correlationId ? request.data.correlationId : 'none';
+  console.log(`[deleteMyAccount] VERSION=2026-02-28a uid=${uid} mode=${mode} role=${role} correlationId=${correlationId}`);
 
   try {
     await requireActiveUser(uid);
-    console.log(`[deleteMyAccount] start uid=${uid} mode=${mode}`);
+    console.log(`[deleteMyAccount] start uid=${uid} mode=${mode} role=${role} correlationId=${correlationId}`);
 
     if (mode === 'cleanup_memberships') {
-      const cleanupSummary = await cleanupMemberships(uid);
-      console.log(`[deleteMyAccount] membershipCount=${cleanupSummary.membershipCount} employeeStoresCount=${cleanupSummary.employeeStoresCount} employeeCheckinsCount=${cleanupSummary.employeeCheckinsCount} batchChunksCommitted=${cleanupSummary.batchChunksCommitted}`);
+      const cleanupSummary = await cleanupMemberships(uid, correlationId);
+      console.log(`[deleteMyAccount] uid=${uid} mode=${mode} role=${role} correlationId=${correlationId} membershipCount=${cleanupSummary.membershipCount} employeeStoresCount=${cleanupSummary.employeeStoresCount} employeeCheckinsCount=${cleanupSummary.employeeCheckinsCount} batchChunksCommitted=${cleanupSummary.batchChunksCommitted}`);
       return { ok: true, mode };
     }
 
@@ -434,7 +436,7 @@ exports.deleteMyAccount = onCall(async (request) => {
 
     throw new HttpsError('invalid-argument', `Unsupported deleteMyAccount mode: ${mode}`);
   } catch (error) {
-    console.error(`[deleteMyAccount] fail uid=${uid} mode=${mode} stack=${error?.stack || 'n/a'}`, error);
+    console.error(`[deleteMyAccount] fail uid=${uid} mode=${mode} role=${role} correlationId=${correlationId} stack=${error?.stack || 'n/a'}`, error);
     if (error instanceof HttpsError) throw error;
     throw new HttpsError('internal', error?.message || String(error));
   }

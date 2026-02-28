@@ -1,9 +1,9 @@
+import AuthenticationServices
 import SwiftUI
 
 struct LoginView: View {
     @EnvironmentObject private var viewModel: AuthViewModel
     @State private var showError = false
-    @State private var email = ""
 
     var body: some View {
         VStack(spacing: 20) {
@@ -28,59 +28,21 @@ struct LoginView: View {
             .frame(maxWidth: 420)
 
             VStack(spacing: 12) {
-                TextField("Email", text: $email)
-                    .keyboardType(.emailAddress)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 12)
-                    .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-
-                Button("Send Sign-In Link") {
-                    Task { await viewModel.sendEmailSignInLink(to: normalizedEmail) }
-                }
-                .buttonStyle(PrimaryButtonStyle())
-                .disabled(viewModel.isLoading || viewModel.requestedRole == nil || normalizedEmail.isEmpty)
-
                 Button("Continue with Google") {
                     guard let requestedRole = viewModel.requestedRole else { return }
                     Task { await viewModel.signInWithGoogle(requestedRole: requestedRole) }
                 }
                 .buttonStyle(PrimaryButtonStyle())
                 .disabled(viewModel.isLoading || viewModel.requestedRole == nil)
+
+                AppleSignInButton {
+                    guard let requestedRole = viewModel.requestedRole else { return }
+                    Task { await viewModel.signInWithApple(requestedRole: requestedRole) }
+                }
+                .frame(height: 50)
+                .disabled(viewModel.isLoading || viewModel.requestedRole == nil)
             }
             .frame(maxWidth: 420)
-
-            if viewModel.shouldPromptForEmailLinkCompletion {
-                VStack(spacing: 10) {
-                    Text("Finish Email Link Sign-In")
-                        .font(.headline)
-                        .foregroundStyle(.white)
-
-                    TextField("Email", text: $viewModel.pendingEmailForCompletion)
-                        .keyboardType(.emailAddress)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 12)
-                        .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-
-                    Button("Complete Sign-In") {
-                        Task {
-                            await viewModel.completePendingEmailLinkSignIn(email: viewModel.pendingEmailForCompletion)
-                        }
-                    }
-                    .buttonStyle(PrimaryButtonStyle())
-                    .disabled(viewModel.isLoading || viewModel.pendingEmailForCompletion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                }
-                .frame(maxWidth: 420)
-            }
-
-            if let status = viewModel.emailLinkStatusMessage {
-                Text(status)
-                    .font(.footnote)
-                    .foregroundStyle(.white)
-            }
 
             if let notice = viewModel.signInNoticeMessage {
                 Text(notice)
@@ -105,8 +67,33 @@ struct LoginView: View {
             showError = newValue != nil
         }
     }
+}
 
-    private var normalizedEmail: String {
-        email.trimmingCharacters(in: .whitespacesAndNewlines)
+private struct AppleSignInButton: UIViewRepresentable {
+    let action: () -> Void
+
+    func makeUIView(context: Context) -> ASAuthorizationAppleIDButton {
+        let button = ASAuthorizationAppleIDButton(type: .signIn, style: .white)
+        button.cornerRadius = 10
+        button.addTarget(context.coordinator, action: #selector(Coordinator.didTap), for: .touchUpInside)
+        return button
+    }
+
+    func updateUIView(_ uiView: ASAuthorizationAppleIDButton, context: Context) {}
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(action: action)
+    }
+
+    final class Coordinator: NSObject {
+        let action: () -> Void
+
+        init(action: @escaping () -> Void) {
+            self.action = action
+        }
+
+        @objc func didTap() {
+            action()
+        }
     }
 }
