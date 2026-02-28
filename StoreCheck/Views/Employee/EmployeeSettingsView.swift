@@ -12,7 +12,6 @@ struct AccountSettingsView: View {
     @State private var showDeleteConfirmation = false
     @State private var showReauthSheet = false
     @State private var pendingDeleteRole: UserRole?
-    @State private var deleteTask: Task<Void, Never>?
     @State private var localNameOverride: String?
 
     var body: some View {
@@ -42,7 +41,7 @@ struct AccountSettingsView: View {
             .alert("Delete account permanently?", isPresented: $showDeleteConfirmation) {
                 Button("Cancel", role: .cancel) {}
                 Button("Delete", role: .destructive) {
-                    startDeleteTask {
+                    Task {
                         let role = authViewModel.currentUser?.role
                         pendingDeleteRole = role
                         if role == .manager {
@@ -63,7 +62,7 @@ struct AccountSettingsView: View {
             .sheet(isPresented: $showReauthSheet) {
                 ReauthenticateSheet(viewModel: viewModel) {
                     showReauthSheet = false
-                    startDeleteTask {
+                    Task {
                         if pendingDeleteRole == .manager {
                             await viewModel.deleteManagerAccountFlow()
                         } else {
@@ -94,14 +93,6 @@ struct AccountSettingsView: View {
 
     private var displayName: String {
         localNameOverride ?? authViewModel.currentUser?.name ?? "StorePass User"
-    }
-
-    private func startDeleteTask(_ operation: @escaping @MainActor () async -> Void) {
-        guard deleteTask == nil, !viewModel.isDeleting else { return }
-        deleteTask = Task { @MainActor in
-            defer { deleteTask = nil }
-            await operation()
-        }
     }
 }
 
@@ -330,7 +321,7 @@ final class AccountSettingsViewModel: ObservableObject {
             let credential = OAuthProvider.appleCredential(
                 withIDToken: idTokenString,
                 rawNonce: nonce,
-                fullName: appleAuthorization.fullName
+                fullName: nil
             )
 
             _ = try await currentUser.reauthenticateAsync(with: credential)
@@ -367,6 +358,7 @@ final class AccountSettingsViewModel: ObservableObject {
         isDeletingAccount = true
 
         let provider = providerForCurrentUser()
+        printDeleteAccountDiagnostics()
         let uid = currentUser.uid
         let correlationId = UUID().uuidString
         logDeleteAccountStage("start", uid: uid, provider: provider)
@@ -383,8 +375,9 @@ final class AccountSettingsViewModel: ObservableObject {
 
             do {
                 try await self.performDeleteMyAccountCall(role: role, uid: uid, provider: provider, correlationId: correlationId)
+                try await self.deleteFirebaseAuthUser(uid: uid, provider: provider)
                 await MainActor.run {
-                    self.logDeleteAccountStage("deleteMyAccount_ok", uid: uid, provider: provider)
+                    self.logDeleteAccountStage("delete_complete", uid: uid, provider: provider)
                     self.needsReauthentication = false
                     self.errorMessage = nil
                 }
@@ -416,7 +409,7 @@ final class AccountSettingsViewModel: ObservableObject {
         }
 
         let roleValue: Any = role?.rawValue ?? NSNull()
-        var payload: [String: Any] = [
+        let payload: [String: Any] = [
             "mode": "cleanup_memberships",
             "role": roleValue,
             "correlationId": correlationId
@@ -426,31 +419,35 @@ final class AccountSettingsViewModel: ObservableObject {
         _ = try await currentUser.getIDTokenForcingRefreshAsync(true)
         print("[DeleteAccount] correlationId=\(correlationId) uid=\(uid) provider=\(provider) stage=refresh_token_ok")
 
+        let response = try await callable(name: "deleteMyAccount", payload: payload)
+        guard let ok = response["ok"] as? Bool, ok else {
+            throw NSError(domain: "StorePass", code: 9015, userInfo: [NSLocalizedDescriptionKey: "Delete account request succeeded but returned an invalid response."])
+        }
+        logDeleteAccountStage("deleteMyAccount_ok", uid: uid, provider: provider)
+    }
+
+    private func deleteFirebaseAuthUser(uid: String, provider: String) async throws {
+        guard let currentUser = auth.currentUser else {
+            throw NSError(domain: "StorePass", code: 9016, userInfo: [NSLocalizedDescriptionKey: "You must be signed in."])
+        }
         do {
-            _ = try await callable(name: "deleteMyAccount", payload: payload)
+            try await currentUser.deleteAsync()
+            logDeleteAccountStage("auth_delete_ok", uid: uid, provider: provider)
         } catch {
             let nsError = error as NSError
             if nsError.domain == AuthErrorDomain,
-               nsError.code == AuthErrorCode.requiresRecentLogin.rawValue {
-                print("[DeleteAccount] correlationId=\(correlationId) uid=\(uid) provider=\(provider) stage=reauth_required")
-                let reauthOK: Bool
-                if provider == "apple.com" {
-                    reauthOK = await reauthenticateWithApple()
-                } else if provider == "google.com" {
-                    reauthOK = await reauthenticateWithGoogle()
-                } else {
-                    throw error
-                }
-
-                guard reauthOK else { throw error }
-                _ = try await currentUser.getIDTokenForcingRefreshAsync(true)
-                payload["correlationId"] = correlationId
-                print("[DeleteAccount] correlationId=\(correlationId) uid=\(uid) provider=\(provider) stage=retry_after_reauth")
-                _ = try await callable(name: "deleteMyAccount", payload: payload)
+               nsError.code == AuthErrorCode.userNotFound.rawValue {
+                logDeleteAccountStage("auth_delete_user_not_found", uid: uid, provider: provider)
                 return
             }
             throw error
         }
+    }
+
+    private func printDeleteAccountDiagnostics() {
+        let providerIDs = auth.currentUser?.providerData.map(\.providerID) ?? []
+        let hasCurrentUser = auth.currentUser != nil
+        print("[DeleteAccount][Diagnostics] hasCurrentUser=\(hasCurrentUser) providerIDs=\(providerIDs)")
     }
 
     private func logDeleteAccountStage(_ stage: String, uid: String, provider: String, error: Error? = nil) {
@@ -492,20 +489,26 @@ final class AccountSettingsViewModel: ObservableObject {
         guard let user = auth.currentUser else { return "unknown" }
         let providerIds = user.providerData.map(\.providerID)
         if providerIds.contains("google.com") { return "google.com" }
+        if providerIds.contains("apple.com") { return "apple.com" }
         if providerIds.contains("password") { return "password" }
         return providerIds.first ?? "unknown"
     }
 
     private func callable(name: String, payload: [String: Any]) async throws -> [String: Any] {
-        print("[DeleteAccount] callable_request name=\(name) region=us-central1 payload=\(payload)")
+        let uid = auth.currentUser?.uid ?? "nil"
+        let providerIDs = auth.currentUser?.providerData.map(\.providerID) ?? []
+        print("[DeleteAccount] callable_request uid=\(uid) providerIDs=\(providerIDs) name=\(name) region=us-central1 payload=\(payload)")
         do {
             let callable = functions.httpsCallable(name)
             let result = try await callable.call(payload)
-            let responseKeys = (result.data as? [String: Any])?.keys.sorted() ?? []
-            print("[DeleteAccount] callable_response name=\(name) responseKeys=\(responseKeys) data=\(String(describing: result.data))")
-            return result.data as? [String: Any] ?? [:]
+            print("[DeleteAccount] callable_success uid=\(uid) providerIDs=\(providerIDs) name=\(name) region=us-central1 rawData=\(String(describing: result.data))")
+            guard let data = result.data as? [String: Any] else {
+                throw NSError(domain: "StorePass", code: 9017, userInfo: [NSLocalizedDescriptionKey: "Delete account function returned an invalid payload."])
+            }
+            return data
         } catch {
-            logDeleteAccountError(error)
+            let nsError = error as NSError
+            print("[DeleteAccount] callable_error uid=\(uid) providerIDs=\(providerIDs) name=\(name) region=us-central1 domain=\(nsError.domain) code=\(nsError.code) description=\(nsError.localizedDescription)")
             throw error
         }
     }
