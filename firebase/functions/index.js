@@ -351,94 +351,115 @@ exports.setEmployeeActive = onCall(async (request) => {
 });
 
 async function cleanupMemberships(uid, correlationId) {
+  const now = admin.firestore.FieldValue.serverTimestamp();
+  const userRef = db.collection('users').doc(uid);
+  const counts = {
+    stores: 0,
+    membersDeleted: 0,
+    checkinsDeleted: 0,
+    userDocDeleted: false,
+    storeDocsUpdated: 0,
+    assignedStoreUnlinks: 0,
+  };
+
   const memberDocs = await db.collectionGroup('members')
     .where(admin.firestore.FieldPath.documentId(), '==', uid)
     .get();
 
-  const membershipCount = memberDocs.size;
+  const deleteMemberPaths = new Set();
   const storeIds = new Set();
-  const membershipRefs = [];
 
   memberDocs.docs.forEach((doc) => {
+    deleteMemberPaths.add(doc.ref.path);
+
     const parentDoc = doc.ref.parent && doc.ref.parent.parent;
     const storeId = parentDoc && typeof parentDoc.id === 'string' ? parentDoc.id : null;
-    if (storeId) {
-      storeIds.add(storeId);
-    } else {
+    if (!storeId) {
       console.warn(`[cleanupMemberships] uid=${uid} correlationId=${correlationId} skippedMembershipWithoutStorePath ref=${doc.ref.path}`);
+      return;
     }
-    membershipRefs.push(doc.ref);
+
+    storeIds.add(storeId);
+    deleteMemberPaths.add(`storeMembers/${storeId}/members/${uid}`);
+    deleteMemberPaths.add(`stores/${storeId}/members/${uid}`);
   });
 
   const storeIdsList = [...storeIds];
-  const storeUpdateRefs = storeIdsList.map((storeId) => db.collection('stores').doc(storeId));
-  const userRef = db.collection('users').doc(uid);
+  counts.stores = storeIdsList.length;
+  console.log(`[cleanupMemberships] uid=${uid} correlationId=${correlationId} memberDocsFound=${memberDocs.size} storesFound=${counts.stores}`);
 
-  console.log(`[cleanupMemberships] uid=${uid} correlationId=${correlationId} memberDocsFound=${membershipCount}`);
-  console.log(`[cleanupMemberships] uid=${uid} correlationId=${correlationId} storeIdsDerived=${JSON.stringify(storeIdsList)}`);
+  const membershipWriteOps = [...deleteMemberPaths].map((path) => (batch) => {
+    batch.delete(db.doc(path));
+  });
 
-  const maxOpsPerBatch = 450;
-  const now = admin.firestore.FieldValue.serverTimestamp();
-  const userSnap = await userRef.get();
-  const deletedUserDoc = userSnap.exists;
+  await commitBatches(membershipWriteOps, 'deleteMemberships', correlationId);
+  counts.membersDeleted = deleteMemberPaths.size;
 
-  const writeOperations = [
-    ...membershipRefs.map((ref) => ({ type: 'delete', ref })),
-    ...storeUpdateRefs.map((ref) => ({ type: 'set', ref })),
-    { type: 'delete', ref: userRef },
-  ];
+  const storeUpdateOps = storeIdsList.map((storeId) => (batch) => {
+    batch.set(db.collection('stores').doc(storeId), { updatedAt: now }, { merge: true });
+  });
 
-  let operationCount = 0;
-  for (let i = 0; i < writeOperations.length; i += maxOpsPerBatch) {
-    const chunk = writeOperations.slice(i, i + maxOpsPerBatch);
-    const batch = db.batch();
+  await commitBatches(storeUpdateOps, 'updateStoreUpdatedAt', correlationId);
+  counts.storeDocsUpdated = storeUpdateOps.length;
 
-    chunk.forEach((operation) => {
-      if (operation.type === 'delete') {
-        batch.delete(operation.ref);
-      } else {
-        batch.set(operation.ref, { updatedAt: now }, { merge: true });
-      }
-    });
-
-    await batch.commit();
-    operationCount += chunk.length;
-    console.log(`[cleanupMemberships] uid=${uid} correlationId=${correlationId} batchCommit chunkSize=${chunk.length} totalCommittedOps=${operationCount}`);
+  if (storeIdsList.length > 0) {
+    await userRef.set({ assignedStoreIds: admin.firestore.FieldValue.arrayRemove(...storeIdsList) }, { merge: true });
+    counts.assignedStoreUnlinks = storeIdsList.length;
   }
 
-  let employeeStoresCount = 0;
-  let employeeCheckinsCount = 0;
-
-  const deleteCollectionInChunks = async (refs, label) => {
-    for (let i = 0; i < refs.length; i += maxOpsPerBatch) {
-      const chunk = refs.slice(i, i + maxOpsPerBatch);
-      const batch = db.batch();
-      chunk.forEach((ref) => batch.delete(ref));
-      await batch.commit();
-      console.log(`[cleanupMemberships] uid=${uid} correlationId=${correlationId} committed ${label} chunkSize=${chunk.length}`);
+  const deleteCollectionGroup = async (collectionRef, label) => {
+    try {
+      const snap = await collectionRef.get();
+      const writeOps = snap.docs.map((doc) => (batch) => {
+        batch.delete(doc.ref);
+      });
+      await commitBatches(writeOps, label, correlationId);
+      return snap.size;
+    } catch (error) {
+      const code = String(error?.code || '').toLowerCase();
+      if (code.includes('not-found') || code === '5') {
+        console.warn(`[cleanupMemberships] uid=${uid} correlationId=${correlationId} skipMissingCollection label=${label}`);
+        return 0;
+      }
+      throw error;
     }
   };
 
-  const employeeStoresSnap = await db.collection('employeeStores').doc(uid).collection('stores').get();
-  employeeStoresCount = employeeStoresSnap.size;
-  console.log(`[cleanupMemberships] uid=${uid} correlationId=${correlationId} employeeStoresDocsFound=${employeeStoresCount}`);
-  await deleteCollectionInChunks(employeeStoresSnap.docs.map((doc) => doc.ref), 'employeeStores');
+  const employeeCheckinsCount = await deleteCollectionGroup(db.collection('employeeCheckins').doc(uid).collection('checkins'), 'deleteEmployeeCheckins');
+  const employeeCheckinsMirrorCount = await deleteCollectionGroup(db.collection('employeeCheckinsMirror').doc(uid).collection('checkins'), 'deleteEmployeeCheckinsMirror');
+  const checkinsMirrorCount = await deleteCollectionGroup(db.collection('checkinsMirror').doc(uid).collection('checkins'), 'deleteCheckinsMirror');
+  counts.checkinsDeleted = employeeCheckinsCount + employeeCheckinsMirrorCount + checkinsMirrorCount;
 
-  const employeeCheckinsSnap = await db.collection('employeeCheckins').doc(uid).collection('checkins').get();
-  employeeCheckinsCount = employeeCheckinsSnap.size;
-  console.log(`[cleanupMemberships] uid=${uid} correlationId=${correlationId} employeeCheckinsDocsFound=${employeeCheckinsCount}`);
-  await deleteCollectionInChunks(employeeCheckinsSnap.docs.map((doc) => doc.ref), 'employeeCheckins');
+  const userSnap = await userRef.get();
+  counts.userDocDeleted = userSnap.exists;
+  await userRef.delete();
 
-  console.log(`[cleanupMemberships] uid=${uid} correlationId=${correlationId} batchOperationsCount=${operationCount}`);
+  return counts;
+}
 
-  return {
-    deletedMembershipCount: membershipCount,
-    storeCount: storeIdsList.length,
-    deletedUserDoc,
-    employeeStoresCount,
-    employeeCheckinsCount,
-    batchOperationsCount: operationCount,
-  };
+function chunk(arr, size) {
+  if (!Array.isArray(arr) || arr.length === 0) return [];
+  const groups = [];
+  for (let i = 0; i < arr.length; i += size) {
+    groups.push(arr.slice(i, i + size));
+  }
+  return groups;
+}
+
+async function commitBatches(writeOps, label, correlationId) {
+  const maxOpsPerBatch = 450;
+  const opChunks = chunk(writeOps, maxOpsPerBatch);
+  let committed = 0;
+
+  for (const ops of opChunks) {
+    const batch = db.batch();
+    ops.forEach((addOp) => addOp(batch));
+    await batch.commit();
+    committed += ops.length;
+    console.log(`[commitBatches] label=${label} correlationId=${correlationId} chunkSize=${ops.length} totalCommitted=${committed}`);
+  }
+
+  return committed;
 }
 
 function mapDeleteMyAccountError(error) {
@@ -471,32 +492,47 @@ exports.deleteMyAccount = onCall(async (request) => {
   const mode = typeof request.data.mode === 'string' ? request.data.mode : 'cleanup_memberships';
   const role = typeof request.data.role === 'string' ? request.data.role : 'none';
   const correlationId = typeof request.data.correlationId === 'string' && request.data.correlationId ? request.data.correlationId : 'none';
-  console.log(`[deleteMyAccount] VERSION=2026-02-28b uid=${uid} mode=${mode} role=${role} correlationId=${correlationId}`);
+  let stage = 'start';
+
+  console.log(`[deleteMyAccount] start uid=${uid} mode=${mode} role=${role} correlationId=${correlationId}`);
 
   try {
+    stage = 'requireActiveUser';
     await requireActiveUser(uid);
-    console.log(`[deleteMyAccount] start uid=${uid} mode=${mode} role=${role} correlationId=${correlationId}`);
 
     if (mode === 'cleanup_memberships') {
-      const cleanupSummary = await cleanupMemberships(uid, correlationId);
-      console.log(`[deleteMyAccount] uid=${uid} mode=${mode} role=${role} correlationId=${correlationId} deletedMembershipCount=${cleanupSummary.deletedMembershipCount} storeCount=${cleanupSummary.storeCount} batchOperationsCount=${cleanupSummary.batchOperationsCount}`);
+      stage = 'cleanupMemberships';
+      const counts = await cleanupMemberships(uid, correlationId);
+      console.log(`[deleteMyAccount] ok uid=${uid} correlationId=${correlationId} stores=${counts.stores} membersDeleted=${counts.membersDeleted} checkinsDeleted=${counts.checkinsDeleted} userDocDeleted=${counts.userDocDeleted}`);
       return {
         ok: true,
         mode,
-        deletedUserDoc: cleanupSummary.deletedUserDoc,
-        deletedMembershipCount: cleanupSummary.deletedMembershipCount,
-        storeCount: cleanupSummary.storeCount,
+        correlationId,
+        ...counts,
       };
     }
 
     if (mode === 'delete_auth') {
+      stage = 'deleteAuth';
       await admin.auth().deleteUser(uid);
-      return { ok: true, mode, deletedUserDoc: false, deletedMembershipCount: 0, storeCount: 0 };
+      console.log(`[deleteMyAccount] ok uid=${uid} correlationId=${correlationId} stores=0 membersDeleted=0 checkinsDeleted=0 userDocDeleted=false`);
+      return { ok: true, mode, correlationId, stores: 0, membersDeleted: 0, checkinsDeleted: 0, userDocDeleted: false, storeDocsUpdated: 0, assignedStoreUnlinks: 0 };
     }
 
     throw new HttpsError('invalid-argument', `Unsupported deleteMyAccount mode: ${mode}`);
   } catch (error) {
-    console.error(`[deleteMyAccount] fail uid=${uid} mode=${mode} role=${role} correlationId=${correlationId} stack=${error?.stack || 'n/a'}`, error);
-    throw mapDeleteMyAccountError(error);
+    console.error(`[deleteMyAccount] fail uid=${uid} mode=${mode} role=${role} correlationId=${correlationId} stage=${stage} stack=${error?.stack || 'n/a'}`, error);
+    if (error instanceof HttpsError) {
+      throw error;
+    }
+
+    throw new HttpsError('internal', `deleteMyAccount failed (correlationId=${correlationId})`, {
+      correlationId,
+      uid,
+      stage: error?.stage || stage,
+      mode,
+      message: error?.message || String(error),
+      stack: error?.stack || null,
+    });
   }
 });
