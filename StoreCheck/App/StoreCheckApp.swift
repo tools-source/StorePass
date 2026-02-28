@@ -18,6 +18,7 @@ struct StoreCheckApp: App {
                 .preferredColorScheme(.dark)
                 .onOpenURL { url in
                     _ = GIDSignIn.sharedInstance.handle(url)
+                    appContainer.setIncomingAuthURL(url)
                 }
         }
     }

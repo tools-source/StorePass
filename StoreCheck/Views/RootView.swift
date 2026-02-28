@@ -62,6 +62,13 @@ private struct RootContentView: View {
 
             bootState = .authenticated(user: newUser)
         }
+        .onChange(of: appContainer.incomingAuthURL) { _, newURL in
+            guard let newURL else { return }
+            Task {
+                await authViewModel.handleIncomingEmailLink(url: newURL)
+                appContainer.setIncomingAuthURL(nil)
+            }
+        }
     }
 
     private func boot() async {
