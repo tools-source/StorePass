@@ -13,6 +13,11 @@ struct AccountSettingsView: View {
     @State private var showDeleteConfirmation = false
     @State private var showReauthSheet = false
     @State private var localNameOverride: String?
+    @State private var showAppLockUnavailableAlert = false
+    @State private var appLockUnavailableMessage = ""
+    @AppStorage("appLockEnabled") private var appLockEnabled = false
+
+    private let biometricAuthService = BiometricAuthService()
 
     var body: some View {
         NavigationStack {
@@ -21,6 +26,21 @@ struct AccountSettingsView: View {
                     LabeledContent("Name", value: displayName)
                     LabeledContent("Email", value: authViewModel.currentUser?.email ?? "No email")
                     LabeledContent("Role", value: authViewModel.currentUser?.role.rawValue.capitalized ?? "Unknown")
+                }
+
+                Section("Security") {
+                    Toggle(isOn: $appLockEnabled) {
+                        Text("Use Face ID to unlock")
+                    }
+                    .onChange(of: appLockEnabled) { _, newValue in
+                        guard newValue else { return }
+                        guard biometricAuthService.biometricType() != .none else {
+                            appLockEnabled = false
+                            appLockUnavailableMessage = "Face ID / Touch ID is not available on this device."
+                            showAppLockUnavailableAlert = true
+                            return
+                        }
+                    }
                 }
 
                 Section("Account") {
@@ -61,6 +81,11 @@ struct AccountSettingsView: View {
                 Button("OK", role: .cancel) { viewModel.errorMessage = nil }
             } message: {
                 Text(viewModel.errorMessage ?? "")
+            }
+            .alert("App Lock", isPresented: $showAppLockUnavailableAlert) {
+                Button("OK", role: .cancel) { }
+            } message: {
+                Text(appLockUnavailableMessage)
             }
             .onAppear {
                 localNameOverride = authViewModel.currentUser?.name
