@@ -16,6 +16,7 @@ final class EmployeeHistoryViewModel: ObservableObject {
     @Published var checkIns: [CheckIn] = []
     @Published var errorMessage: String?
     @Published var selectedDate: Date = Date()
+    @Published var selectedStoreId: String?
 
     private let authService: AuthService
     private let checkInRepository: CheckInRepositoryProtocol
@@ -28,7 +29,35 @@ final class EmployeeHistoryViewModel: ObservableObject {
     }
 
     var visibleCheckIns: [CheckIn] {
-        checkIns.filter { Calendar.current.isDate($0.checkInTime, inSameDayAs: selectedDate) }
+        checkIns.filter { item in
+            let isSelectedDay = Calendar.current.isDate(item.checkInTime, inSameDayAs: selectedDate)
+            let isSelectedStore = selectedStoreId == nil || item.storeId == selectedStoreId
+            return isSelectedDay && isSelectedStore
+        }
+    }
+
+
+    struct StoreFilterOption: Identifiable, Hashable {
+        let id: String
+        let name: String
+    }
+
+    var storeOptions: [StoreFilterOption] {
+        let options = Dictionary(grouping: checkIns, by: \.storeId)
+            .compactMap { storeId, entries -> StoreFilterOption? in
+                guard let first = entries.first else { return nil }
+                return StoreFilterOption(id: storeId, name: first.storeName)
+            }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        return options
+    }
+
+    var selectedStoreName: String {
+        storeOptions.first(where: { $0.id == selectedStoreId })?.name ?? storeOptions.first?.name ?? "Store"
+    }
+
+    var hasMultipleStores: Bool {
+        storeOptions.count > 1
     }
 
     var dailyTotalSeconds: Int {
@@ -39,6 +68,9 @@ final class EmployeeHistoryViewModel: ObservableObject {
         guard let id = authService.currentUser?.id else { return }
         do {
             checkIns = try await checkInRepository.fetchEmployeeCheckIns(employeeId: id, limit: 100)
+            if selectedStoreId == nil || !storeOptions.contains(where: { $0.id == selectedStoreId }) {
+                selectedStoreId = storeOptions.first?.id
+            }
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription
