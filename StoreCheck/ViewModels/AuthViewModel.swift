@@ -5,6 +5,10 @@ import SwiftUI
 
 @MainActor
 final class AuthViewModel: ObservableObject {
+    private enum EmailLinkConstants {
+        static let pendingEmailKey = "pendingEmailLinkSignInEmail"
+    }
+
     enum AuthState: Equatable {
         case signedOut
         case signedIn(userId: String)
@@ -16,6 +20,9 @@ final class AuthViewModel: ObservableObject {
     @Published var isLoading = false
     @Published var errorMessage: String?
     @Published var signInNoticeMessage: String?
+    @Published var emailLinkStatusMessage: String?
+    @Published var pendingEmailForCompletion = ""
+    @Published var shouldPromptForEmailLinkCompletion = false
     @Published var showManagerAccessRequired = false
     @Published var managerAccessMessage = "This account does not have manager access. Please switch to Employee mode or ask an admin to update your role."
     @Published var showEmployeeSetupRequired = false
@@ -27,6 +34,7 @@ final class AuthViewModel: ObservableObject {
     private let authService: AuthService
     private let roleProfileRepository: RoleProfileRepositoryProtocol
     private var isResolvingProfile = false
+    private var pendingEmailSignInLink: String?
 
     init(authService: AuthService, roleProfileRepository: RoleProfileRepositoryProtocol) {
         self.authService = authService
@@ -132,6 +140,95 @@ final class AuthViewModel: ObservableObject {
         } catch {
             logEmailAuthFailure(prefix: "[EmailSignup] FAIL", error: error)
             showEmployeeSetupRequired = true
+            errorMessage = userFacingMessage(for: error)
+        }
+    }
+
+    func sendEmailSignInLink(to email: String) async {
+        guard !isResolvingProfile else { return }
+        guard requestedRole != nil else {
+            errorMessage = "Select Employee or Manager mode first."
+            return
+        }
+
+        let normalizedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedEmail.isEmpty else {
+            errorMessage = "Enter a valid email address."
+            return
+        }
+
+        emailLinkStatusMessage = nil
+        isLoading = true
+        defer { isLoading = false }
+
+        do {
+            try await authService.sendSignInLink(toEmail: normalizedEmail)
+            UserDefaults.standard.set(normalizedEmail, forKey: EmailLinkConstants.pendingEmailKey)
+            pendingEmailForCompletion = normalizedEmail
+            print("[EmailLink] SEND_OK email=\(normalizedEmail)")
+            emailLinkStatusMessage = "Link sent, check your email."
+        } catch {
+            print("[EmailLink] SEND_FAIL error=\(error.localizedDescription)")
+            errorMessage = userFacingMessage(for: error)
+        }
+    }
+
+    func handleIncomingEmailLink(url: URL) async {
+        let link = url.absoluteString
+        print("[EmailLink] OPEN_URL url=\(link)")
+
+        guard authService.isSignIn(withEmailLink: link) else { return }
+        pendingEmailSignInLink = link
+
+        if let savedEmail = UserDefaults.standard.string(forKey: EmailLinkConstants.pendingEmailKey),
+           !savedEmail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            pendingEmailForCompletion = savedEmail
+            await completePendingEmailLinkSignIn(email: savedEmail)
+            return
+        }
+
+        shouldPromptForEmailLinkCompletion = true
+        emailLinkStatusMessage = "Enter your email to complete sign-in."
+    }
+
+    func completePendingEmailLinkSignIn(email: String) async {
+        guard !isResolvingProfile else { return }
+        guard let requestedRole = requestedRole else {
+            errorMessage = "Select Employee or Manager mode first."
+            return
+        }
+
+        let normalizedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedEmail.isEmpty else {
+            errorMessage = "Enter a valid email address."
+            return
+        }
+
+        guard let link = pendingEmailSignInLink else {
+            errorMessage = "No sign-in link is pending. Request a new email link."
+            return
+        }
+
+        emailLinkStatusMessage = nil
+        isLoading = true
+        isRoleResolutionLoading = true
+        defer { isLoading = false }
+        defer { isRoleResolutionLoading = false }
+
+        do {
+            try await authService.signIn(withEmail: normalizedEmail, link: link)
+            UserDefaults.standard.removeObject(forKey: EmailLinkConstants.pendingEmailKey)
+            shouldPromptForEmailLinkCompletion = false
+            pendingEmailSignInLink = nil
+            print("[EmailLink] SIGNIN_OK email=\(normalizedEmail)")
+            try await resolveProfileAndRoute(
+                requestedRole: requestedRole,
+                isSessionRestore: false,
+                provider: "emailLink",
+                preferredEmail: normalizedEmail
+            )
+        } catch {
+            print("[EmailLink] SIGNIN_FAIL error=\(error.localizedDescription)")
             errorMessage = userFacingMessage(for: error)
         }
     }
@@ -369,7 +466,7 @@ final class AuthViewModel: ObservableObject {
 
         if nsError.domain == AuthErrorDomain,
            nsError.code == AuthErrorCode.operationNotAllowed.rawValue {
-            return "Email/Password sign-in is disabled in Firebase Console. Enable it under Authentication → Sign-in method."
+            return "Email link sign-in is disabled in Firebase Console. Enable Email Link under Authentication → Sign-in method."
         }
 
         return error.localizedDescription

@@ -13,6 +13,9 @@ protocol AuthServiceProtocol: AnyObject {
     func signInWithGoogle() async throws
     func signInWithEmail(email: String, password: String) async throws
     func createUserWithEmail(email: String, password: String) async throws
+    func sendSignInLink(toEmail email: String) async throws
+    func isSignIn(withEmailLink link: String) -> Bool
+    func signIn(withEmail email: String, link: String) async throws
     func authUser() -> FirebaseAuth.User?
     func signOut() async throws
     func deleteAuthAccount() async throws
@@ -80,6 +83,19 @@ final class AuthService: ObservableObject, AuthServiceProtocol {
         _ = try await auth.createUser(withEmail: email, password: password)
     }
 
+    func sendSignInLink(toEmail email: String) async throws {
+        let settings = try emailLinkActionCodeSettings()
+        try await auth.sendSignInLink(toEmail: email, actionCodeSettings: settings)
+    }
+
+    func isSignIn(withEmailLink link: String) -> Bool {
+        auth.isSignIn(withEmailLink: link)
+    }
+
+    func signIn(withEmail email: String, link: String) async throws {
+        _ = try await auth.signIn(withEmail: email, link: link)
+    }
+
     func authUser() -> FirebaseAuth.User? {
         auth.currentUser
     }
@@ -107,5 +123,22 @@ final class AuthService: ObservableObject, AuthServiceProtocol {
     func deleteAuthAccount() async throws {
         guard let user = auth.currentUser else { return }
         try await user.delete()
+    }
+
+    private func emailLinkActionCodeSettings() throws -> ActionCodeSettings {
+        guard let bundleIdentifier = Bundle.main.bundleIdentifier else {
+            throw NSError(domain: "StorePass", code: 1005, userInfo: [NSLocalizedDescriptionKey: "Missing app bundle identifier."])
+        }
+
+        guard let projectID = firebaseApp.options.projectID,
+              let continueURL = URL(string: "https://\(projectID).firebaseapp.com/__/auth/action") else {
+            throw NSError(domain: "StorePass", code: 1006, userInfo: [NSLocalizedDescriptionKey: "Unable to determine Firebase continue URL for email link sign-in."])
+        }
+
+        let settings = ActionCodeSettings()
+        settings.handleCodeInApp = true
+        settings.setIOSBundleID(bundleIdentifier)
+        settings.url = continueURL
+        return settings
     }
 }
