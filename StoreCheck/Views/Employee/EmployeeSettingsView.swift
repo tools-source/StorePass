@@ -1,6 +1,7 @@
 import AuthenticationServices
 import FirebaseAuth
 import FirebaseCore
+import FirebaseFirestore
 import FirebaseFunctions
 import GoogleSignIn
 import SwiftUI
@@ -41,14 +42,7 @@ struct AccountSettingsView: View {
                 Button("Cancel", role: .cancel) {}
                 Button("Delete", role: .destructive) {
                     Task {
-                        await viewModel.deleteAccount(role: .employee)
-                        if viewModel.needsReauthentication {
-                            await MainActor.run {
-                                showReauthSheet = true
-                            }
-                        } else if viewModel.errorMessage == nil {
-                            await authViewModel.signOut()
-                        }
+                        await viewModel.deleteEmployeeAccountFlow()
                     }
                 }
             } message: {
@@ -58,10 +52,7 @@ struct AccountSettingsView: View {
                 ReauthenticateSheet(viewModel: viewModel) {
                     showReauthSheet = false
                     Task {
-                        await viewModel.deleteAccountAfterReauth(role: .employee)
-                        if viewModel.errorMessage == nil {
-                            await authViewModel.signOut()
-                        }
+                        await viewModel.deleteEmployeeAccountAfterReauthFlow()
                     }
                 }
                 .presentationDetents([.medium])
@@ -77,6 +68,18 @@ struct AccountSettingsView: View {
             .onChange(of: authViewModel.currentUser?.name) { _, newValue in
                 if let newValue {
                     localNameOverride = newValue
+                }
+            }
+            .onChange(of: viewModel.needsReauthentication) { _, needsReauthentication in
+                showReauthSheet = needsReauthentication
+            }
+            .onChange(of: viewModel.didCompleteEmployeeDeletion) { _, didCompleteEmployeeDeletion in
+                guard didCompleteEmployeeDeletion else { return }
+                Task {
+                    await authViewModel.signOut()
+                    await MainActor.run {
+                        viewModel.didCompleteEmployeeDeletion = false
+                    }
                 }
             }
         }
@@ -194,9 +197,11 @@ final class AccountSettingsViewModel: ObservableObject {
     @Published var isDeleting = false
     @Published var isDeletingAccount = false
     @Published var needsReauthentication = false
+    @Published var didCompleteEmployeeDeletion = false
     private var deleteAccountTask: Task<Void, Never>? = nil
     private let cloudFunctions = CloudFunctionsService()
     private let functions = Functions.functions(region: "us-central1")
+    private let firestore = Firestore.firestore()
 
     private var auth: Auth {
         FirebaseBootstrap.assertConfigured(context: "AccountSettingsViewModel.auth")
@@ -325,16 +330,16 @@ final class AccountSettingsViewModel: ObservableObject {
         }
     }
 
-    func deleteAccount(role: UserRole?) async {
-        await executeDeleteAccount(role: role, allowReauthPrompt: true)
+    func deleteEmployeeAccountFlow() async {
+        await executeEmployeeDeleteAccountFlow(allowReauthPrompt: true)
     }
 
-    func deleteAccountAfterReauth(role: UserRole?) async {
-        await executeDeleteAccount(role: role, allowReauthPrompt: false)
+    func deleteEmployeeAccountAfterReauthFlow() async {
+        await executeEmployeeDeleteAccountFlow(allowReauthPrompt: false)
     }
 
     @MainActor
-    private func executeDeleteAccount(role: UserRole?, allowReauthPrompt: Bool) async {
+    private func executeEmployeeDeleteAccountFlow(allowReauthPrompt: Bool) async {
         guard let currentUser = auth.currentUser else {
             errorMessage = "You must be signed in."
             return
@@ -348,12 +353,14 @@ final class AccountSettingsViewModel: ObservableObject {
         isDeleting = true
         isDeletingAccount = true
         needsReauthentication = false
+        didCompleteEmployeeDeletion = false
 
+        let providerIDs = currentUser.providerData.map(\.providerID)
         let provider = providerForCurrentUser()
         printDeleteAccountDiagnostics()
         let uid = currentUser.uid
         let correlationId = UUID().uuidString
-        logDeleteAccountStage("start", uid: uid, provider: provider)
+        logDeleteAccountStage("start", uid: uid, provider: provider, correlationId: correlationId)
 
         deleteAccountTask = Task { [weak self] in
             guard let self else { return }
@@ -366,24 +373,26 @@ final class AccountSettingsViewModel: ObservableObject {
             }
 
             do {
-                try await self.performDeleteMyAccountCall(role: role, uid: uid, provider: provider, correlationId: correlationId)
+                try await self.writeEmployeeDeletionRequest(uid: uid, providerIDs: providerIDs, correlationId: correlationId)
+                await self.callDeleteMyAccountInBackground(uid: uid, provider: provider, correlationId: correlationId)
                 try await self.deleteFirebaseAuthUser(uid: uid, provider: provider)
                 await MainActor.run {
-                    self.logDeleteAccountStage("delete_complete", uid: uid, provider: provider)
+                    self.logDeleteAccountStage("delete_complete", uid: uid, provider: provider, correlationId: correlationId)
                     self.needsReauthentication = false
                     self.errorMessage = nil
+                    self.didCompleteEmployeeDeletion = true
                 }
             } catch {
                 await MainActor.run {
-                    self.logDeleteAccountError(error)
+                    self.logDeleteAccountError(error, correlationId: correlationId)
                 }
 
                 if allowReauthPrompt && self.isRequiresRecentLoginError(error) {
                     await MainActor.run {
                         self.needsReauthentication = true
                         self.prepareProviderForReauth()
-                        self.errorMessage = "For security, please verify your identity and try deleting your account again."
-                        print("[DeleteAccount] needsReauth=true provider=\(self.selectedProviderForReauth ?? self.providerForCurrentUser())")
+                        self.errorMessage = nil
+                        print("[DeleteAccount] correlationId=\(correlationId) stage=needs_reauth uid=\(uid) provider=\(self.selectedProviderForReauth ?? self.providerForCurrentUser())")
                     }
                     return
                 }
@@ -397,27 +406,59 @@ final class AccountSettingsViewModel: ObservableObject {
         await deleteAccountTask?.value
     }
 
-    private func performDeleteMyAccountCall(role: UserRole?, uid: String, provider: String, correlationId: String) async throws {
-        guard let currentUser = auth.currentUser else {
-            throw NSError(domain: "StorePass", code: 9012, userInfo: [NSLocalizedDescriptionKey: "You must be signed in."])
-        }
-
-        let roleValue: Any = role?.rawValue ?? NSNull()
-        let payload: [String: Any] = [
-            "mode": "cleanup_memberships",
-            "role": roleValue,
-            "correlationId": correlationId
+    private func writeEmployeeDeletionRequest(uid: String, providerIDs: [String], correlationId: String) async throws {
+        let deletionRequestPayload: [String: Any] = [
+            "uid": uid,
+            "role": "employee",
+            "providerIDs": providerIDs,
+            "createdAt": FieldValue.serverTimestamp(),
+            "status": "requested",
+            "correlationId": correlationId,
+            "app": "employee"
         ]
 
-        print("[DeleteAccount] correlationId=\(correlationId) uid=\(uid) provider=\(provider) stage=refresh_token_start")
-        _ = try await currentUser.getIDTokenForcingRefreshAsync(true)
-        print("[DeleteAccount] correlationId=\(correlationId) uid=\(uid) provider=\(provider) stage=refresh_token_ok")
+        let userPendingDeletionPayload: [String: Any] = [
+            "pendingDeletion": true,
+            "pendingDeletionAt": FieldValue.serverTimestamp(),
+            "pendingDeletionCorrelationId": correlationId,
+            "isActive": false
+        ]
 
-        let response = try await callable(name: "deleteMyAccount", payload: payload)
-        guard let ok = response["ok"] as? Bool, ok else {
-            throw NSError(domain: "StorePass", code: 9015, userInfo: [NSLocalizedDescriptionKey: "Delete account request succeeded but returned an invalid response."])
+        do {
+            try await firestore.collection("deletionRequests").document(uid).setData(deletionRequestPayload, merge: true)
+            print("[DeleteAccount] correlationId=\(correlationId) stage=deletion_request_write_ok uid=\(uid) providerIDs=\(providerIDs)")
+        } catch {
+            print("[DeleteAccount] correlationId=\(correlationId) stage=deletion_request_write_failed uid=\(uid) providerIDs=\(providerIDs) error=\(error.localizedDescription)")
+            throw error
         }
-        logDeleteAccountStage("deleteMyAccount_ok", uid: uid, provider: provider)
+
+        do {
+            try await firestore.collection("users").document(uid).setData(userPendingDeletionPayload, merge: true)
+            print("[DeleteAccount] correlationId=\(correlationId) stage=user_pending_deletion_write_ok uid=\(uid) providerIDs=\(providerIDs)")
+        } catch {
+            print("[DeleteAccount] correlationId=\(correlationId) stage=user_pending_deletion_write_failed uid=\(uid) providerIDs=\(providerIDs) error=\(error.localizedDescription)")
+            throw error
+        }
+    }
+
+    private func callDeleteMyAccountInBackground(uid: String, provider: String, correlationId: String) async {
+        guard let currentUser = auth.currentUser else { return }
+
+        do {
+            print("[DeleteAccount] correlationId=\(correlationId) stage=refresh_token_start uid=\(uid) provider=\(provider)")
+            _ = try await currentUser.getIDTokenForcingRefreshAsync(true)
+            print("[DeleteAccount] correlationId=\(correlationId) stage=refresh_token_ok uid=\(uid) provider=\(provider)")
+
+            let payload: [String: Any] = [
+                "mode": "cleanup_memberships",
+                "role": UserRole.employee.rawValue,
+                "correlationId": correlationId
+            ]
+            let response = try await callable(name: "deleteMyAccount", payload: payload)
+            print("[DeleteAccount] correlationId=\(correlationId) stage=deleteMyAccount_result uid=\(uid) provider=\(provider) response=\(response)")
+        } catch {
+            print("[DeleteAccount] correlationId=\(correlationId) stage=deleteMyAccount_non_blocking_error uid=\(uid) provider=\(provider) error=\(error.localizedDescription)")
+        }
     }
 
     private func deleteFirebaseAuthUser(uid: String, provider: String) async throws {
@@ -444,24 +485,26 @@ final class AccountSettingsViewModel: ObservableObject {
         print("[DeleteAccount][BEGIN] uid=\(uid) providerIDs=\(providerIDs)")
     }
 
-    private func logDeleteAccountStage(_ stage: String, uid: String, provider: String, error: Error? = nil) {
+    private func logDeleteAccountStage(_ stage: String, uid: String, provider: String, correlationId: String? = nil, error: Error? = nil) {
+        let correlationSegment = "correlationId=\(correlationId ?? "none")"
         if let error {
             let nsError = error as NSError
-            print("[DeleteAccount] stage=\(stage) uid=\(uid) provider=\(provider) errorDomain=\(nsError.domain) code=\(nsError.code) message=\(nsError.localizedDescription)")
+            print("[DeleteAccount] \(correlationSegment) stage=\(stage) uid=\(uid) provider=\(provider) errorDomain=\(nsError.domain) code=\(nsError.code) message=\(nsError.localizedDescription)")
             return
         }
-        print("[DeleteAccount] stage=\(stage) uid=\(uid) provider=\(provider) errorDomain=none code=0 message=ok")
+        print("[DeleteAccount] \(correlationSegment) stage=\(stage) uid=\(uid) provider=\(provider) errorDomain=none code=0 message=ok")
     }
 
-    private func logDeleteAccountError(_ error: Error) {
+    private func logDeleteAccountError(_ error: Error, correlationId: String? = nil) {
         let ns = error as NSError
         let domain = ns.domain
         let code = ns.code
         let localized = ns.localizedDescription
         let details = ns.userInfo["details"] ?? ns.userInfo["data"] ?? ns.userInfo
+        let correlationSegment = "correlationId=\(correlationId ?? "none")"
 
-        print("[DeleteAccount] stage=error uid=\(auth.currentUser?.uid ?? "nil") provider=\(providerForCurrentUser()) errorDomain=\(domain) code=\(code) message=\(localized)")
-        print("[DeleteAccount][CLIENT_FAIL] domain=\(domain) code=\(code) message=\(localized) userInfoKeys=\(Array(ns.userInfo.keys)) details=\(details) userInfo=\(ns.userInfo)")
+        print("[DeleteAccount] \(correlationSegment) stage=error uid=\(auth.currentUser?.uid ?? "nil") provider=\(providerForCurrentUser()) errorDomain=\(domain) code=\(code) message=\(localized)")
+        print("[DeleteAccount][CLIENT_FAIL] \(correlationSegment) domain=\(domain) code=\(code) message=\(localized) userInfoKeys=\(Array(ns.userInfo.keys)) details=\(details) userInfo=\(ns.userInfo)")
     }
 
     private func isRequiresRecentLoginError(_ error: Error) -> Bool {
@@ -568,7 +611,7 @@ final class AccountSettingsViewModel: ObservableObject {
 
 }
 
-private extension User {
+extension User {
     func getIDTokenForcingRefreshAsync(_ forceRefresh: Bool) async throws -> String {
         try await withCheckedThrowingContinuation { continuation in
             getIDTokenForcingRefresh(forceRefresh) { token, error in
@@ -592,9 +635,10 @@ private extension User {
             delete { error in
                 if let error {
                     continuation.resume(throwing: error)
-                } else {
-                    continuation.resume(returning: ())
+                    return
                 }
+
+                continuation.resume(returning: Void())
             }
         }
     }
