@@ -264,7 +264,7 @@ final class AccountSettingsViewModel: ObservableObject {
             print("[DeleteAccount][FUNCTION_OK]")
 
             do {
-                try await currentUser.delete()
+                try await currentUser.deleteAsync()
                 print("[DeleteAccount][AUTH_DELETE_OK]")
             } catch {
                 let nsError = error as NSError
@@ -304,7 +304,7 @@ final class AccountSettingsViewModel: ObservableObject {
             }
 
             let firebaseCredential = GoogleAuthProvider.credential(withIDToken: idToken, accessToken: result.user.accessToken.tokenString)
-            _ = try await currentUser.reauthenticate(with: firebaseCredential)
+            _ = try await currentUser.reauthenticateAsync(with: firebaseCredential)
             print("[DeleteAccount][REAUTH_OK]")
             return true
         } catch {
@@ -333,7 +333,7 @@ final class AccountSettingsViewModel: ObservableObject {
                 fullName: appleAuthorization.fullName
             )
 
-            _ = try await currentUser.reauthenticate(with: credential)
+            _ = try await currentUser.reauthenticateAsync(with: credential)
             print("[DeleteAccount][REAUTH_OK] provider=apple.com")
             return true
         } catch {
@@ -423,7 +423,7 @@ final class AccountSettingsViewModel: ObservableObject {
         ]
 
         print("[DeleteAccount] correlationId=\(correlationId) uid=\(uid) provider=\(provider) stage=refresh_token_start")
-        _ = try await currentUser.getIDTokenForcingRefresh(true)
+        _ = try await currentUser.getIDTokenForcingRefreshAsync(true)
         print("[DeleteAccount] correlationId=\(correlationId) uid=\(uid) provider=\(provider) stage=refresh_token_ok")
 
         do {
@@ -443,7 +443,7 @@ final class AccountSettingsViewModel: ObservableObject {
                 }
 
                 guard reauthOK else { throw error }
-                _ = try await currentUser.getIDTokenForcingRefresh(true)
+                _ = try await currentUser.getIDTokenForcingRefreshAsync(true)
                 payload["correlationId"] = correlationId
                 print("[DeleteAccount] correlationId=\(correlationId) uid=\(uid) provider=\(provider) stage=retry_after_reauth")
                 _ = try await callable(name: "deleteMyAccount", payload: payload)
@@ -511,4 +511,54 @@ final class AccountSettingsViewModel: ObservableObject {
     }
 
 
+}
+
+private extension User {
+    func getIDTokenForcingRefreshAsync(_ forceRefresh: Bool) async throws -> String {
+        try await withCheckedThrowingContinuation { continuation in
+            getIDTokenForcingRefresh(forceRefresh) { token, error in
+                if let error {
+                    continuation.resume(throwing: error)
+                    return
+                }
+
+                guard let token else {
+                    continuation.resume(throwing: NSError(domain: "StorePass", code: 9013, userInfo: [NSLocalizedDescriptionKey: "Unable to refresh authentication token."]))
+                    return
+                }
+
+                continuation.resume(returning: token)
+            }
+        }
+    }
+
+    func deleteAsync() async throws {
+        try await withCheckedThrowingContinuation { continuation in
+            delete { error in
+                if let error {
+                    continuation.resume(throwing: error)
+                    return
+                }
+                continuation.resume(returning: ())
+            }
+        }
+    }
+
+    func reauthenticateAsync(with credential: AuthCredential) async throws -> AuthDataResult {
+        try await withCheckedThrowingContinuation { continuation in
+            reauthenticate(with: credential) { authResult, error in
+                if let error {
+                    continuation.resume(throwing: error)
+                    return
+                }
+
+                guard let authResult else {
+                    continuation.resume(throwing: NSError(domain: "StorePass", code: 9014, userInfo: [NSLocalizedDescriptionKey: "Unable to re-authenticate."]))
+                    return
+                }
+
+                continuation.resume(returning: authResult)
+            }
+        }
+    }
 }
