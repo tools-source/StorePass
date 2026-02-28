@@ -18,6 +18,7 @@ struct EmployeeHistoryView: View {
 
 struct CheckInHistoryView: View {
     @ObservedObject var viewModel: EmployeeHistoryViewModel
+
     @State private var showClearAllConfirm = false
     @State private var editingCheckIn: CheckIn?
     @State private var editStatus: CheckInStatus = .approved
@@ -25,6 +26,7 @@ struct CheckInHistoryView: View {
     @State private var filterByDay = false
 
     private let calendar = Calendar.current
+
     private let timeFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.locale = .current
@@ -32,17 +34,17 @@ struct CheckInHistoryView: View {
         formatter.dateStyle = .none
         return formatter
     }()
+
     private let dayHeaderFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.locale = .current
-        formatter.setLocalizedDateFormatFromTemplate("EEE MMM d")
+        formatter.setLocalizedDateFormatFromTemplate("EEE MMM d") // Sat, Feb 28
         return formatter
     }()
 
     private struct DaySection: Identifiable {
         let day: Date
         let items: [CheckIn]
-
         var id: Date { day }
         var dailyTotalSeconds: Int { items.compactMap(\.computedDurationSeconds).reduce(0, +) }
     }
@@ -99,22 +101,23 @@ struct CheckInHistoryView: View {
                 } else {
                     ForEach(daySections) { section in
                         Section {
-                            TimesheetListCard {
-                                TimesheetColumnHeaderRow(leadingTitle: "Store")
-                            } rows: {
-                                VStack(spacing: 0) {
+                            tableHeaderRow
+                                .listRowBackground(DS.Colors.card)
+                                .listRowSeparator(.hidden)
+                                .listRowInsets(EdgeInsets(top: 10, leading: 16, bottom: 6, trailing: 16))
+                                .overlay(alignment: .bottom) {
                                     Divider().opacity(0.16)
-
-                                    ForEach(Array(section.items.enumerated()), id: \.element.id) { index, item in
-                                        timesheetRow(for: item)
-
-                                        if index < section.items.count - 1 {
-                                            Divider().opacity(0.16)
-                                        }
-                                    }
                                 }
+
+                            ForEach(section.items) { item in
+                                timesheetRow(for: item)
+                                    .listRowBackground(DS.Colors.card)
+                                    .listRowSeparator(.hidden)
+                                    .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+                                    .overlay(alignment: .bottom) {
+                                        Divider().opacity(0.16)
+                                    }
                             }
-                            .padding(.bottom, 6)
                         } header: {
                             HStack {
                                 Text(dayHeaderFormatter.string(from: section.day))
@@ -125,9 +128,6 @@ struct CheckInHistoryView: View {
                             .foregroundStyle(.white)
                             .textCase(nil)
                         }
-                        .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
-                        .listRowSeparator(.hidden)
-                        .listRowBackground(Color.clear)
                     }
                 }
             }
@@ -193,6 +193,8 @@ struct CheckInHistoryView: View {
         }
     }
 
+    // MARK: - Filter Card
+
     private var filterCard: some View {
         TimesheetHeaderCard {
             TimesheetLabeledMenu(
@@ -247,28 +249,78 @@ struct CheckInHistoryView: View {
         }
     }
 
-    private func timesheetRow(for item: CheckIn) -> some View {
-        HStack(spacing: 8) {
-            Text(item.storeName)
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .frame(maxWidth: .infinity, alignment: .leading)
+    // MARK: - Table Header Row (with vertical column lines)
+    private var tableHeaderRow: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Text("Store")
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
-            Text(timeFormatter.string(from: item.checkInTime))
-                .font(.system(.caption, design: .monospaced))
-                .frame(width: 95, alignment: .leading)
+                Text("Start")
+                    .frame(width: 95, alignment: .leading)
 
-            Text(item.checkOutTime.map { timeFormatter.string(from: $0) } ?? "—")
-                .font(.system(.caption, design: .monospaced))
-                .frame(width: 95, alignment: .leading)
+                Text("End")
+                    .frame(width: 95, alignment: .leading)
 
-            Text(viewModel.formattedDuration(seconds: item.computedDurationSeconds ?? 0))
-                .font(.system(.caption, design: .monospaced).weight(.semibold))
-                .foregroundStyle(DS.Colors.primary)
-                .frame(width: 72, alignment: .trailing)
+                Text("Time")
+                    .frame(width: 72, alignment: .trailing)
+            }
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.secondary)
+            .padding(.vertical, 10)
+
+            Rectangle()
+                .fill(Color.white.opacity(0.28))
+                .frame(height: 1)
         }
-        .font(.subheadline)
-        .padding(.vertical, 10)
+    }
+
+    private func headerCell(_ text: String, align: Alignment) -> some View {
+        Text(text)
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: align)
+    }
+
+//    private var vLine: some View {
+//        Rectangle()
+//            .fill(Color.white.opacity(0.12))
+//            .frame(width: 1)
+//    }
+
+
+    // MARK: - Row (with vertical column lines)
+    private func timesheetRow(for item: CheckIn) -> some View {
+        VStack(spacing: 0) {
+
+            HStack(spacing: 8) {
+                Text(item.storeName)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Text(timeFormatter.string(from: item.checkInTime))
+                    .font(.system(.caption, design: .monospaced))
+                    .frame(width: 95, alignment: .leading)
+
+                Text(item.checkOutTime.map { timeFormatter.string(from: $0) } ?? "—")
+                    .font(.system(.caption, design: .monospaced))
+                    .frame(width: 95, alignment: .leading)
+
+                Text(viewModel.formattedDuration(seconds: item.computedDurationSeconds ?? 0))
+                    .font(.system(.caption, design: .monospaced).weight(.semibold))
+                    .foregroundStyle(DS.Colors.primary)
+                    .frame(width: 72, alignment: .trailing)
+            }
+            .font(.subheadline)
+            .padding(.vertical, 12)
+
+            Rectangle()
+                .fill(Color.white.opacity(0.28))
+                .frame(height: 1)
+        }
         .contentShape(Rectangle())
         .swipeActions(edge: .leading) {
             Button("Edit") {
@@ -290,5 +342,23 @@ struct CheckInHistoryView: View {
                 }
             }
         }
+    }
+
+    private func rowCell(_ text: String, align: Alignment) -> some View {
+        Text(text)
+            .font(.subheadline)
+            .foregroundStyle(.white)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 12)
+            .frame(maxWidth: .infinity, alignment: align)
+    }
+
+    private func rowMonoCell(_ text: String, align: Alignment, isAccent: Bool = false) -> some View {
+        Text(text)
+            .font(.system(.caption, design: .monospaced).weight(isAccent ? .semibold : .regular))
+            .foregroundStyle(isAccent ? DS.Colors.primary : .white)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 12)
+            .frame(maxWidth: .infinity, alignment: align)
     }
 }
