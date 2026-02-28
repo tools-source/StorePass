@@ -11,7 +11,6 @@ struct AccountSettingsView: View {
     @StateObject private var viewModel = AccountSettingsViewModel()
     @State private var showDeleteConfirmation = false
     @State private var showReauthSheet = false
-    @State private var pendingDeleteRole: UserRole?
     @State private var localNameOverride: String?
 
     var body: some View {
@@ -42,17 +41,13 @@ struct AccountSettingsView: View {
                 Button("Cancel", role: .cancel) {}
                 Button("Delete", role: .destructive) {
                     Task {
-                        let role = authViewModel.currentUser?.role
-                        pendingDeleteRole = role
-                        if role == .manager {
-                            showReauthSheet = true
-                        } else {
-                            await viewModel.deleteAccount(role: role)
-                            if viewModel.needsReauthentication {
+                        await viewModel.deleteAccount(role: .employee)
+                        if viewModel.needsReauthentication {
+                            await MainActor.run {
                                 showReauthSheet = true
-                            } else if viewModel.errorMessage == nil {
-                                await authViewModel.signOut()
                             }
+                        } else if viewModel.errorMessage == nil {
+                            await authViewModel.signOut()
                         }
                     }
                 }
@@ -63,11 +58,7 @@ struct AccountSettingsView: View {
                 ReauthenticateSheet(viewModel: viewModel) {
                     showReauthSheet = false
                     Task {
-                        if pendingDeleteRole == .manager {
-                            await viewModel.deleteManagerAccountFlow()
-                        } else {
-                            await viewModel.deleteAccountAfterReauth(role: pendingDeleteRole)
-                        }
+                        await viewModel.deleteAccountAfterReauth(role: .employee)
                         if viewModel.errorMessage == nil {
                             await authViewModel.signOut()
                         }
@@ -356,6 +347,7 @@ final class AccountSettingsViewModel: ObservableObject {
 
         isDeleting = true
         isDeletingAccount = true
+        needsReauthentication = false
 
         let provider = providerForCurrentUser()
         printDeleteAccountDiagnostics()
@@ -382,19 +374,21 @@ final class AccountSettingsViewModel: ObservableObject {
                     self.errorMessage = nil
                 }
             } catch {
-                let nsError = error as NSError
-                let needsRecentLogin = nsError.domain == AuthErrorDomain && nsError.code == AuthErrorCode.requiresRecentLogin.rawValue
-                if needsRecentLogin && allowReauthPrompt {
+                await MainActor.run {
+                    self.logDeleteAccountError(error)
+                }
+
+                if allowReauthPrompt && self.isRequiresRecentLoginError(error) {
                     await MainActor.run {
                         self.needsReauthentication = true
                         self.prepareProviderForReauth()
-                        self.errorMessage = self.userFacingDeleteError(error)
+                        self.errorMessage = "For security, please verify your identity and try deleting your account again."
+                        print("[DeleteAccount] needsReauth=true provider=\(self.selectedProviderForReauth ?? self.providerForCurrentUser())")
                     }
                     return
                 }
 
                 await MainActor.run {
-                    self.logDeleteAccountError(error)
                     self.errorMessage = self.userFacingDeleteError(error)
                 }
             }
@@ -446,8 +440,8 @@ final class AccountSettingsViewModel: ObservableObject {
 
     private func printDeleteAccountDiagnostics() {
         let providerIDs = auth.currentUser?.providerData.map(\.providerID) ?? []
-        let hasCurrentUser = auth.currentUser != nil
-        print("[DeleteAccount][Diagnostics] hasCurrentUser=\(hasCurrentUser) providerIDs=\(providerIDs)")
+        let uid = auth.currentUser?.uid ?? "nil"
+        print("[DeleteAccount][BEGIN] uid=\(uid) providerIDs=\(providerIDs)")
     }
 
     private func logDeleteAccountStage(_ stage: String, uid: String, provider: String, error: Error? = nil) {
@@ -467,7 +461,65 @@ final class AccountSettingsViewModel: ObservableObject {
         let details = ns.userInfo["details"] ?? ns.userInfo["data"] ?? ns.userInfo
 
         print("[DeleteAccount] stage=error uid=\(auth.currentUser?.uid ?? "nil") provider=\(providerForCurrentUser()) errorDomain=\(domain) code=\(code) message=\(localized)")
-        print("[DeleteAccount][CLIENT_FAIL] domain=\(domain) code=\(code) message=\(localized) details=\(details) userInfo=\(ns.userInfo)")
+        print("[DeleteAccount][CLIENT_FAIL] domain=\(domain) code=\(code) message=\(localized) userInfoKeys=\(Array(ns.userInfo.keys)) details=\(details) userInfo=\(ns.userInfo)")
+    }
+
+    private func isRequiresRecentLoginError(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        if nsError.domain == AuthErrorDomain,
+           nsError.code == AuthErrorCode.requiresRecentLogin.rawValue {
+            return true
+        }
+
+        let isFunctionsDomain = nsError.domain == FunctionsErrorDomain || nsError.domain == "com.firebase.functions"
+        guard isFunctionsDomain else {
+            return false
+        }
+
+        if nsError.localizedDescription.range(of: "requires recent login", options: .caseInsensitive) != nil {
+            return true
+        }
+
+        return containsRequiresRecentLoginSignal(nsError.userInfo)
+    }
+
+    private func containsRequiresRecentLoginSignal(_ value: Any?) -> Bool {
+        guard let value else { return false }
+
+        if let number = value as? NSNumber,
+           number.intValue == AuthErrorCode.requiresRecentLogin.rawValue {
+            return true
+        }
+
+        if let string = value as? String {
+            if string.range(of: "requires recent login", options: .caseInsensitive) != nil {
+                return true
+            }
+            if Int(string.trimmingCharacters(in: .whitespacesAndNewlines)) == AuthErrorCode.requiresRecentLogin.rawValue {
+                return true
+            }
+            return false
+        }
+
+        if let dict = value as? [String: Any] {
+            for key in ["code", "authCode", "authErrorCode", "errorCode"] {
+                if containsRequiresRecentLoginSignal(dict[key]) {
+                    return true
+                }
+            }
+            for key in ["message", "error", "description"] {
+                if containsRequiresRecentLoginSignal(dict[key]) {
+                    return true
+                }
+            }
+            return dict.values.contains(where: containsRequiresRecentLoginSignal)
+        }
+
+        if let array = value as? [Any] {
+            return array.contains(where: containsRequiresRecentLoginSignal)
+        }
+
+        return false
     }
 
     private func userFacingDeleteError(_ error: Error) -> String {
