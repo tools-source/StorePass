@@ -12,13 +12,25 @@ struct AccountSettingsView: View {
     @StateObject private var viewModel = AccountSettingsViewModel()
     @State private var showDeleteConfirmation = false
     @State private var showReauthSheet = false
+    @State private var showEditNameSheet = false
     @State private var localNameOverride: String?
+    @State private var fallbackFirestoreName: String?
+    @State private var editedName = ""
+    @State private var isSavingName = false
+    @State private var nameUpdateErrorMessage: String?
 
     var body: some View {
         NavigationStack {
             List {
                 Section("Profile") {
-                    LabeledContent("Name", value: displayName)
+                    NameRowView(
+                        displayName: displayName,
+                        canEdit: canEditName,
+                        onEditTapped: {
+                            editedName = displayName
+                            showEditNameSheet = true
+                        }
+                    )
                     LabeledContent("Email", value: authViewModel.currentUser?.email ?? "No email")
                     LabeledContent("Role", value: authViewModel.currentUser?.role.rawValue.capitalized ?? "Unknown")
                 }
@@ -57,13 +69,29 @@ struct AccountSettingsView: View {
                 }
                 .presentationDetents([.medium])
             }
+            .sheet(isPresented: $showEditNameSheet) {
+                EditNameSheet(
+                    name: $editedName,
+                    originalName: displayName,
+                    isSaving: isSavingName,
+                    onCancel: { showEditNameSheet = false },
+                    onSave: saveDisplayName
+                )
+                .presentationDetents([.medium])
+            }
             .alert("Settings", isPresented: Binding(get: { viewModel.errorMessage != nil }, set: { _ in viewModel.errorMessage = nil })) {
                 Button("OK", role: .cancel) { viewModel.errorMessage = nil }
             } message: {
                 Text(viewModel.errorMessage ?? "")
             }
+            .alert("Couldn't Update Name", isPresented: Binding(get: { nameUpdateErrorMessage != nil }, set: { _ in nameUpdateErrorMessage = nil })) {
+                Button("OK", role: .cancel) { nameUpdateErrorMessage = nil }
+            } message: {
+                Text(nameUpdateErrorMessage ?? "")
+            }
             .onAppear {
                 localNameOverride = authViewModel.currentUser?.name
+                Task { await loadFallbackName() }
             }
             .onChange(of: authViewModel.currentUser?.name) { _, newValue in
                 if let newValue {
@@ -86,7 +114,129 @@ struct AccountSettingsView: View {
     }
 
     private var displayName: String {
-        localNameOverride ?? authViewModel.currentUser?.name ?? "StorePass User"
+        let preferred = (localNameOverride ?? authViewModel.currentUser?.name)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let preferred, !preferred.isEmpty {
+            return preferred
+        }
+
+        let fallback = fallbackFirestoreName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let fallback, !fallback.isEmpty {
+            return fallback
+        }
+
+        return "StorePass User"
+    }
+
+    private var canEditName: Bool {
+        let providerIDs = Auth.auth().currentUser?.providerData.map(\.providerID) ?? []
+        return providerIDs.contains("apple.com") || providerIDs.contains("google.com")
+    }
+
+    private func loadFallbackName() async {
+        guard let uid = Auth.auth().currentUser?.uid else { return }
+        do {
+            let snapshot = try await Firestore.firestore().collection("users").document(uid).getDocument()
+            if let fetchedName = snapshot.data()?["name"] as? String {
+                await MainActor.run {
+                    fallbackFirestoreName = fetchedName
+                }
+            }
+        } catch {
+            // No-op fallback; display name still resolves to StorePass User.
+        }
+    }
+
+    private func saveDisplayName() {
+        guard !isSavingName else { return }
+        isSavingName = true
+
+        Task {
+            do {
+                try await authViewModel.updateDisplayName(editedName)
+                await MainActor.run {
+                    localNameOverride = editedName.trimmingCharacters(in: .whitespacesAndNewlines)
+                    fallbackFirestoreName = localNameOverride
+                    isSavingName = false
+                    showEditNameSheet = false
+                }
+            } catch {
+                await MainActor.run {
+                    isSavingName = false
+                    nameUpdateErrorMessage = "We couldn't update your name right now. Please try again."
+                }
+            }
+        }
+    }
+}
+
+private struct NameRowView: View {
+    let displayName: String
+    let canEdit: Bool
+    let onEditTapped: () -> Void
+
+    var body: some View {
+        HStack {
+            Text("Name")
+            Spacer()
+
+            HStack(spacing: DS.Spacing.s) {
+                Text(displayName)
+                    .foregroundStyle(.secondary)
+
+                if canEdit {
+                    Button("Edit", action: onEditTapped)
+                        .buttonStyle(.borderless)
+                        .font(.subheadline)
+                }
+            }
+        }
+    }
+}
+
+private struct EditNameSheet: View {
+    @Binding var name: String
+    let originalName: String
+    let isSaving: Bool
+    let onCancel: () -> Void
+    let onSave: () -> Void
+
+    private var trimmedName: String {
+        name.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var isUnchanged: Bool {
+        trimmedName == originalName.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: DS.Spacing.m) {
+                TextField("Name", text: $name)
+                    .textInputAutocapitalization(.words)
+                    .autocorrectionDisabled()
+                    .padding(.horizontal, DS.Spacing.s)
+                    .padding(.vertical, DS.Spacing.s)
+                    .background(DS.Colors.card)
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+
+                Spacer()
+            }
+            .padding(DS.Spacing.m)
+            .background(DS.Colors.background)
+            .navigationTitle("Edit Name")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel", action: onCancel)
+                        .disabled(isSaving)
+                }
+
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save", action: onSave)
+                        .disabled(isSaving || trimmedName.isEmpty || isUnchanged)
+                }
+            }
+        }
     }
 }
 

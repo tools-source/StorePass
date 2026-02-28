@@ -358,6 +358,34 @@ final class AuthViewModel: ObservableObject {
         }
     }
 
+    func updateDisplayName(_ newName: String) async throws {
+        let trimmedName = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty else {
+            throw NSError(domain: "StorePass", code: 9020, userInfo: [NSLocalizedDescriptionKey: "Please enter your name."])
+        }
+
+        guard let firebaseUser = authService.authUser() else {
+            throw NSError(domain: "StorePass", code: 9021, userInfo: [NSLocalizedDescriptionKey: "You must be signed in."])
+        }
+
+        do {
+            try await Firestore.firestore().collection("users").document(firebaseUser.uid).setData([
+                "name": trimmedName,
+                "updatedAt": FieldValue.serverTimestamp()
+            ], merge: true)
+
+            if var existingUser = currentUser {
+                existingUser.name = trimmedName
+                syncState(with: existingUser, role: existingUser.role)
+            }
+
+            print("[Settings][NameUpdate] success uid=\(firebaseUser.uid) newName=\(trimmedName)")
+        } catch {
+            print("[Settings][NameUpdate] failure uid=\(firebaseUser.uid) error=\(error.localizedDescription)")
+            throw error
+        }
+    }
+
     private func evaluateAppleNamePromptAfterSignIn(appleFullName: String?) {
         guard let firebaseUser = authService.authUser() else { return }
         let providerIds = Set(firebaseUser.providerData.map(\.providerID))
