@@ -17,13 +17,15 @@ final class FirebaseAuthRepository: AuthRepositoryProtocol {
     var currentUserId: String? { auth.currentUser?.uid }
 
     func signIn(email: String, password: String) async throws -> String {
-        let result = try await auth.signIn(withEmail: email, password: password)
-        return result.user.uid
+        _ = email
+        _ = password
+        throw NSError(domain: "StorePass", code: 4101, userInfo: [NSLocalizedDescriptionKey: "Email/password sign-in is disabled. Use Google or Apple sign-in."])
     }
 
     func createUser(email: String, password: String) async throws -> String {
-        let result = try await auth.createUser(withEmail: email, password: password)
-        return result.user.uid
+        _ = email
+        _ = password
+        throw NSError(domain: "StorePass", code: 4102, userInfo: [NSLocalizedDescriptionKey: "Email/password account creation is disabled. Use Google or Apple sign-in."])
     }
 
     func signOut() throws {
