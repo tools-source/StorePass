@@ -238,7 +238,7 @@ struct ManagerCheckInsView: View {
                         Text("Daily total: \(viewModel.formattedDuration(seconds: section.dailyTotalSeconds))")
                     }
                     .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(DS.Colors.textPrimary)
                     .textCase(nil)
                 }
                 .listRowBackground(DS.Colors.card)

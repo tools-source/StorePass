@@ -27,16 +27,16 @@ struct EmployeeManagementView: View {
                 if let bannerMessage = viewModel.bannerMessage {
                     HStack(spacing: DS.Spacing.s) {
                         Image(systemName: "exclamationmark.triangle.fill")
-                            .foregroundStyle(.white)
+                            .foregroundStyle(Color(uiColor: .white))
                         Text(bannerMessage)
                             .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(.white)
+                            .foregroundStyle(Color(uiColor: .white))
                         Spacer()
                         Button("Dismiss") {
                             viewModel.bannerMessage = nil
                         }
                         .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(Color(uiColor: .white))
                     }
                     .padding(.horizontal, DS.Spacing.m)
                     .padding(.vertical, DS.Spacing.s)

@@ -73,7 +73,7 @@ private struct RootContentView: View {
     @ViewBuilder
     private var loadingView: some View {
         ProgressView("Loading account")
-            .tint(.white)
+            .tint(DS.Colors.primary)
     }
 
     private func boot() async {
@@ -108,7 +108,7 @@ private struct AppleNamePromptSheet: View {
                     .textInputAutocapitalization(.words)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 10)
-                    .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .background(DS.Colors.card, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
 
                 Button("Save") {
                     onSave()

@@ -12,11 +12,13 @@ enum DS {
     }
 
     enum Colors {
-        static let background = Color("AppBackground")
-        static let card = Color("AppCard")
+        static let background = Color(uiColor: .systemBackground)
+        static let card = Color(uiColor: .secondarySystemBackground)
         static let primary = Color("AppPrimary")
-        static let textPrimary = Color("AppTextPrimary")
-        static let textSecondary = Color("AppTextSecondary")
+        static let textPrimary = Color(uiColor: .label)
+        static let textSecondary = Color(uiColor: .secondaryLabel)
+        static let separator = Color(uiColor: .separator)
+        static let destructive = Color(uiColor: .systemRed)
     }
 }
 
@@ -33,7 +35,7 @@ struct PrimaryButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.headline)
-            .foregroundStyle(.white)
+            .foregroundStyle(Color(uiColor: .white))
             .frame(maxWidth: .infinity)
             .frame(height: 52)
             .background(DS.Colors.primary.opacity(configuration.isPressed ? 0.8 : 1))
