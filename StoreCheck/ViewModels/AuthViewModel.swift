@@ -42,6 +42,13 @@ final class AuthViewModel: ObservableObject {
 
         await authService.restoreSession(forceSignOutOnLaunch: forceSignOutOnLaunch)
 
+        if let firebaseUser = authService.authUser() {
+            let providerIDs = firebaseUser.providerData.map(\.providerID)
+            print("[AuthStartup] uid=\(firebaseUser.uid) providerIDs=\(providerIDs)")
+        } else {
+            print("[AuthStartup] uid=nil providerIDs=[]")
+        }
+
         guard authService.authUser() != nil else {
             clearState()
             return
@@ -87,6 +94,12 @@ final class AuthViewModel: ObservableObject {
 
         do {
             try await authService.signInWithEmail(email: email, password: password)
+
+            if let firebaseUser = authService.authUser() {
+                let providerIDs = firebaseUser.providerData.map(\.providerID)
+                print("[EmailLogin] OK uid=\(firebaseUser.uid) providers=\(providerIDs)")
+            }
+
             try await resolveProfileAndRoute(
                 requestedRole: requestedRole,
                 isSessionRestore: false,
@@ -94,6 +107,7 @@ final class AuthViewModel: ObservableObject {
                 preferredEmail: email
             )
         } catch {
+            logEmailAuthFailure(prefix: "[EmailLogin] FAIL", error: error)
             showEmployeeSetupRequired = true
             errorMessage = userFacingMessage(for: error)
         }
@@ -116,6 +130,7 @@ final class AuthViewModel: ObservableObject {
                 preferredEmail: email
             )
         } catch {
+            logEmailAuthFailure(prefix: "[EmailSignup] FAIL", error: error)
             showEmployeeSetupRequired = true
             errorMessage = userFacingMessage(for: error)
         }
@@ -152,8 +167,6 @@ final class AuthViewModel: ObservableObject {
         let providerValue = provider ?? authProvider(for: firebaseUser)
         let resolvedName = preferredName?.trimmingCharacters(in: .whitespacesAndNewlines)
         let resolvedEmail = preferredEmail?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let providerIDs = firebaseUser.providerData.map(\.providerID)
-        print("[AuthStartup] uid=\(firebaseUser.uid) providerIDs=\(providerIDs)")
 
         let status = try await roleProfileRepository.ensureUserProfile(
             uid: firebaseUser.uid,
@@ -218,8 +231,6 @@ final class AuthViewModel: ObservableObject {
         }
 
         let providerValue = authProvider(for: firebaseUser)
-        let providerIDs = firebaseUser.providerData.map(\.providerID)
-        print("[AuthStartup] uid=\(firebaseUser.uid) providerIDs=\(providerIDs)")
 
         let status = try await roleProfileRepository.ensureUserProfile(
             uid: firebaseUser.uid,
@@ -356,7 +367,17 @@ final class AuthViewModel: ObservableObject {
             return "For security, sign in again and retry this action."
         }
 
+        if nsError.domain == AuthErrorDomain,
+           nsError.code == AuthErrorCode.operationNotAllowed.rawValue {
+            return "Email/Password sign-in is disabled in Firebase Console. Enable it under Authentication → Sign-in method."
+        }
+
         return error.localizedDescription
+    }
+
+    private func logEmailAuthFailure(prefix: String, error: Error) {
+        let nsError = error as NSError
+        print("\(prefix) domain=\(nsError.domain) code=\(nsError.code) message=\(nsError.localizedDescription) userInfo=\(nsError.userInfo)")
     }
 
 }
