@@ -175,7 +175,11 @@ struct ManageStoresView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
 
-                    Text("\(store.radiusMeters)m radius • code ending ••••\(store.joinCodeLast4 ?? "----")")
+                    Text("\(store.radiusMeters)m radius")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+
+                    Text("Join code: \(viewModel.resolvedJoinCode(for: store))")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
 
@@ -183,18 +187,20 @@ struct ManageStoresView: View {
                         HStack(spacing: 8) {
                             actionButton("Copy code", icon: "doc.on.doc", prominence: .secondary) {
                                 Task {
-                                    if let cached = viewModel.latestJoinCodesByStoreId[store.id] {
-                                        UIPasteboard.general.string = cached
+                                    let resolvedJoinCode = viewModel.resolvedJoinCode(storeId: store.id)
+                                    if resolvedJoinCode != "----" {
+                                        UIPasteboard.general.string = resolvedJoinCode
+                                        viewModel.showToast("Code copied")
+                                        return
+                                    }
+
+                                    let fetched = await viewModel.fetchJoinCode(storeId: store.id)
+                                    if let fetched {
+                                        UIPasteboard.general.string = fetched
                                         viewModel.showToast("Code copied")
                                     } else {
-                                        let fetched = await viewModel.fetchJoinCode(storeId: store.id)
-                                        if let fetched {
-                                            UIPasteboard.general.string = fetched
-                                            viewModel.showToast("Code copied")
-                                        } else {
-                                            await MainActor.run {
-                                                viewModel.presentStoreError("Unable to fetch store code.")
-                                            }
+                                        await MainActor.run {
+                                            viewModel.presentStoreError("Unable to fetch store code.")
                                         }
                                     }
                                 }
@@ -202,12 +208,12 @@ struct ManageStoresView: View {
 
                             actionButton("Rotate code", icon: "arrow.triangle.2.circlepath", prominence: .primary) {
                                 Task {
-                                    await viewModel.rotateStoreCode(storeId: store.id)
-                                    if let newCode = viewModel.latestJoinCodesByStoreId[store.id] {
-                                        UIPasteboard.general.string = newCode
+                                    await viewModel.rotateStoreCode(storeId: store.id, managerId: container.authRepository.currentUserId)
+                                    let resolvedJoinCode = viewModel.resolvedJoinCode(storeId: store.id)
+                                    if resolvedJoinCode != "----" {
+                                        UIPasteboard.general.string = resolvedJoinCode
                                         viewModel.showToast("New code copied")
                                     }
-                                    await viewModel.load(managerId: container.authRepository.currentUserId)
                                 }
                             }
                         }
