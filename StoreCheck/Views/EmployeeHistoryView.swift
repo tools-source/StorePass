@@ -321,15 +321,15 @@ struct CheckInHistoryView: View {
                 .fill(Color.white.opacity(0.28))
                 .frame(height: 1)
         }
-        .contentShape(Rectangle())
-        .swipeActions(edge: .leading) {
-            Button("Edit") {
-                editingCheckIn = item
-                editStatus = item.status
-                editReason = item.rejectReason ?? ""
-            }
-            .tint(.blue)
-        }
+//        .contentShape(Rectangle())
+//        .swipeActions(edge: .leading) {
+//            Button("Edit") {
+//                editingCheckIn = item
+//                editStatus = item.status
+//                editReason = item.rejectReason ?? ""
+//            }
+//            .tint(.blue)
+//        }
         .swipeActions(edge: .trailing) {
             Button("Copy") {
                 viewModel.copySingle(item)
