@@ -1,3 +1,4 @@
+import FirebaseAuth
 import SwiftUI
 
 struct RootView: View {
@@ -16,8 +17,15 @@ private struct RootContentView: View {
     }
 
     @StateObject private var authViewModel: AuthViewModel
+    @StateObject private var appLockViewModel = AppLockViewModel()
     @State private var bootState: BootState = .launching
+    @State private var showAppLockPrompt = false
+    @AppStorage("appLockEnabled") private var appLockEnabled = false
+    @AppStorage("didPromptForAppLock") private var didPromptForAppLock = false
+    @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject private var appContainer: AppContainer
+
+    private let biometricAuthService = BiometricAuthService()
 
     init(authService: AuthService, roleProfileRepository: RoleProfileRepositoryProtocol) {
         _authViewModel = StateObject(wrappedValue: AuthViewModel(authService: authService, roleProfileRepository: roleProfileRepository))
@@ -49,18 +57,50 @@ private struct RootContentView: View {
         .background(DS.Colors.background.ignoresSafeArea())
         .environmentObject(authViewModel)
         .task { await boot() }
+        .onChange(of: scenePhase) { _, newPhase in
+            guard newPhase == .active else { return }
+            appLockViewModel.onAppBecameActive(isUserSignedIn: authViewModel.currentUser != nil)
+        }
         .onChange(of: authViewModel.authState) { _, newState in
             if case .signedOut = newState {
                 bootState = .needsLogin
+                appLockViewModel.unlockForDisabledAppLock()
             }
         }
         .onChange(of: authViewModel.currentUser) { _, newUser in
             guard let newUser else {
                 bootState = .needsLogin
+                appLockViewModel.unlockForDisabledAppLock()
                 return
             }
 
+            let cameFromLoginFlow: Bool
+            if case .needsLogin = bootState {
+                cameFromLoginFlow = true
+            } else {
+                cameFromLoginFlow = false
+            }
+
             bootState = .authenticated(user: newUser)
+
+            if cameFromLoginFlow,
+               !didPromptForAppLock,
+               biometricAuthService.biometricType() != .none,
+               shouldOfferAppLockForCurrentProvider() {
+                showAppLockPrompt = true
+            }
+        }
+        .alert("Enable Face ID to unlock the app?", isPresented: $showAppLockPrompt) {
+            Button("Not Now", role: .cancel) {
+                appLockEnabled = false
+                didPromptForAppLock = true
+            }
+            Button("Enable") {
+                appLockEnabled = true
+                didPromptForAppLock = true
+            }
+        } message: {
+            Text("You can change this later in Settings.")
         }
         .sheet(isPresented: $authViewModel.shouldShowAppleNamePrompt) {
             AppleNamePromptSheet(
@@ -70,6 +110,28 @@ private struct RootContentView: View {
             .presentationDetents([.medium])
             .interactiveDismissDisabled()
         }
+        .overlay {
+            if authViewModel.currentUser != nil, appLockEnabled, appLockViewModel.isLocked {
+                AppLockOverlayView(
+                    biometricType: biometricAuthService.biometricType(),
+                    isAuthenticating: appLockViewModel.isAuthenticating,
+                    lastAuthFailed: appLockViewModel.lastAuthFailed,
+                    onTryAgain: {
+                        Task {
+                            await appLockViewModel.unlock()
+                        }
+                    }
+                )
+            }
+        }
+    }
+
+    private func shouldOfferAppLockForCurrentProvider() -> Bool {
+        guard let providers = Auth.auth().currentUser?.providerData.map(\.providerID) else {
+            return false
+        }
+
+        return providers.contains("apple.com") || providers.contains("google.com")
     }
 
     private func boot() async {
