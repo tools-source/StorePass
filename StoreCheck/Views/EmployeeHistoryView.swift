@@ -22,7 +22,7 @@ struct CheckInHistoryView: View {
     @State private var editingCheckIn: CheckIn?
     @State private var editStatus: CheckInStatus = .approved
     @State private var editReason = ""
-    @State private var filterByDay = true
+    @State private var filterByDay = false
 
     private let calendar = Calendar.current
     private let timeFormatter: DateFormatter = {
@@ -30,6 +30,12 @@ struct CheckInHistoryView: View {
         formatter.locale = .current
         formatter.timeStyle = .medium
         formatter.dateStyle = .none
+        return formatter
+    }()
+    private let dayHeaderFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = .current
+        formatter.setLocalizedDateFormatFromTemplate("EEE MMM d")
         return formatter
     }()
 
@@ -97,32 +103,13 @@ struct CheckInHistoryView: View {
                                 TimesheetColumnHeaderRow(leadingTitle: "Store")
                             } rows: {
                                 VStack(spacing: 0) {
+                                    Divider().opacity(0.16)
+
                                     ForEach(Array(section.items.enumerated()), id: \.element.id) { index, item in
                                         timesheetRow(for: item)
-                                            .contentShape(Rectangle())
-                                            .swipeActions(edge: .leading) {
-                                                Button("Edit") {
-                                                    editingCheckIn = item
-                                                    editStatus = item.status
-                                                    editReason = item.rejectReason ?? ""
-                                                }
-                                                .tint(.blue)
-                                            }
-                                            .swipeActions(edge: .trailing) {
-                                                Button("Copy") {
-                                                    viewModel.copySingle(item)
-                                                }
-                                                .tint(.indigo)
-
-                                                if item.checkOutTime == nil {
-                                                    Button("Delete", role: .destructive) {
-                                                        Task { await viewModel.delete(item) }
-                                                    }
-                                                }
-                                            }
 
                                         if index < section.items.count - 1 {
-                                            Divider().opacity(0.2)
+                                            Divider().opacity(0.16)
                                         }
                                     }
                                 }
@@ -130,7 +117,7 @@ struct CheckInHistoryView: View {
                             .padding(.bottom, 6)
                         } header: {
                             HStack {
-                                Text(section.day.timesheetDayString())
+                                Text(dayHeaderFormatter.string(from: section.day))
                                 Spacer()
                                 Text("Daily total: \(viewModel.formattedDuration(seconds: section.dailyTotalSeconds))")
                             }
@@ -231,16 +218,26 @@ struct CheckInHistoryView: View {
                 .font(.subheadline.weight(.semibold))
 
             if filterByDay {
-                DatePicker("Selected day", selection: $viewModel.selectedDate, displayedComponents: .date)
-                    .datePickerStyle(.compact)
-                    .font(.subheadline.weight(.semibold))
-                    .tint(DS.Colors.primary)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Selected day")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    DatePicker("Selected day", selection: $viewModel.selectedDate, displayedComponents: .date)
+                        .labelsHidden()
+                        .datePickerStyle(.compact)
+                        .tint(DS.Colors.primary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .background(DS.Colors.background.opacity(0.8), in: Capsule())
             }
 
             Divider().opacity(0.2)
 
             HStack {
-                Text(viewModel.selectedDate.timesheetDayString())
+                Text(dayHeaderFormatter.string(from: viewModel.selectedDate))
                     .font(.headline)
                 Spacer()
                 Text("Daily total: \(viewModel.formattedDuration(seconds: selectedDayTotalSeconds))")
@@ -251,32 +248,47 @@ struct CheckInHistoryView: View {
     }
 
     private func timesheetRow(for item: CheckIn) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                Text(item.storeName)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+        HStack(spacing: 8) {
+            Text(item.storeName)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(maxWidth: .infinity, alignment: .leading)
 
-                Text(timeFormatter.string(from: item.checkInTime))
-                    .font(.system(.caption, design: .monospaced))
-                    .frame(width: 95, alignment: .leading)
+            Text(timeFormatter.string(from: item.checkInTime))
+                .font(.system(.caption, design: .monospaced))
+                .frame(width: 95, alignment: .leading)
 
-                Text(item.checkOutTime.map { timeFormatter.string(from: $0) } ?? "—")
-                    .font(.system(.caption, design: .monospaced))
-                    .frame(width: 95, alignment: .leading)
+            Text(item.checkOutTime.map { timeFormatter.string(from: $0) } ?? "—")
+                .font(.system(.caption, design: .monospaced))
+                .frame(width: 95, alignment: .leading)
 
-                Text(viewModel.formattedDuration(seconds: item.computedDurationSeconds ?? 0))
-                    .font(.system(.caption, design: .monospaced).weight(.semibold))
-                    .foregroundStyle(DS.Colors.primary)
-                    .frame(width: 72, alignment: .trailing)
-            }
-            .font(.subheadline)
-
-            Text("\(item.status.rawValue.capitalized) • \(Int(item.distanceMeters))m • ±\(Int(item.accuracyMeters))m")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
+            Text(viewModel.formattedDuration(seconds: item.computedDurationSeconds ?? 0))
+                .font(.system(.caption, design: .monospaced).weight(.semibold))
+                .foregroundStyle(DS.Colors.primary)
+                .frame(width: 72, alignment: .trailing)
         }
-        .padding(.vertical, 8)
+        .font(.subheadline)
+        .padding(.vertical, 10)
+        .contentShape(Rectangle())
+        .swipeActions(edge: .leading) {
+            Button("Edit") {
+                editingCheckIn = item
+                editStatus = item.status
+                editReason = item.rejectReason ?? ""
+            }
+            .tint(.blue)
+        }
+        .swipeActions(edge: .trailing) {
+            Button("Copy") {
+                viewModel.copySingle(item)
+            }
+            .tint(.indigo)
+
+            if item.checkOutTime == nil {
+                Button("Delete", role: .destructive) {
+                    Task { await viewModel.delete(item) }
+                }
+            }
+        }
     }
 }
