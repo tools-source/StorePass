@@ -12,9 +12,11 @@ enum DS {
     }
 
     enum Colors {
-        static let background = Color(red: 0.07, green: 0.08, blue: 0.11)
-        static let card = Color(red: 0.13, green: 0.14, blue: 0.18)
-        static let primary = Color(red: 0.29, green: 0.56, blue: 0.99)
+        static let background = Color("AppBackground")
+        static let card = Color("AppCard")
+        static let primary = Color("AppPrimary")
+        static let textPrimary = Color("AppTextPrimary")
+        static let textSecondary = Color("AppTextSecondary")
     }
 }
 
