@@ -19,6 +19,7 @@ protocol CheckInRepositoryProtocol {
     func createCheckIn(_ checkIn: CheckIn) async throws
     func checkout(checkinId: String, storeId: String, managerId: String?, checkoutLat: Double, checkoutLng: Double, distanceMeters: Double, accuracyMeters: Double) async throws
     func updateCheckIn(_ checkIn: CheckIn) async throws
+    func updateCheckInTimes(checkIn: CheckIn, newCheckInTime: Date, newCheckOutTime: Date?) async throws
     func deleteCheckIn(checkinId: String, employeeId: String, storeId: String, managerId: String?) async throws
     func deleteCheckIn(checkinId: String, storeId: String, managerId: String) async throws
     func clearAllCheckIns(isManagerScope: Bool, storeId: String?, managerId: String?) async throws
@@ -240,6 +241,44 @@ final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
         batch.updateData(payload, forDocument: db.collection("employeeCheckins").document(checkIn.employeeId).collection("checkins").document(checkIn.id))
         batch.updateData(payload, forDocument: db.collection("managerCheckins").document(managerId).collection("stores").document(checkIn.storeId).collection("checkins").document(checkIn.id))
         try await batch.commit()
+    }
+
+    func updateCheckInTimes(checkIn: CheckIn, newCheckInTime: Date, newCheckOutTime: Date?) async throws {
+        guard let managerUid = Auth.auth().currentUser?.uid else {
+            throw NSError(domain: "StorePass", code: 4001, userInfo: [NSLocalizedDescriptionKey: "You must be signed in."])
+        }
+
+        let maxAllowed = Date().addingTimeInterval(5 * 60)
+        if newCheckInTime > maxAllowed {
+            throw NSError(domain: "StorePass", code: 4014, userInfo: [NSLocalizedDescriptionKey: "Check-in time cannot be set in the future."])
+        }
+        if let newCheckOutTime {
+            if newCheckOutTime > maxAllowed {
+                throw NSError(domain: "StorePass", code: 4015, userInfo: [NSLocalizedDescriptionKey: "Check-out time cannot be set in the future."])
+            }
+            if newCheckInTime > newCheckOutTime {
+                throw NSError(domain: "StorePass", code: 4016, userInfo: [NSLocalizedDescriptionKey: "Check-in time must be before check-out time."])
+            }
+        }
+
+        let managerId = try await resolveManagerId(storeId: checkIn.storeId, preferredManagerId: managerUid)
+        let payload: [String: Any] = [
+            "checkInTime": Timestamp(date: newCheckInTime),
+            "checkOutTime": newCheckOutTime.map { Timestamp(date: $0) } ?? NSNull(),
+            "updatedAt": FieldValue.serverTimestamp()
+        ]
+
+        let batch = db.batch()
+        batch.updateData(payload, forDocument: db.collection("checkins").document(checkIn.id))
+        batch.updateData(payload, forDocument: db.collection("employeeCheckins").document(checkIn.employeeId).collection("checkins").document(checkIn.id))
+        batch.updateData(payload, forDocument: db.collection("managerCheckins").document(managerId).collection("stores").document(checkIn.storeId).collection("checkins").document(checkIn.id))
+
+        do {
+            try await batch.commit()
+        } catch {
+            print("[ManagerEditTimes] error=\(error.localizedDescription)")
+            throw mapFirestoreError(error)
+        }
     }
 
     func deleteCheckIn(checkinId: String, employeeId: String, storeId: String, managerId: String?) async throws {

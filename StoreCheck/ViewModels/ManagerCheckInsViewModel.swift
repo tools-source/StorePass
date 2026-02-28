@@ -143,6 +143,27 @@ final class ManagerCheckInsViewModel: ObservableObject {
         }
     }
 
+
+    func updateTimes(for checkIn: CheckIn, checkInTime: Date, checkOutTime: Date?) async -> Bool {
+        do {
+            try await checkInRepository.updateCheckInTimes(
+                checkIn: checkIn,
+                newCheckInTime: checkInTime,
+                newCheckOutTime: checkOutTime
+            )
+            if let index = checkIns.firstIndex(where: { $0.id == checkIn.id }) {
+                checkIns[index].checkInTime = checkInTime
+                checkIns[index].checkOutTime = checkOutTime
+            }
+            errorMessage = nil
+            return true
+        } catch {
+            print("[ManagerEditTimes] error=\(error.localizedDescription)")
+            errorMessage = error.localizedDescription
+            return false
+        }
+    }
+
     func delete(_ checkIn: CheckIn) async {
         guard let managerId = authRepository.currentUserId else {
             errorMessage = "Unable to resolve current manager session."
