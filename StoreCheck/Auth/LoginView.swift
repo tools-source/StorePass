@@ -1,5 +1,6 @@
-import AuthenticationServices
 import SwiftUI
+import AuthenticationServices
+import UIKit
 
 struct LoginView: View {
     @EnvironmentObject private var viewModel: AuthViewModel
@@ -69,31 +70,35 @@ struct LoginView: View {
     }
 }
 
+
+
 private struct AppleSignInButton: UIViewRepresentable {
     let action: () -> Void
-
-    func makeUIView(context: Context) -> ASAuthorizationAppleIDButton {
-        let button = ASAuthorizationAppleIDButton(type: .signIn, style: .automatic)
-        button.cornerRadius = 10
-        button.addTarget(context.coordinator, action: #selector(Coordinator.didTap), for: .touchUpInside)
-        return button
-    }
-
-    func updateUIView(_ uiView: ASAuthorizationAppleIDButton, context: Context) {}
 
     func makeCoordinator() -> Coordinator {
         Coordinator(action: action)
     }
 
+    func makeUIView(context: Context) -> ASAuthorizationAppleIDButton {
+        // Pick ONE style:
+        // .black, .white, .whiteOutline
+        let button = ASAuthorizationAppleIDButton(
+            type: .signIn,
+            style: .whiteOutline
+        )
+        button.cornerRadius = 10
+        button.addTarget(context.coordinator,
+                         action: #selector(Coordinator.didTap),
+                         for: UIControl.Event.touchUpInside)
+        return button
+    }
+
+    func updateUIView(_ uiView: ASAuthorizationAppleIDButton, context: Context) {}
+
     final class Coordinator: NSObject {
         let action: () -> Void
+        init(action: @escaping () -> Void) { self.action = action }
 
-        init(action: @escaping () -> Void) {
-            self.action = action
-        }
-
-        @objc func didTap() {
-            action()
-        }
+        @objc func didTap() { action() }
     }
 }

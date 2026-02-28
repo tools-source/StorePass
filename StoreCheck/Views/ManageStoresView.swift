@@ -150,7 +150,10 @@ struct ManageStoresView: View {
             .opacity(canCreateStore ? 1 : 0.6)
         }
         .padding(DS.Spacing.m)
-        .background(.ultraThinMaterial.opacity(0.35), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(DS.Colors.card)
+        )
         .overlay {
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .stroke(DS.Colors.separator.opacity(0.35), lineWidth: 1)
