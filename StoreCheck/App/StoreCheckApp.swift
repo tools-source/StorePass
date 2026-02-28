@@ -15,7 +15,6 @@ struct StoreCheckApp: App {
         WindowGroup {
             RootView()
                 .environmentObject(appContainer)
-                .preferredColorScheme(.dark)
                 .onOpenURL { url in
                     _ = GIDSignIn.sharedInstance.handle(url)
                 }
