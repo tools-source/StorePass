@@ -9,15 +9,10 @@ import UIKit
 
 struct AccountSettingsView: View {
     @EnvironmentObject private var authViewModel: AuthViewModel
-    @EnvironmentObject private var appLock: AppLockManager
     @StateObject private var viewModel = AccountSettingsViewModel()
     @State private var showDeleteConfirmation = false
     @State private var showReauthSheet = false
     @State private var localNameOverride: String?
-    @State private var showAppLockUnavailableAlert = false
-    @State private var appLockUnavailableMessage = ""
-    @State private var showEnableAppLockAlert = false
-    @State private var appLockToggleValue = false
 
     var body: some View {
         NavigationStack {
@@ -26,26 +21,6 @@ struct AccountSettingsView: View {
                     LabeledContent("Name", value: displayName)
                     LabeledContent("Email", value: authViewModel.currentUser?.email ?? "No email")
                     LabeledContent("Role", value: authViewModel.currentUser?.role.rawValue.capitalized ?? "Unknown")
-                }
-
-                Section("Security") {
-                    Toggle("Face ID App Lock", isOn: $appLockToggleValue)
-                        .onChange(of: appLockToggleValue) { _, newValue in
-                            guard newValue != appLock.biometricsEnabled else { return }
-
-                            if newValue {
-                                guard appLock.canEvaluateBiometricsOnly() else {
-                                    appLockToggleValue = false
-                                    appLockUnavailableMessage = "Face ID / Touch ID is not available on this device."
-                                    showAppLockUnavailableAlert = true
-                                    return
-                                }
-                                showEnableAppLockAlert = true
-                            } else {
-                                appLock.setEnabled(false)
-                                appLock.isLocked = false
-                            }
-                        }
                 }
 
                 Section("Account") {
@@ -87,30 +62,8 @@ struct AccountSettingsView: View {
             } message: {
                 Text(viewModel.errorMessage ?? "")
             }
-            .alert("App Lock", isPresented: $showAppLockUnavailableAlert) {
-                Button("OK", role: .cancel) { }
-            } message: {
-                Text(appLockUnavailableMessage)
-            }
-            .alert("Enable Face ID?", isPresented: $showEnableAppLockAlert) {
-                Button("Cancel", role: .cancel) {
-                    appLockToggleValue = false
-                }
-                Button("Enable") {
-                    appLock.setEnabled(true)
-                    appLock.lockNow()
-                    appLock.unlock()
-                }
-            } message: {
-                Text("Enable Face ID to lock the app when you re-open it?")
-            }
             .onAppear {
                 localNameOverride = authViewModel.currentUser?.name
-                appLock.loadPreference()
-                appLockToggleValue = appLock.biometricsEnabled
-            }
-            .onChange(of: appLock.biometricsEnabled) { _, newValue in
-                appLockToggleValue = newValue
             }
             .onChange(of: authViewModel.currentUser?.name) { _, newValue in
                 if let newValue {
@@ -660,7 +613,7 @@ final class AccountSettingsViewModel: ObservableObject {
 
 extension User {
     func getIDTokenForcingRefreshAsync(_ forceRefresh: Bool) async throws -> String {
-        try await withCheckedThrowingContinuation { continuation in
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<String, Error>) in
             getIDTokenForcingRefresh(forceRefresh) { token, error in
                 if let error {
                     continuation.resume(throwing: error)
@@ -691,7 +644,7 @@ extension User {
     }
 
     func reauthenticateAsync(with credential: AuthCredential) async throws -> AuthDataResult {
-        try await withCheckedThrowingContinuation { continuation in
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<AuthDataResult, Error>) in
             reauthenticate(with: credential) { authResult, error in
                 if let error {
                     continuation.resume(throwing: error)
