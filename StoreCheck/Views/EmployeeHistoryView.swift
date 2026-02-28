@@ -125,7 +125,7 @@ struct CheckInHistoryView: View {
                                 Text("Daily total: \(viewModel.formattedDuration(seconds: section.dailyTotalSeconds))")
                             }
                             .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(.white)
+                            .foregroundStyle(DS.Colors.textPrimary)
                             .textCase(nil)
                         }
                     }
@@ -270,7 +270,7 @@ struct CheckInHistoryView: View {
             .padding(.vertical, 10)
 
             Rectangle()
-                .fill(Color.white.opacity(0.28))
+                .fill(DS.Colors.separator.opacity(0.4))
                 .frame(height: 1)
         }
     }
@@ -318,7 +318,7 @@ struct CheckInHistoryView: View {
             .padding(.vertical, 12)
 
             Rectangle()
-                .fill(Color.white.opacity(0.28))
+                .fill(DS.Colors.separator.opacity(0.4))
                 .frame(height: 1)
         }
 //        .contentShape(Rectangle())
@@ -347,7 +347,7 @@ struct CheckInHistoryView: View {
     private func rowCell(_ text: String, align: Alignment) -> some View {
         Text(text)
             .font(.subheadline)
-            .foregroundStyle(.white)
+            .foregroundStyle(DS.Colors.textPrimary)
             .padding(.horizontal, 10)
             .padding(.vertical, 12)
             .frame(maxWidth: .infinity, alignment: align)
@@ -356,7 +356,7 @@ struct CheckInHistoryView: View {
     private func rowMonoCell(_ text: String, align: Alignment, isAccent: Bool = false) -> some View {
         Text(text)
             .font(.system(.caption, design: .monospaced).weight(isAccent ? .semibold : .regular))
-            .foregroundStyle(isAccent ? DS.Colors.primary : .white)
+            .foregroundStyle(isAccent ? DS.Colors.primary : DS.Colors.textPrimary)
             .padding(.horizontal, 10)
             .padding(.vertical, 12)
             .frame(maxWidth: .infinity, alignment: align)

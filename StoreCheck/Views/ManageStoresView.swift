@@ -87,7 +87,8 @@ struct ManageStoresView: View {
                     Text(toast)
                         .padding(.horizontal, 16)
                         .padding(.vertical, 10)
-                        .background(.black.opacity(0.85))
+                        .background(DS.Colors.card.opacity(0.95))
+                        .overlay(Capsule().stroke(DS.Colors.separator.opacity(0.4), lineWidth: 1))
                         .clipShape(Capsule())
                         .padding(.bottom, 24)
                 }
@@ -152,7 +153,7 @@ struct ManageStoresView: View {
         .background(.ultraThinMaterial.opacity(0.35), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(.white.opacity(0.06), lineWidth: 1)
+                .stroke(DS.Colors.separator.opacity(0.35), lineWidth: 1)
         }
     }
 
@@ -253,7 +254,7 @@ struct ManageStoresView: View {
         prominence: StoreActionProminence,
         action: @escaping () -> Void
     ) -> some View {
-        let foreground: Color = prominence == .destructive ? .red : .white
+        let foreground: Color = prominence == .primary ? Color(uiColor: .white) : (prominence == .destructive ? DS.Colors.destructive : DS.Colors.textPrimary)
         Button(action: action) {
             Label(title, systemImage: icon)
                 .font(.subheadline.weight(.semibold))
@@ -274,9 +275,9 @@ struct ManageStoresView: View {
         case .primary:
             return DS.Colors.primary.opacity(0.95)
         case .secondary:
-            return .white.opacity(0.04)
+            return DS.Colors.background
         case .destructive:
-            return .red.opacity(0.08)
+            return DS.Colors.destructive.opacity(0.12)
         }
     }
 
@@ -285,9 +286,9 @@ struct ManageStoresView: View {
         case .primary:
             return .clear
         case .secondary:
-            return .white.opacity(0.1)
+            return DS.Colors.separator.opacity(0.7)
         case .destructive:
-            return .red.opacity(0.35)
+            return DS.Colors.destructive.opacity(0.5)
         }
     }
 }

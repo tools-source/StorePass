@@ -10,7 +10,7 @@ struct ManagerAccessRequiredView: View {
                 .foregroundStyle(.yellow)
             Text("Manager Access Required")
                 .font(.title3.bold())
-                .foregroundStyle(.white)
+                .foregroundStyle(DS.Colors.textPrimary)
             Text(authViewModel.managerAccessMessage)
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)

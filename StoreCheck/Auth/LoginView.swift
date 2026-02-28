@@ -14,7 +14,7 @@ struct LoginView: View {
 
             Text("StorePass")
                 .font(.largeTitle.bold())
-                .foregroundStyle(.white)
+                .foregroundStyle(DS.Colors.textPrimary)
 
             Text("Secure employee check-ins with geo validation")
                 .font(.subheadline)
@@ -47,13 +47,13 @@ struct LoginView: View {
             if let notice = viewModel.signInNoticeMessage {
                 Text(notice)
                     .font(.footnote)
-                    .foregroundStyle(.black)
+                    .foregroundStyle(DS.Colors.textPrimary)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
                     .background(.yellow.opacity(0.9), in: Capsule())
             }
 
-            if viewModel.isLoading { ProgressView().tint(.white) }
+            if viewModel.isLoading { ProgressView().tint(DS.Colors.primary) }
             Spacer()
         }
         .padding(24)
@@ -73,7 +73,7 @@ private struct AppleSignInButton: UIViewRepresentable {
     let action: () -> Void
 
     func makeUIView(context: Context) -> ASAuthorizationAppleIDButton {
-        let button = ASAuthorizationAppleIDButton(type: .signIn, style: .white)
+        let button = ASAuthorizationAppleIDButton(type: .signIn, style: .automatic)
         button.cornerRadius = 10
         button.addTarget(context.coordinator, action: #selector(Coordinator.didTap), for: .touchUpInside)
         return button

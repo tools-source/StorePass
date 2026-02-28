@@ -168,7 +168,8 @@ struct EmployeeHomeView: View {
                         }
                         .padding(.horizontal, 12)
                         .padding(.vertical, 10)
-                        .background(.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .background(DS.Colors.background, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(DS.Colors.separator.opacity(0.35), lineWidth: 1))
                     }
                 }
             }
@@ -250,7 +251,7 @@ struct EmployeeHomeView: View {
         case .outOfRange:
             ("Out of range", .red.opacity(0.95), .red.opacity(0.18))
         default:
-            ("Locating", .secondary, .white.opacity(0.08))
+            ("Locating", DS.Colors.textSecondary, DS.Colors.background)
         }
     }
 
