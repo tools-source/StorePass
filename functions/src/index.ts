@@ -369,6 +369,7 @@ export const setUserRole = onRequest({ region: 'us-central1' }, async (req, res)
             isActive: true,
             provider,
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
             lastLoginAt: admin.firestore.FieldValue.serverTimestamp(),
             assignedStoreIds: [],
           },
@@ -385,6 +386,7 @@ export const setUserRole = onRequest({ region: 'us-central1' }, async (req, res)
           provider,
           role: requestedRole,
           isActive: true,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           lastLoginAt: admin.firestore.FieldValue.serverTimestamp(),
         },
         { merge: true },
@@ -591,13 +593,16 @@ async function commitBatches(
 
 async function cleanupMemberships(params: {
   uid: string;
+  correlationId?: string;
 }): Promise<{
   deletedMembershipCount: number;
   deletedStoreCount: number;
   deletedUserDoc: boolean;
   deletedCheckinsCount: number;
+  deletedEmployeeStoreMirrorCount: number;
 }> {
-  const { uid } = params;
+  const { uid, correlationId } = params;
+  const correlation = correlationId ?? 'none';
 
   const memberDocsSnap = await db
     .collectionGroup('members')
@@ -646,6 +651,7 @@ async function cleanupMemberships(params: {
     db.collection('checkinsMirror').doc(uid),
   ];
   let deletedCheckinsCount = 0;
+  const checkinDeleteRefs = new Map<string, FirebaseFirestore.DocumentReference>();
 
   for (const parentRef of checkinParentRefs) {
     let checkinsSnap: FirebaseFirestore.QuerySnapshot | null = null;
@@ -664,10 +670,7 @@ async function cleanupMemberships(params: {
     }
 
     for (const doc of checkinsSnap.docs) {
-      deletedCheckinsCount += 1;
-      cleanupOps.push((batch) => {
-        batch.delete(doc.ref);
-      });
+      checkinDeleteRefs.set(doc.ref.path, doc.ref);
     }
 
     cleanupOps.push((batch) => {
@@ -675,24 +678,76 @@ async function cleanupMemberships(params: {
     });
   }
 
+  const rootCheckinsSnap = await db.collection('checkins').where('employeeId', '==', uid).get();
+  for (const doc of rootCheckinsSnap.docs) {
+    checkinDeleteRefs.set(doc.ref.path, doc.ref);
+  }
+
+  const managerMirrorCheckins = await db.collectionGroup('checkins').where('employeeId', '==', uid).get();
+  for (const doc of managerMirrorCheckins.docs) {
+    if (doc.ref.path.includes('/managerCheckins/')) {
+      checkinDeleteRefs.set(doc.ref.path, doc.ref);
+    }
+  }
+
+  for (const ref of checkinDeleteRefs.values()) {
+    deletedCheckinsCount += 1;
+    cleanupOps.push((batch) => {
+      batch.delete(ref);
+    });
+  }
+
+  const employeeStoresSnap = await db.collection('employeeStores').doc(uid).collection('stores').get();
+  const employeeStoreDeleteRefs = new Map<string, FirebaseFirestore.DocumentReference>();
+  for (const doc of employeeStoresSnap.docs) {
+    employeeStoreDeleteRefs.set(doc.ref.path, doc.ref);
+  }
+  employeeStoreDeleteRefs.set(db.collection('employeeStores').doc(uid).path, db.collection('employeeStores').doc(uid));
+
+  for (const ref of employeeStoreDeleteRefs.values()) {
+    cleanupOps.push((batch) => {
+      batch.delete(ref);
+    });
+  }
+
   const userRef = db.collection('users').doc(uid);
-  cleanupOps.push((batch) => {
-    batch.delete(userRef);
-  });
 
   await commitBatches(cleanupOps);
+
+  let deletedUserDoc = false;
+  try {
+    await userRef.delete();
+    deletedUserDoc = true;
+  } catch (error) {
+    console.warn(`[deleteMyAccount] correlationId=${correlation} stage=user_doc_delete_fallback uid=${uid}`);
+    await userRef.set(
+      {
+        pendingDeletion: true,
+        pendingDeletionAt: admin.firestore.FieldValue.serverTimestamp(),
+        pendingDeletionCorrelationId: correlationId ?? null,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true },
+    );
+  }
+
+  console.log(
+    `[deleteMyAccount] correlationId=${correlation} stage=cleanup_done uid=${uid} membershipsDeleted=${membershipDeleteRefs.size} checkinsDeleted=${deletedCheckinsCount} employeeStoreMirrorsDeleted=${employeeStoreDeleteRefs.size}`,
+  );
 
   return {
     deletedMembershipCount: membershipDeleteRefs.size,
     deletedStoreCount: storeIds.size,
-    deletedUserDoc: true,
+    deletedUserDoc,
     deletedCheckinsCount,
+    deletedEmployeeStoreMirrorCount: employeeStoreDeleteRefs.size,
   };
 }
 
 export const deleteMyAccount = onCall({ region: 'us-central1' }, async (request) => {
   const uid = request.auth?.uid;
   const mode = typeof request.data?.mode === 'string' ? request.data.mode : 'cleanup_memberships';
+  const role = typeof request.data?.role === 'string' ? request.data.role : 'employee';
   const correlationId =
     typeof request.data?.correlationId === 'string' && request.data.correlationId.trim().length > 0
       ? request.data.correlationId.trim()
@@ -703,7 +758,7 @@ export const deleteMyAccount = onCall({ region: 'us-central1' }, async (request)
   }
 
   console.log(
-    `[deleteMyAccount] start ${JSON.stringify({ uid, mode, correlationId: correlationId ?? null })}`,
+    `[deleteMyAccount] start ${JSON.stringify({ uid, mode, role, correlationId: correlationId ?? null })}`,
   );
 
   if (!['cleanup_memberships', 'delete_auth'].includes(mode)) {
@@ -714,15 +769,17 @@ export const deleteMyAccount = onCall({ region: 'us-central1' }, async (request)
   let deletedStoreCount = 0;
   let deletedUserDoc = false;
   let deletedCheckinsCount = 0;
+  let deletedEmployeeStoreMirrorCount = 0;
 
   try {
-    if (mode !== 'delete_auth') {
+    if (mode === 'cleanup_memberships') {
       try {
-        const cleanupResult = await cleanupMemberships({ uid });
+        const cleanupResult = await cleanupMemberships({ uid, correlationId });
         deletedMembershipCount = cleanupResult.deletedMembershipCount;
         deletedStoreCount = cleanupResult.deletedStoreCount;
         deletedUserDoc = cleanupResult.deletedUserDoc;
         deletedCheckinsCount = cleanupResult.deletedCheckinsCount;
+        deletedEmployeeStoreMirrorCount = cleanupResult.deletedEmployeeStoreMirrorCount;
       } catch (error: any) {
         console.error(
           `[deleteMyAccount] cleanup error correlationId=${correlationId ?? 'none'} uid=${uid} mode=${mode} stack=${error?.stack ?? '<none>'}`,
@@ -732,7 +789,7 @@ export const deleteMyAccount = onCall({ region: 'us-central1' }, async (request)
           throw error;
         }
         throw new HttpsError(
-          'internal',
+          'failed-precondition',
           `deleteMyAccount failed (correlationId=${correlationId || 'none'})`,
           {
             correlationId,
@@ -745,16 +802,18 @@ export const deleteMyAccount = onCall({ region: 'us-central1' }, async (request)
       }
     }
 
-    try {
-      await admin.auth().deleteUser(uid);
-    } catch (error: any) {
-      if (error?.code !== 'auth/user-not-found') {
-        throw error;
+    if (mode === 'delete_auth') {
+      try {
+        await admin.auth().deleteUser(uid);
+      } catch (error: any) {
+        if (error?.code !== 'auth/user-not-found') {
+          throw error;
+        }
       }
     }
 
     console.log(
-      `[deleteMyAccount] ok uid=${uid} correlationId=${correlationId ?? 'none'} membershipsDeleted=${deletedMembershipCount} checkinsDeleted=${deletedCheckinsCount} storesUpdated=${deletedStoreCount} userDeleted=${deletedUserDoc}`,
+      `[deleteMyAccount] ok uid=${uid} role=${role} correlationId=${correlationId ?? 'none'} membershipsDeleted=${deletedMembershipCount} checkinsDeleted=${deletedCheckinsCount} employeeStoreMirrorsDeleted=${deletedEmployeeStoreMirrorCount} storesUpdated=${deletedStoreCount} userDeleted=${deletedUserDoc}`,
     );
 
     return {
@@ -765,6 +824,7 @@ export const deleteMyAccount = onCall({ region: 'us-central1' }, async (request)
       deletedStoreCount,
       deletedUserDoc,
       deletedCheckinsCount,
+      deletedEmployeeStoreMirrorCount,
     };
   } catch (error: any) {
     console.error(
@@ -775,7 +835,7 @@ export const deleteMyAccount = onCall({ region: 'us-central1' }, async (request)
       throw error;
     }
     throw new HttpsError(
-      'internal',
+      'failed-precondition',
       `deleteMyAccount failed (correlationId=${correlationId || 'none'})`,
       {
         correlationId,

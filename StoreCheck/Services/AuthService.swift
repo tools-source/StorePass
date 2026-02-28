@@ -19,8 +19,6 @@ protocol AuthServiceProtocol: AnyObject {
     func restoreSession(forceSignOutOnLaunch: Bool) async
     func signInWithGoogle() async throws
     func signInWithApple() async throws -> AppleSignInResult
-    func signInWithEmail(email: String, password: String) async throws
-    func createUserWithEmail(email: String, password: String) async throws
     func authUser() -> FirebaseAuth.User?
     func signOut() async throws
     func deleteAuthAccount() async throws
@@ -98,14 +96,6 @@ final class AuthService: ObservableObject, AuthServiceProtocol {
 
         _ = try await auth.signIn(with: credential)
         return AppleSignInResult(fullName: idTokenData.fullName)
-    }
-
-    func signInWithEmail(email: String, password: String) async throws {
-        _ = try await auth.signIn(withEmail: email, password: password)
-    }
-
-    func createUserWithEmail(email: String, password: String) async throws {
-        _ = try await auth.createUser(withEmail: email, password: password)
     }
 
     func authUser() -> FirebaseAuth.User? {
@@ -206,7 +196,7 @@ extension AuthService {
     }
 
     static func performAppleAuthorization(nonce: String) async throws -> (identityToken: Data, fullName: PersonNameComponents?) {
-        try await withCheckedThrowingContinuation { continuation in
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<(identityToken: Data, fullName: PersonNameComponents?), Error>) in
             let provider = ASAuthorizationAppleIDProvider()
             let request = provider.createRequest()
             request.requestedScopes = [.fullName, .email]

@@ -126,7 +126,10 @@ final class FirestoreRoleProfileRepository: RoleProfileRepositoryProtocol {
             // Break into a typed dictionary to avoid compiler “unable to type-check” issues
             var update: [String: Any] = [
                 "provider": provider,
-                "lastLoginAt": FieldValue.serverTimestamp()
+                "providerIDs": providerIDs,
+                "isActive": true,
+                "lastLoginAt": FieldValue.serverTimestamp(),
+                "updatedAt": FieldValue.serverTimestamp()
             ]
 
             if let incomingName, !incomingName.isEmpty {

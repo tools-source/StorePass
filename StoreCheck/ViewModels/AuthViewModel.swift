@@ -98,69 +98,14 @@ final class AuthViewModel: ObservableObject {
                 provider: "apple",
                 preferredName: resolvedName.isEmpty ? nil : resolvedName
             )
-            evaluateAppleNamePromptAfterSignIn()
+            evaluateAppleNamePromptAfterSignIn(appleFullName: resolvedName)
         } catch {
             showEmployeeSetupRequired = true
             errorMessage = userFacingMessage(for: error)
         }
     }
 
-    func signInWithEmail(email: String, password: String) async {
-        guard !isResolvingProfile else { return }
-        guard let requestedRole = requestedRole else {
-            errorMessage = "Select Employee or Manager mode first."
-            return
-        }
 
-        signInNoticeMessage = nil
-        isLoading = true
-        isRoleResolutionLoading = true
-        defer { isLoading = false }
-        defer { isRoleResolutionLoading = false }
-
-        do {
-            try await authService.signInWithEmail(email: email, password: password)
-
-            if let firebaseUser = authService.authUser() {
-                let providerIDs = firebaseUser.providerData.map(\.providerID)
-                print("[EmailLogin] OK uid=\(firebaseUser.uid) providers=\(providerIDs)")
-            }
-
-            try await resolveProfileAndRoute(
-                requestedRole: requestedRole,
-                isSessionRestore: false,
-                provider: "password",
-                preferredEmail: email
-            )
-        } catch {
-            logEmailAuthFailure(prefix: "[EmailLogin] FAIL", error: error)
-            showEmployeeSetupRequired = true
-            errorMessage = userFacingMessage(for: error)
-        }
-    }
-
-    func createAccountWithEmail(email: String, password: String, requestedRole: UserRole) async {
-        guard !isResolvingProfile else { return }
-        signInNoticeMessage = nil
-        isLoading = true
-        isRoleResolutionLoading = true
-        defer { isLoading = false }
-        defer { isRoleResolutionLoading = false }
-
-        do {
-            try await authService.createUserWithEmail(email: email, password: password)
-            try await resolveProfileAndRoute(
-                requestedRole: requestedRole,
-                isSessionRestore: false,
-                provider: "password",
-                preferredEmail: email
-            )
-        } catch {
-            logEmailAuthFailure(prefix: "[EmailSignup] FAIL", error: error)
-            showEmployeeSetupRequired = true
-            errorMessage = userFacingMessage(for: error)
-        }
-    }
 
     func signOut() async {
         isLoading = true
@@ -369,15 +314,13 @@ final class AuthViewModel: ObservableObject {
     private func authProvider(for user: FirebaseAuth.User) -> String {
         let providerId = user.providerData
             .map(\.providerID)
-            .first { $0 == "apple.com" || $0 == "google.com" || $0 == "password" }
+            .first { $0 == "apple.com" || $0 == "google.com" }
 
         switch providerId {
         case "apple.com":
             return "apple"
         case "google.com":
             return "google"
-        case "password":
-            return "password"
         default:
             return "unknown"
         }
@@ -415,26 +358,31 @@ final class AuthViewModel: ObservableObject {
         }
     }
 
-    private func evaluateAppleNamePromptAfterSignIn() {
+    private func evaluateAppleNamePromptAfterSignIn(appleFullName: String?) {
         guard let firebaseUser = authService.authUser() else { return }
         let providerIds = Set(firebaseUser.providerData.map(\.providerID))
         guard providerIds.contains("apple.com") else { return }
         guard var user = currentUser else { return }
 
-        let trimmedName = user.name.trimmingCharacters(in: .whitespacesAndNewlines)
-        let lowerName = trimmedName.lowercased()
-        let emailPrefix = (user.email ?? firebaseUser.email ?? "").split(separator: "@").first.map(String.init)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let existingName = user.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedAppleName = appleFullName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let emailPrefix = (user.email ?? firebaseUser.email ?? "")
+            .split(separator: "@")
+            .first
+            .map(String.init)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 
-        let shouldPrompt = trimmedName.isEmpty
-            || lowerName == "storepass user"
-            || lowerName == emailPrefix.lowercased()
-
-        if shouldPrompt {
-            pendingNameUpdate = trimmedName.isEmpty ? "" : trimmedName
-            shouldShowAppleNamePrompt = true
-            user.provider = "apple"
-            syncState(with: user, role: user.role)
+        if !existingName.isEmpty {
+            pendingNameUpdate = existingName
+        } else if !normalizedAppleName.isEmpty {
+            pendingNameUpdate = normalizedAppleName
+        } else {
+            pendingNameUpdate = emailPrefix.isEmpty ? "StorePass User" : emailPrefix
         }
+
+        shouldShowAppleNamePrompt = true
+        user.provider = "apple"
+        syncState(with: user, role: user.role)
     }
 
     private func userFacingMessage(for error: Error) -> String {
@@ -452,9 +400,5 @@ final class AuthViewModel: ObservableObject {
         return error.localizedDescription
     }
 
-    private func logEmailAuthFailure(prefix: String, error: Error) {
-        let nsError = error as NSError
-        print("\(prefix) domain=\(nsError.domain) code=\(nsError.code) message=\(nsError.localizedDescription) userInfo=\(nsError.userInfo)")
-    }
 
 }
