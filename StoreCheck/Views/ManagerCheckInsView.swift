@@ -98,8 +98,8 @@ struct ManagerCheckInsView: View {
     }
 
     private var filterCard: some View {
-        TimesheetHeaderCard {
-            TimesheetLabeledMenu(title: "Store", selectionTitle: viewModel.selectedStoreName) {
+        VStack(alignment: .leading, spacing: 12) {
+            LabeledMenu(title: "Store", selectionTitle: viewModel.selectedStoreName) {
                 if viewModel.stores.isEmpty {
                     Button("No stores available") { }
                         .disabled(true)
@@ -118,7 +118,7 @@ struct ManagerCheckInsView: View {
                 }
             }
 
-            TimesheetLabeledMenu(title: "Employee", selectionTitle: viewModel.selectedEmployeeName) {
+            LabeledMenu(title: "Employee", selectionTitle: viewModel.selectedEmployeeName) {
                 ForEach(viewModel.employeeOptions) { employee in
                     Button {
                         viewModel.selectedEmployeeId = employee.id
@@ -136,6 +136,9 @@ struct ManagerCheckInsView: View {
                 .tint(DS.Colors.primary)
                 .font(.subheadline.weight(.semibold))
         }
+        .padding(14)
+        .background(DS.Colors.card)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 
     @ViewBuilder
@@ -154,12 +157,9 @@ struct ManagerCheckInsView: View {
         } else {
             ForEach(viewModel.daySections) { section in
                 Section {
-                    TimesheetListCard {
-                        TimesheetColumnHeaderRow(leadingTitle: "Employee")
-                    } rows: {
-                        ForEach(section.items) { item in
-                            checkInRow(item)
-                        }
+                    tableHeader
+                    ForEach(section.items) { item in
+                        checkInRow(item)
                     }
                 } header: {
                     HStack {
@@ -174,6 +174,22 @@ struct ManagerCheckInsView: View {
                 .listRowBackground(DS.Colors.card)
             }
         }
+    }
+
+    private var tableHeader: some View {
+        HStack(spacing: 8) {
+            Text("Employee")
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Text("Start")
+                .frame(width: 95, alignment: .leading)
+            Text("End")
+                .frame(width: 95, alignment: .leading)
+            Text("Time")
+                .frame(width: 72, alignment: .trailing)
+        }
+        .font(.caption.weight(.semibold))
+        .foregroundStyle(.secondary)
+        .padding(.top, 4)
     }
 
     private func checkInRow(_ item: CheckIn) -> some View {
@@ -212,8 +228,38 @@ struct ManagerCheckInsView: View {
                 Task { await viewModel.delete(item) }
             }
         }
-        .overlay(alignment: .bottom) {
-            Divider().opacity(0.2)
+    }
+}
+
+private struct LabeledMenu<Content: View>: View {
+    let title: String
+    let selectionTitle: String
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            Menu {
+                content
+            } label: {
+                HStack {
+                    Text(selectionTitle)
+                        .lineLimit(1)
+                        .font(.subheadline.weight(.semibold))
+                    Spacer()
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .background(DS.Colors.background.opacity(0.8))
+                .clipShape(Capsule())
+            }
+            .accessibilityLabel("\(title) filter")
         }
     }
 }
