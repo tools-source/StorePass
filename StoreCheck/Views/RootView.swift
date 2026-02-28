@@ -1,4 +1,3 @@
-import FirebaseAuth
 import SwiftUI
 
 struct RootView: View {
@@ -95,6 +94,8 @@ private struct RootContentView: View {
 
             bootState = .authenticated(user: newUser)
 
+            if appLock.biometricsEnabled {
+                appLock.lockNow()
             if cameFromLoginFlow,
                !didPromptForAppLock,
                biometricAuthService.biometricType() != .none,

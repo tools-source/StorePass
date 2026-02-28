@@ -65,6 +65,9 @@
 		BEEFABCD1234000000000093 /* BiometricAuthService.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000090 /* BiometricAuthService.swift */; };
 		BEEFABCD1234000000000094 /* AppLockViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000091 /* AppLockViewModel.swift */; };
 		BEEFABCD1234000000000095 /* AppLockOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000092 /* AppLockOverlayView.swift */; };
+		C0DE00000000000000000011 /* AppLockManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE00000000000000000001 /* AppLockManager.swift */; };
+		C0DE00000000000000000012 /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE00000000000000000002 /* KeychainStore.swift */; };
+		C0DE00000000000000000013 /* AppLockOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE00000000000000000003 /* AppLockOverlay.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -124,6 +127,9 @@
 		BEEFABCD1234000000000090 /* BiometricAuthService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BiometricAuthService.swift; sourceTree = "<group>"; };
 		BEEFABCD1234000000000091 /* AppLockViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLockViewModel.swift; sourceTree = "<group>"; };
 		BEEFABCD1234000000000092 /* AppLockOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLockOverlayView.swift; sourceTree = "<group>"; };
+		C0DE00000000000000000001 /* AppLockManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLockManager.swift; sourceTree = "<group>"; };
+		C0DE00000000000000000002 /* KeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainStore.swift; sourceTree = "<group>"; };
+		C0DE00000000000000000003 /* AppLockOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLockOverlay.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -178,6 +184,7 @@
 				BEEFABCD123400000000005B /* ViewModels */,
 				BEEFABCD123400000000005C /* Views */,
 				BEEFABCD1234000000000096 /* AppLock */,
+				C0DE00000000000000000010 /* Security */,
 				BEEFABCD1234000000000054 /* SupportingFiles */,
 				0B885E3A2F419CF50011D606 /* GoogleService-Info.plist */,
 			);
@@ -315,6 +322,16 @@
 			path = AppLock;
 			sourceTree = "<group>";
 		};
+		C0DE00000000000000000010 /* Security */ = {
+			isa = PBXGroup;
+			children = (
+				C0DE00000000000000000001 /* AppLockManager.swift */,
+				C0DE00000000000000000002 /* KeychainStore.swift */,
+				C0DE00000000000000000003 /* AppLockOverlay.swift */,
+			);
+			path = Security;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -447,6 +464,9 @@
 				BEEFABCD1234000000000093 /* BiometricAuthService.swift in Sources */,
 				BEEFABCD1234000000000094 /* AppLockViewModel.swift in Sources */,
 				BEEFABCD1234000000000095 /* AppLockOverlayView.swift in Sources */,
+				C0DE00000000000000000011 /* AppLockManager.swift in Sources */,
+				C0DE00000000000000000012 /* KeychainStore.swift in Sources */,
+				C0DE00000000000000000013 /* AppLockOverlay.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

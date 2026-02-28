@@ -9,15 +9,15 @@ import UIKit
 
 struct AccountSettingsView: View {
     @EnvironmentObject private var authViewModel: AuthViewModel
+    @EnvironmentObject private var appLock: AppLockManager
     @StateObject private var viewModel = AccountSettingsViewModel()
     @State private var showDeleteConfirmation = false
     @State private var showReauthSheet = false
     @State private var localNameOverride: String?
     @State private var showAppLockUnavailableAlert = false
     @State private var appLockUnavailableMessage = ""
-    @AppStorage("appLockEnabled") private var appLockEnabled = false
-
-    private let biometricAuthService = BiometricAuthService()
+    @State private var showEnableAppLockAlert = false
+    @State private var appLockToggleValue = false
 
     var body: some View {
         NavigationStack {
@@ -29,18 +29,23 @@ struct AccountSettingsView: View {
                 }
 
                 Section("Security") {
-                    Toggle(isOn: $appLockEnabled) {
-                        Text("Use Face ID to unlock")
-                    }
-                    .onChange(of: appLockEnabled) { _, newValue in
-                        guard newValue else { return }
-                        guard biometricAuthService.biometricType() != .none else {
-                            appLockEnabled = false
-                            appLockUnavailableMessage = "Face ID / Touch ID is not available on this device."
-                            showAppLockUnavailableAlert = true
-                            return
+                    Toggle("Face ID App Lock", isOn: $appLockToggleValue)
+                        .onChange(of: appLockToggleValue) { _, newValue in
+                            guard newValue != appLock.biometricsEnabled else { return }
+
+                            if newValue {
+                                guard appLock.canEvaluateBiometricsOnly() else {
+                                    appLockToggleValue = false
+                                    appLockUnavailableMessage = "Face ID / Touch ID is not available on this device."
+                                    showAppLockUnavailableAlert = true
+                                    return
+                                }
+                                showEnableAppLockAlert = true
+                            } else {
+                                appLock.setEnabled(false)
+                                appLock.isLocked = false
+                            }
                         }
-                    }
                 }
 
                 Section("Account") {
@@ -87,8 +92,25 @@ struct AccountSettingsView: View {
             } message: {
                 Text(appLockUnavailableMessage)
             }
+            .alert("Enable Face ID?", isPresented: $showEnableAppLockAlert) {
+                Button("Cancel", role: .cancel) {
+                    appLockToggleValue = false
+                }
+                Button("Enable") {
+                    appLock.setEnabled(true)
+                    appLock.lockNow()
+                    appLock.unlock()
+                }
+            } message: {
+                Text("Enable Face ID to lock the app when you re-open it?")
+            }
             .onAppear {
                 localNameOverride = authViewModel.currentUser?.name
+                appLock.loadPreference()
+                appLockToggleValue = appLock.biometricsEnabled
+            }
+            .onChange(of: appLock.biometricsEnabled) { _, newValue in
+                appLockToggleValue = newValue
             }
             .onChange(of: authViewModel.currentUser?.name) { _, newValue in
                 if let newValue {
