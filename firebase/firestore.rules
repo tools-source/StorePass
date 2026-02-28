@@ -92,6 +92,12 @@ service cloud.firestore {
       allow delete: if isSelf(uid);
     }
 
+    match /deletionRequests/{uid} {
+      allow get, list: if false;
+      allow create, update: if isSelf(uid);
+      allow delete: if false;
+    }
+
     // Query-safe manager store listing path.
     match /managerStores/{managerUid}/stores/{storeId} {
       allow get, list: if isSelf(managerUid) && activeManager();

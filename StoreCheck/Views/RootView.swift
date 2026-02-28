@@ -93,9 +93,9 @@ private struct AppleNamePromptSheet: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 14) {
-                Text("Update your name")
+                Text("Confirm your name")
                     .font(.headline)
-                Text("Please add your display name to finish setting up your account.")
+                Text("Apple may hide your profile details later. Confirm your display name now.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)

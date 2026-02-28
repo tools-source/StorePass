@@ -412,7 +412,8 @@ final class AccountSettingsViewModel: ObservableObject {
             "role": "employee",
             "providerIDs": providerIDs,
             "createdAt": FieldValue.serverTimestamp(),
-            "status": "requested",
+            "status": "pending",
+            "reason": "user_initiated",
             "correlationId": correlationId,
             "app": "employee"
         ]
@@ -426,7 +427,7 @@ final class AccountSettingsViewModel: ObservableObject {
 
         do {
             try await firestore.collection("deletionRequests").document(uid).setData(deletionRequestPayload, merge: true)
-            print("[DeleteAccount] correlationId=\(correlationId) stage=deletion_request_write_ok uid=\(uid) providerIDs=\(providerIDs)")
+            print("[DeleteAccount] correlationId=\(correlationId) stage=deletion_request_written uid=\(uid) providerIDs=\(providerIDs)")
         } catch {
             print("[DeleteAccount] correlationId=\(correlationId) stage=deletion_request_write_failed uid=\(uid) providerIDs=\(providerIDs) error=\(error.localizedDescription)")
             throw error
@@ -585,7 +586,6 @@ final class AccountSettingsViewModel: ObservableObject {
         let providerIds = user.providerData.map(\.providerID)
         if providerIds.contains("google.com") { return "google.com" }
         if providerIds.contains("apple.com") { return "apple.com" }
-        if providerIds.contains("password") { return "password" }
         return providerIds.first ?? "unknown"
     }
 
