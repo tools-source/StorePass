@@ -378,6 +378,8 @@ final class FirestoreEmployeeManagementRepository: EmployeeManagementRepositoryP
             managerId: data["managerId"] as? String,
             createdAt: (data["createdAt"] as? Timestamp)?.dateValue(),
             updatedAt: (data["updatedAt"] as? Timestamp)?.dateValue(),
+            joinCode: data["joinCode"] as? String,
+            joinCodeCiphertext: data["joinCodeCiphertext"] as? String,
             joinCodeLast4: data["joinCodeLast4"] as? String
         )
     }

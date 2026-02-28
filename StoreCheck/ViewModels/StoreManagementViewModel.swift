@@ -82,22 +82,58 @@ final class StoreManagementViewModel: ObservableObject {
         }
     }
 
-    func rotateStoreCode(storeId: String) async {
+    func rotateStoreCode(storeId: String, managerId: String?) async {
+        print("[StoreCode] rotate_start storeId=\(storeId)")
         do {
             let code = try await repository.rotateStoreCode(storeId: storeId)
+            let newLast4 = String(code.suffix(4))
             latestJoinCodesByStoreId[storeId] = code
+
+            if let index = stores.firstIndex(where: { $0.id == storeId }) {
+                stores[index].joinCode = code
+                stores[index].joinCodeCiphertext = code
+                stores[index].joinCodeLast4 = newLast4
+                stores[index].updatedAt = Date()
+            }
+
+            print("[StoreCode] rotate_ok storeId=\(storeId) newLast4=\(newLast4)")
+            print("[StoreCode] rotate_ui_updated storeId=\(storeId)")
+            await load(managerId: managerId)
             showToast("Code rotated")
             storeError = nil
         } catch {
             storeError = error.localizedDescription
-            print("[Stores] Rotate-code error: \(error.localizedDescription)")
+            print("[StoreCode] rotate_failed storeId=\(storeId) error=\(error.localizedDescription)")
         }
+    }
+
+
+    func resolvedJoinCode(for store: Store) -> String {
+        if let cached = latestJoinCodesByStoreId[store.id], !cached.isEmpty {
+            return cached
+        }
+        return store.resolvedJoinCode ?? "----"
+    }
+
+    func resolvedJoinCode(storeId: String) -> String {
+        if let cached = latestJoinCodesByStoreId[storeId], !cached.isEmpty {
+            return cached
+        }
+        if let store = stores.first(where: { $0.id == storeId }) {
+            return store.resolvedJoinCode ?? "----"
+        }
+        return "----"
     }
 
     func fetchJoinCode(storeId: String) async -> String? {
         do {
             let code = try await repository.getStoreJoinCode(storeId: storeId)
             latestJoinCodesByStoreId[storeId] = code
+            if let index = stores.firstIndex(where: { $0.id == storeId }) {
+                stores[index].joinCode = code
+                stores[index].joinCodeCiphertext = code
+                stores[index].joinCodeLast4 = String(code.suffix(4))
+            }
             storeError = nil
             return code
         } catch {
