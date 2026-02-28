@@ -27,12 +27,10 @@ private struct RootContentView: View {
         Group {
             switch bootState {
             case .launching:
-                ProgressView("Loading account")
-                    .tint(.white)
+                loadingView
             case .needsLogin:
                 if authViewModel.isRoleResolutionLoading {
-                    ProgressView("Loading account")
-                        .tint(.white)
+                    loadingView
                 }
                 else {
                     LoginView()
@@ -70,6 +68,12 @@ private struct RootContentView: View {
             .presentationDetents([.medium])
             .interactiveDismissDisabled()
         }
+    }
+
+    @ViewBuilder
+    private var loadingView: some View {
+        ProgressView("Loading account")
+            .tint(.white)
     }
 
     private func boot() async {
