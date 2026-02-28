@@ -81,6 +81,14 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/stores/$(storeId)).data.managerId == myUid();
     }
 
+    function managerCanUpdateOnlyCheckinTimes() {
+      return request.resource.data.diff(resource.data).changedKeys().hasOnly([
+          "checkInTime",
+          "checkOutTime",
+          "updatedAt"
+        ]);
+    }
+
     match /users/{uid} {
       allow get: if isSelf(uid) || activeManager();
       allow list: if false;
@@ -126,7 +134,11 @@ service cloud.firestore {
         && request.resource.data.employeeId == request.auth.uid
         && request.resource.data.storeId is string;
 
-      allow update: if false;
+      allow update: if managerOwnsStore(resource.data.storeId)
+        && request.resource.data.employeeId == resource.data.employeeId
+        && request.resource.data.storeId == resource.data.storeId
+        && request.resource.data.createdAt == resource.data.createdAt
+        && managerCanUpdateOnlyCheckinTimes();
       allow delete: if isSelf(employeeUid)
         || (managerOwnsStore(resource.data.storeId));
     }
@@ -146,7 +158,12 @@ service cloud.firestore {
         && exists(/databases/$(database)/documents/stores/$(storeId))
         && get(/databases/$(database)/documents/stores/$(storeId)).data.managerId == managerUid;
 
-      allow update: if false;
+      allow update: if isSelf(managerUid)
+        && managerOwnsStore(storeId)
+        && request.resource.data.employeeId == resource.data.employeeId
+        && request.resource.data.storeId == resource.data.storeId
+        && request.resource.data.createdAt == resource.data.createdAt
+        && managerCanUpdateOnlyCheckinTimes();
       allow delete: if isSelf(managerUid) && managerOwnsStore(storeId);
     }
 
@@ -195,7 +212,11 @@ service cloud.firestore {
       allow create: if signedIn()
         && request.resource.data.employeeId == myUid()
         && employeeCanCheckInToStore(request.resource.data.storeId);
-      allow update: if false;
+      allow update: if managerOwnsStore(resource.data.storeId)
+        && request.resource.data.employeeId == resource.data.employeeId
+        && request.resource.data.storeId == resource.data.storeId
+        && request.resource.data.createdAt == resource.data.createdAt
+        && managerCanUpdateOnlyCheckinTimes();
       allow delete: if activeManager();
     }
   }

@@ -27,10 +27,10 @@ struct CheckIn: Codable, Identifiable, Hashable {
     var storeName: String
 
     var computedDurationSeconds: Int? {
+        guard let checkOutTime else { return nil }
         if let durationSeconds {
             return durationSeconds
         }
-        guard let checkOutTime else { return nil }
         return max(Int(checkOutTime.timeIntervalSince(checkInTime)), 0)
     }
 }

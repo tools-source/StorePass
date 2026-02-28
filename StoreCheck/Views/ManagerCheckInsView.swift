@@ -6,6 +6,11 @@ struct ManagerCheckInsView: View {
     @State private var editingCheckIn: CheckIn?
     @State private var editStatus: CheckInStatus = .approved
     @State private var editReason = ""
+    @State private var editingTimesCheckIn: CheckIn?
+    @State private var editCheckInTime = Date()
+    @State private var editCheckOutTime = Date()
+    @State private var editHasNoCheckout = false
+    @State private var editTimesValidationError: String?
 
     init(
         storeRepository: StoreRepositoryProtocol,
@@ -91,6 +96,71 @@ struct ManagerCheckInsView: View {
                                 }
                             }
                         }
+                    }
+                }
+            }
+            .sheet(item: $editingTimesCheckIn) { checkIn in
+                NavigationStack {
+                    Form {
+                        DatePicker("Check-in Time", selection: $editCheckInTime, displayedComponents: [.date, .hourAndMinute])
+
+                        Toggle("No checkout yet", isOn: $editHasNoCheckout)
+                            .tint(DS.Colors.primary)
+
+                        if !editHasNoCheckout {
+                            DatePicker("Check-out Time", selection: $editCheckOutTime, displayedComponents: [.date, .hourAndMinute])
+                        }
+
+                        if let editTimesValidationError {
+                            Text(editTimesValidationError)
+                                .font(.caption)
+                                .foregroundStyle(.red)
+                        }
+                    }
+                    .navigationTitle("Edit Times")
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("Cancel") { editingTimesCheckIn = nil }
+                        }
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Save") {
+                                let validationMessage = validateEditTimes(
+                                    checkInTime: editCheckInTime,
+                                    checkOutTime: editHasNoCheckout ? nil : editCheckOutTime
+                                )
+                                editTimesValidationError = validationMessage
+                                guard validationMessage == nil else { return }
+
+                                Task {
+                                    let saveSucceeded = await viewModel.updateTimes(
+                                        for: checkIn,
+                                        checkInTime: editCheckInTime,
+                                        checkOutTime: editHasNoCheckout ? nil : editCheckOutTime
+                                    )
+                                    if saveSucceeded {
+                                        editingTimesCheckIn = nil
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    .onChange(of: editCheckInTime) { _, newValue in
+                        editTimesValidationError = validateEditTimes(
+                            checkInTime: newValue,
+                            checkOutTime: editHasNoCheckout ? nil : editCheckOutTime
+                        )
+                    }
+                    .onChange(of: editCheckOutTime) { _, newValue in
+                        editTimesValidationError = validateEditTimes(
+                            checkInTime: editCheckInTime,
+                            checkOutTime: editHasNoCheckout ? nil : newValue
+                        )
+                    }
+                    .onChange(of: editHasNoCheckout) { _, newValue in
+                        editTimesValidationError = validateEditTimes(
+                            checkInTime: editCheckInTime,
+                            checkOutTime: newValue ? nil : editCheckOutTime
+                        )
                     }
                 }
             }
@@ -222,6 +292,23 @@ struct ManagerCheckInsView: View {
                 editReason = item.rejectReason ?? ""
             }
             .tint(.blue)
+
+            Button("Edit Times") {
+                editingTimesCheckIn = item
+                editCheckInTime = item.checkInTime
+                if let checkOutTime = item.checkOutTime {
+                    editCheckOutTime = checkOutTime
+                    editHasNoCheckout = false
+                } else {
+                    editCheckOutTime = item.checkInTime
+                    editHasNoCheckout = true
+                }
+                editTimesValidationError = validateEditTimes(
+                    checkInTime: editCheckInTime,
+                    checkOutTime: editHasNoCheckout ? nil : editCheckOutTime
+                )
+            }
+            .tint(.indigo)
         }
         .swipeActions(edge: .trailing) {
             Button("Delete", role: .destructive) {
@@ -229,6 +316,23 @@ struct ManagerCheckInsView: View {
             }
         }
     }
+
+    private func validateEditTimes(checkInTime: Date, checkOutTime: Date?) -> String? {
+        let maxAllowed = Date().addingTimeInterval(5 * 60)
+        if checkInTime > maxAllowed {
+            return "Check-in time can’t be more than 5 minutes in the future."
+        }
+        if let checkOutTime {
+            if checkOutTime > maxAllowed {
+                return "Check-out time can’t be more than 5 minutes in the future."
+            }
+            if checkInTime > checkOutTime {
+                return "Check-in time must be before check-out time."
+            }
+        }
+        return nil
+    }
+
 }
 
 private struct LabeledMenu<Content: View>: View {
