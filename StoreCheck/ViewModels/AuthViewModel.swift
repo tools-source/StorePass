@@ -5,10 +5,6 @@ import SwiftUI
 
 @MainActor
 final class AuthViewModel: ObservableObject {
-    private enum EmailLinkConstants {
-        static let pendingEmailKey = "pendingEmailLinkEmail"
-    }
-
     enum AuthState: Equatable {
         case signedOut
         case signedIn(userId: String)
@@ -20,9 +16,8 @@ final class AuthViewModel: ObservableObject {
     @Published var isLoading = false
     @Published var errorMessage: String?
     @Published var signInNoticeMessage: String?
-    @Published var emailLinkStatusMessage: String?
-    @Published var pendingEmailForCompletion = ""
-    @Published var shouldPromptForEmailLinkCompletion = false
+    @Published var shouldShowAppleNamePrompt = false
+    @Published var pendingNameUpdate = ""
     @Published var showManagerAccessRequired = false
     @Published var managerAccessMessage = "This account does not have manager access. Please switch to Employee mode or ask an admin to update your role."
     @Published var showEmployeeSetupRequired = false
@@ -34,7 +29,6 @@ final class AuthViewModel: ObservableObject {
     private let authService: AuthService
     private let roleProfileRepository: RoleProfileRepositoryProtocol
     private var isResolvingProfile = false
-    private var pendingEmailSignInLink: String?
 
     init(authService: AuthService, roleProfileRepository: RoleProfileRepositoryProtocol) {
         self.authService = authService
@@ -81,6 +75,30 @@ final class AuthViewModel: ObservableObject {
         do {
             try await authService.signInWithGoogle()
             try await resolveProfileAndRoute(requestedRole: requestedRole, isSessionRestore: false, provider: "google")
+        } catch {
+            showEmployeeSetupRequired = true
+            errorMessage = userFacingMessage(for: error)
+        }
+    }
+
+    func signInWithApple(requestedRole: UserRole) async {
+        guard !isResolvingProfile else { return }
+        signInNoticeMessage = nil
+        isLoading = true
+        isRoleResolutionLoading = true
+        defer { isLoading = false }
+        defer { isRoleResolutionLoading = false }
+
+        do {
+            let appleResult = try await authService.signInWithApple()
+            let resolvedName = PersonNameComponentsFormatter().string(from: appleResult.fullName ?? PersonNameComponents()).trimmingCharacters(in: .whitespacesAndNewlines)
+            try await resolveProfileAndRoute(
+                requestedRole: requestedRole,
+                isSessionRestore: false,
+                provider: "apple",
+                preferredName: resolvedName.isEmpty ? nil : resolvedName
+            )
+            evaluateAppleNamePromptAfterSignIn()
         } catch {
             showEmployeeSetupRequired = true
             errorMessage = userFacingMessage(for: error)
@@ -140,95 +158,6 @@ final class AuthViewModel: ObservableObject {
         } catch {
             logEmailAuthFailure(prefix: "[EmailSignup] FAIL", error: error)
             showEmployeeSetupRequired = true
-            errorMessage = userFacingMessage(for: error)
-        }
-    }
-
-    func sendEmailSignInLink(to email: String) async {
-        guard !isResolvingProfile else { return }
-        guard requestedRole != nil else {
-            errorMessage = "Select Employee or Manager mode first."
-            return
-        }
-
-        let normalizedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !normalizedEmail.isEmpty else {
-            errorMessage = "Enter a valid email address."
-            return
-        }
-
-        emailLinkStatusMessage = nil
-        isLoading = true
-        defer { isLoading = false }
-
-        do {
-            try await authService.sendSignInLink(toEmail: normalizedEmail)
-            UserDefaults.standard.set(normalizedEmail, forKey: EmailLinkConstants.pendingEmailKey)
-            pendingEmailForCompletion = normalizedEmail
-            print("[EmailLink] SEND_OK email=\(normalizedEmail)")
-            emailLinkStatusMessage = "Link sent, check your email."
-        } catch {
-            print("[EmailLink] SEND_FAIL error=\(error.localizedDescription)")
-            errorMessage = userFacingMessage(for: error)
-        }
-    }
-
-    func handleIncomingEmailLink(url: URL) async {
-        let link = url.absoluteString
-        print("[EmailLink] OPEN_URL url=\(link)")
-
-        guard authService.isSignIn(withEmailLink: link) else { return }
-        pendingEmailSignInLink = link
-
-        if let savedEmail = UserDefaults.standard.string(forKey: EmailLinkConstants.pendingEmailKey),
-           !savedEmail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            pendingEmailForCompletion = savedEmail
-            await completePendingEmailLinkSignIn(email: savedEmail)
-            return
-        }
-
-        shouldPromptForEmailLinkCompletion = true
-        emailLinkStatusMessage = "Enter your email to complete sign-in."
-    }
-
-    func completePendingEmailLinkSignIn(email: String) async {
-        guard !isResolvingProfile else { return }
-        guard let requestedRole = requestedRole else {
-            errorMessage = "Select Employee or Manager mode first."
-            return
-        }
-
-        let normalizedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !normalizedEmail.isEmpty else {
-            errorMessage = "Enter a valid email address."
-            return
-        }
-
-        guard let link = pendingEmailSignInLink else {
-            errorMessage = "No sign-in link is pending. Request a new email link."
-            return
-        }
-
-        emailLinkStatusMessage = nil
-        isLoading = true
-        isRoleResolutionLoading = true
-        defer { isLoading = false }
-        defer { isRoleResolutionLoading = false }
-
-        do {
-            try await authService.signIn(withEmail: normalizedEmail, link: link)
-            UserDefaults.standard.removeObject(forKey: EmailLinkConstants.pendingEmailKey)
-            shouldPromptForEmailLinkCompletion = false
-            pendingEmailSignInLink = nil
-            print("[EmailLink] SIGNIN_OK email=\(normalizedEmail)")
-            try await resolveProfileAndRoute(
-                requestedRole: requestedRole,
-                isSessionRestore: false,
-                provider: "emailLink",
-                preferredEmail: normalizedEmail
-            )
-        } catch {
-            print("[EmailLink] SIGNIN_FAIL error=\(error.localizedDescription)")
             errorMessage = userFacingMessage(for: error)
         }
     }
@@ -440,15 +369,71 @@ final class AuthViewModel: ObservableObject {
     private func authProvider(for user: FirebaseAuth.User) -> String {
         let providerId = user.providerData
             .map(\.providerID)
-            .first { $0 == "google.com" || $0 == "password" }
+            .first { $0 == "apple.com" || $0 == "google.com" || $0 == "password" }
 
         switch providerId {
+        case "apple.com":
+            return "apple"
         case "google.com":
             return "google"
         case "password":
             return "password"
         default:
             return "unknown"
+        }
+    }
+
+
+    func saveAppleDisplayName() async {
+        let trimmed = pendingNameUpdate.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            errorMessage = "Please enter your name."
+            return
+        }
+        guard let firebaseUser = authService.authUser() else {
+            errorMessage = "You must be signed in."
+            return
+        }
+
+        do {
+            try await Firestore.firestore().collection("users").document(firebaseUser.uid).setData([
+                "name": trimmed,
+                "updatedAt": FieldValue.serverTimestamp(),
+                "provider": "apple"
+            ], merge: true)
+
+            if var existingUser = currentUser {
+                existingUser.name = trimmed
+                existingUser.provider = "apple"
+                syncState(with: existingUser, role: existingUser.role)
+            }
+
+            pendingNameUpdate = trimmed
+            shouldShowAppleNamePrompt = false
+        } catch {
+            errorMessage = userFacingMessage(for: error)
+        }
+    }
+
+    private func evaluateAppleNamePromptAfterSignIn() {
+        guard let firebaseUser = authService.authUser() else { return }
+        let providerIds = Set(firebaseUser.providerData.map(\.providerID))
+        guard providerIds.contains("apple.com") else { return }
+        guard var user = currentUser else { return }
+
+        let trimmedName = user.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lowerName = trimmedName.lowercased()
+        let emailPrefix = (user.email ?? firebaseUser.email ?? "").split(separator: "@").first.map(String.init)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+        let shouldPrompt = trimmedName.isEmpty
+            || lowerName == "storepass user"
+            || lowerName == emailPrefix.lowercased()
+
+        if shouldPrompt {
+            pendingNameUpdate = trimmedName.isEmpty ? "" : trimmedName
+            shouldShowAppleNamePrompt = true
+            user.provider = "apple"
+            syncState(with: user, role: user.role)
         }
     }
 
@@ -462,11 +447,6 @@ final class AuthViewModel: ObservableObject {
         if nsError.domain == AuthErrorDomain,
            nsError.code == AuthErrorCode.requiresRecentLogin.rawValue {
             return "For security, sign in again and retry this action."
-        }
-
-        if nsError.domain == AuthErrorDomain,
-           nsError.code == AuthErrorCode.operationNotAllowed.rawValue {
-            return "Email link sign-in is disabled in Firebase Console. Enable Email Link under Authentication → Sign-in method."
         }
 
         return error.localizedDescription

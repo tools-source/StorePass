@@ -1,3 +1,4 @@
+import AuthenticationServices
 import FirebaseAuth
 import FirebaseCore
 import FirebaseFunctions
@@ -120,9 +121,15 @@ private struct ReauthenticateSheet: View {
                     .multilineTextAlignment(.center)
 
                 if viewModel.selectedProviderForReauth == "apple.com" {
-                    Text("This account was created with Apple Sign-In, which is no longer supported. Please contact support or sign in with another method.")
-                        .foregroundStyle(.red)
-                        .multilineTextAlignment(.center)
+                    AppleReauthButton {
+                        Task {
+                            let ok = await viewModel.reauthenticateWithApple()
+                            if ok {
+                                onSuccess()
+                            }
+                        }
+                    }
+                    .frame(height: 50)
                 } else if viewModel.selectedProviderForReauth == "google.com" {
                     Button {
                         Task {
@@ -158,6 +165,36 @@ private struct ReauthenticateSheet: View {
                     Button("Close") { dismiss() }
                 }
             }
+        }
+    }
+}
+
+
+private struct AppleReauthButton: UIViewRepresentable {
+    let action: () -> Void
+
+    func makeUIView(context: Context) -> ASAuthorizationAppleIDButton {
+        let button = ASAuthorizationAppleIDButton(type: .continue, style: .black)
+        button.cornerRadius = 10
+        button.addTarget(context.coordinator, action: #selector(Coordinator.didTap), for: .touchUpInside)
+        return button
+    }
+
+    func updateUIView(_ uiView: ASAuthorizationAppleIDButton, context: Context) {}
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(action: action)
+    }
+
+    final class Coordinator: NSObject {
+        let action: () -> Void
+
+        init(action: @escaping () -> Void) {
+            self.action = action
+        }
+
+        @objc func didTap() {
+            action()
         }
     }
 }
@@ -277,6 +314,35 @@ final class AccountSettingsViewModel: ObservableObject {
         }
     }
 
+    func reauthenticateWithApple() async -> Bool {
+        do {
+            guard let currentUser = auth.currentUser else {
+                throw NSError(domain: "StorePass", code: 9010, userInfo: [NSLocalizedDescriptionKey: "You must be signed in."])
+            }
+
+            let nonce = AuthService.randomNonceString()
+            let appleAuthorization = try await AuthService.performAppleAuthorization(nonce: nonce)
+
+            guard let idTokenString = String(data: appleAuthorization.identityToken, encoding: .utf8) else {
+                throw NSError(domain: "StorePass", code: 9011, userInfo: [NSLocalizedDescriptionKey: "Unable to decode Apple identity token."])
+            }
+
+            let credential = OAuthProvider.appleCredential(
+                withIDToken: idTokenString,
+                rawNonce: nonce,
+                fullName: appleAuthorization.fullName
+            )
+
+            _ = try await currentUser.reauthenticate(with: credential)
+            print("[DeleteAccount][REAUTH_OK] provider=apple.com")
+            return true
+        } catch {
+            logDeleteAccountError(error)
+            errorMessage = userFacingDeleteError(error)
+            return false
+        }
+    }
+
     func deleteAccount(role: UserRole?) async {
         await executeDeleteAccount(role: role, allowReauthPrompt: true)
     }
@@ -287,27 +353,23 @@ final class AccountSettingsViewModel: ObservableObject {
 
     @MainActor
     private func executeDeleteAccount(role: UserRole?, allowReauthPrompt: Bool) async {
-        _ = allowReauthPrompt
-
         guard let currentUser = auth.currentUser else {
             errorMessage = "You must be signed in."
             return
         }
 
-        // ✅ Single-flight guard (stronger than booleans)
         if deleteAccountTask != nil {
             print("[DeleteAccount] stage=skip_duplicate_task uid=\(currentUser.uid) provider=\(providerForCurrentUser())")
             return
         }
 
-        // set UI flags immediately (main actor)
         isDeleting = true
         isDeletingAccount = true
 
         let provider = providerForCurrentUser()
-        logDeleteAccountStage("start", uid: currentUser.uid, provider: provider)
-
         let uid = currentUser.uid
+        let correlationId = UUID().uuidString
+        logDeleteAccountStage("start", uid: uid, provider: provider)
 
         deleteAccountTask = Task { [weak self] in
             guard let self else { return }
@@ -320,22 +382,24 @@ final class AccountSettingsViewModel: ObservableObject {
             }
 
             do {
-                var payload: [String: Any] = ["mode": "cleanup_memberships"]
-                let roleValue: Any = role?.rawValue ?? NSNull()
-                payload["role"] = roleValue
-                print("[DeleteAccount] role_debug rawValue=\(String(describing: role?.rawValue)) roleValueType=\(type(of: roleValue))")
-
-                _ = try await self.callable(
-                    name: "deleteMyAccount",
-                    payload: payload
-                )
-
+                try await self.performDeleteMyAccountCall(role: role, uid: uid, provider: provider, correlationId: correlationId)
                 await MainActor.run {
                     self.logDeleteAccountStage("deleteMyAccount_ok", uid: uid, provider: provider)
                     self.needsReauthentication = false
                     self.errorMessage = nil
                 }
             } catch {
+                let nsError = error as NSError
+                let needsRecentLogin = nsError.domain == AuthErrorDomain && nsError.code == AuthErrorCode.requiresRecentLogin.rawValue
+                if needsRecentLogin && allowReauthPrompt {
+                    await MainActor.run {
+                        self.needsReauthentication = true
+                        self.prepareProviderForReauth()
+                        self.errorMessage = self.userFacingDeleteError(error)
+                    }
+                    return
+                }
+
                 await MainActor.run {
                     self.logDeleteAccountError(error)
                     self.errorMessage = self.userFacingDeleteError(error)
@@ -343,8 +407,50 @@ final class AccountSettingsViewModel: ObservableObject {
             }
         }
 
-        // wait for completion if caller expects it
         await deleteAccountTask?.value
+    }
+
+    private func performDeleteMyAccountCall(role: UserRole?, uid: String, provider: String, correlationId: String) async throws {
+        guard let currentUser = auth.currentUser else {
+            throw NSError(domain: "StorePass", code: 9012, userInfo: [NSLocalizedDescriptionKey: "You must be signed in."])
+        }
+
+        let roleValue: Any = role?.rawValue ?? NSNull()
+        var payload: [String: Any] = [
+            "mode": "cleanup_memberships",
+            "role": roleValue,
+            "correlationId": correlationId
+        ]
+
+        print("[DeleteAccount] correlationId=\(correlationId) uid=\(uid) provider=\(provider) stage=refresh_token_start")
+        _ = try await currentUser.getIDTokenForcingRefresh(true)
+        print("[DeleteAccount] correlationId=\(correlationId) uid=\(uid) provider=\(provider) stage=refresh_token_ok")
+
+        do {
+            _ = try await callable(name: "deleteMyAccount", payload: payload)
+        } catch {
+            let nsError = error as NSError
+            if nsError.domain == AuthErrorDomain,
+               nsError.code == AuthErrorCode.requiresRecentLogin.rawValue {
+                print("[DeleteAccount] correlationId=\(correlationId) uid=\(uid) provider=\(provider) stage=reauth_required")
+                let reauthOK: Bool
+                if provider == "apple.com" {
+                    reauthOK = await reauthenticateWithApple()
+                } else if provider == "google.com" {
+                    reauthOK = await reauthenticateWithGoogle()
+                } else {
+                    throw error
+                }
+
+                guard reauthOK else { throw error }
+                _ = try await currentUser.getIDTokenForcingRefresh(true)
+                payload["correlationId"] = correlationId
+                print("[DeleteAccount] correlationId=\(correlationId) uid=\(uid) provider=\(provider) stage=retry_after_reauth")
+                _ = try await callable(name: "deleteMyAccount", payload: payload)
+                return
+            }
+            throw error
+        }
     }
 
     private func logDeleteAccountStage(_ stage: String, uid: String, provider: String, error: Error? = nil) {
@@ -375,7 +481,7 @@ final class AccountSettingsViewModel: ObservableObject {
         if nsError.domain == AuthErrorDomain,
            nsError.code == AuthErrorCode.requiresRecentLogin.rawValue {
             if auth.currentUser?.providerData.map(\.providerID).contains("apple.com") == true {
-                return "This account was created with Apple Sign-In, which is no longer supported. Please contact support or sign in with another method."
+                return "For security, please re-authenticate with Apple and retry account deletion."
             }
             return "For security, please sign in again and retry account deletion."
         }
