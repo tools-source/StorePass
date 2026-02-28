@@ -69,6 +69,7 @@ StorePass is a SwiftUI + MVVM employee attendance app with Firebase Auth, Firest
 3. Enable Auth providers:
    - Google
    - Apple
+   - Email link (passwordless), and set **Authorized domain** to include `storecheck-6fdc8.firebaseapp.com` for in-app email link completion.
 4. Create Firestore database (Production mode preferred + deploy custom rules).
 5. Deploy Firestore rules:
    ```bash

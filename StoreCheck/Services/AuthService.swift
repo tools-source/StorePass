@@ -130,8 +130,7 @@ final class AuthService: ObservableObject, AuthServiceProtocol {
             throw NSError(domain: "StorePass", code: 1005, userInfo: [NSLocalizedDescriptionKey: "Missing app bundle identifier."])
         }
 
-        guard let projectID = firebaseApp.options.projectID,
-              let continueURL = URL(string: "https://\(projectID).firebaseapp.com/__/auth/action") else {
+        guard let continueURL = URL(string: "https://storecheck-6fdc8.firebaseapp.com/emailSignIn") else {
             throw NSError(domain: "StorePass", code: 1006, userInfo: [NSLocalizedDescriptionKey: "Unable to determine Firebase continue URL for email link sign-in."])
         }
 

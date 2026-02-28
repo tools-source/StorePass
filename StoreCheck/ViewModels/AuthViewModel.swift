@@ -6,7 +6,7 @@ import SwiftUI
 @MainActor
 final class AuthViewModel: ObservableObject {
     private enum EmailLinkConstants {
-        static let pendingEmailKey = "pendingEmailLinkSignInEmail"
+        static let pendingEmailKey = "pendingEmailLinkEmail"
     }
 
     enum AuthState: Equatable {
