@@ -20,6 +20,7 @@ private struct RootContentView: View {
     @StateObject private var appLockViewModel = AppLockViewModel()
     @State private var bootState: BootState = .launching
     @State private var showAppLockPrompt = false
+    @State private var didEnterBackground = false
     @AppStorage("appLockEnabled") private var appLockEnabled = false
     @AppStorage("didPromptForAppLock") private var didPromptForAppLock = false
     @Environment(\.scenePhase) private var scenePhase
@@ -56,8 +57,21 @@ private struct RootContentView: View {
         .environmentObject(authViewModel)
         .task { await boot() }
         .onChange(of: scenePhase) { _, newPhase in
-            guard newPhase == .active else { return }
-            appLockViewModel.onAppBecameActive(isUserSignedIn: authViewModel.currentUser != nil)
+            switch newPhase {
+            case .background:
+                didEnterBackground = true
+            case .active:
+                guard didEnterBackground else { return }
+                didEnterBackground = false
+                appLockViewModel.onAppBecameActive(isUserSignedIn: authViewModel.currentUser != nil)
+            default:
+                break
+            }
+        }
+        .onChange(of: appLockEnabled) { _, newValue in
+            if !newValue {
+                appLockViewModel.unlockForDisabledAppLock()
+            }
         }
         .onChange(of: authViewModel.authState) { _, newState in
             if case .signedOut = newState {
