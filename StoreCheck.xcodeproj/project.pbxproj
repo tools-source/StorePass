@@ -62,6 +62,7 @@
 		BEEFABCD1234000000000088 /* ManagerAccessRequiredView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000082 /* ManagerAccessRequiredView.swift */; };
 		BEEFABCD123400000000008A /* ManagerCheckInsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD123400000000008C /* ManagerCheckInsViewModel.swift */; };
 		BEEFABCD123400000000008B /* ManagerCheckInsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD123400000000008D /* ManagerCheckInsView.swift */; };
+		BEEFABCD12340000000000A1 /* TimesheetComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD12340000000000A0 /* TimesheetComponents.swift */; };
 		BEEFABCD1234000000000093 /* BiometricAuthService.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000090 /* BiometricAuthService.swift */; };
 		BEEFABCD1234000000000094 /* AppLockViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000091 /* AppLockViewModel.swift */; };
 		BEEFABCD1234000000000095 /* AppLockOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000092 /* AppLockOverlayView.swift */; };
@@ -124,6 +125,7 @@
 		BEEFABCD1234000000000082 /* ManagerAccessRequiredView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManagerAccessRequiredView.swift; sourceTree = "<group>"; };
 		BEEFABCD123400000000008C /* ManagerCheckInsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManagerCheckInsViewModel.swift; sourceTree = "<group>"; };
 		BEEFABCD123400000000008D /* ManagerCheckInsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManagerCheckInsView.swift; sourceTree = "<group>"; };
+		BEEFABCD12340000000000A0 /* TimesheetComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimesheetComponents.swift; sourceTree = "<group>"; };
 		BEEFABCD1234000000000090 /* BiometricAuthService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BiometricAuthService.swift; sourceTree = "<group>"; };
 		BEEFABCD1234000000000091 /* AppLockViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLockViewModel.swift; sourceTree = "<group>"; };
 		BEEFABCD1234000000000092 /* AppLockOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLockOverlayView.swift; sourceTree = "<group>"; };
@@ -290,6 +292,7 @@
 			isa = PBXGroup;
 			children = (
 				BEEFABCD1234000000000080 /* Employee */,
+				BEEFABCD12340000000000A2 /* Shared */,
 				BEEFABCD123400000000001C /* EmployeeDashboardView.swift */,
 				BEEFABCD123400000000001D /* EmployeeHistoryView.swift */,
 				BEEFABCD123400000000001E /* EmployeeTabView.swift */,
@@ -310,6 +313,14 @@
 				BEEFABCD1234000000000077 /* StoreCheck/Views/Employee/EmployeeSettingsView.swift */,
 			);
 			path = Employee;
+			sourceTree = "<group>";
+		};
+		BEEFABCD12340000000000A2 /* Shared */ = {
+			isa = PBXGroup;
+			children = (
+				BEEFABCD12340000000000A0 /* TimesheetComponents.swift */,
+			);
+			path = Shared;
 			sourceTree = "<group>";
 		};
 		BEEFABCD1234000000000096 /* AppLock */ = {
@@ -458,6 +469,7 @@
 				BEEFABCD1234000000000048 /* ManageStoresView.swift in Sources */,
 				BEEFABCD1234000000000049 /* ManagerDashboardView.swift in Sources */,
 				BEEFABCD123400000000008B /* ManagerCheckInsView.swift in Sources */,
+				BEEFABCD12340000000000A1 /* TimesheetComponents.swift in Sources */,
 				BEEFABCD123400000000004A /* ManagerTabView.swift in Sources */,
 				BEEFABCD123400000000004B /* RootView.swift in Sources */,
 				BEEFABCD1234000000000088 /* ManagerAccessRequiredView.swift in Sources */,

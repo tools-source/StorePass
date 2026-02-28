@@ -13,42 +13,22 @@ struct TimesheetHeaderCard<Content: View>: View {
     }
 }
 
-struct TimesheetListCard<Header: View, Rows: View>: View {
-    @ViewBuilder var header: Header
-    @ViewBuilder var rows: Rows
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            header
-                .padding(.horizontal, 12)
-                .padding(.top, 10)
-                .padding(.bottom, 6)
-
-            rows
-                .padding(.horizontal, 12)
-                .padding(.bottom, 8)
-        }
-        .background(DS.Colors.card)
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-    }
-}
-
-struct TimesheetLabeledMenu<Content: View>: View {
+struct TimesheetLabeledMenu: View {
     let title: String
     let selectionTitle: String
     let isInteractive: Bool
-    @ViewBuilder var content: Content
+    private let content: AnyView
 
     init(
         title: String,
         selectionTitle: String,
         isInteractive: Bool = true,
-        @ViewBuilder content: () -> Content
+        @ViewBuilder content: () -> some View
     ) {
         self.title = title
         self.selectionTitle = selectionTitle
         self.isInteractive = isInteractive
-        self.content = content()
+        self.content = AnyView(content())
     }
 
     var body: some View {
@@ -76,6 +56,7 @@ struct TimesheetLabeledMenu<Content: View>: View {
                 .lineLimit(1)
                 .truncationMode(.tail)
                 .font(.subheadline.weight(.semibold))
+                .foregroundStyle(DS.Colors.primary)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .layoutPriority(1)
 
@@ -87,8 +68,27 @@ struct TimesheetLabeledMenu<Content: View>: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .background(DS.Colors.background.opacity(0.8))
-        .clipShape(Capsule())
+        .background(DS.Colors.background.opacity(0.8), in: Capsule())
+    }
+}
+
+struct TimesheetListCard<Header: View, Rows: View>: View {
+    @ViewBuilder var header: Header
+    @ViewBuilder var rows: Rows
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            header
+                .padding(.horizontal, 12)
+                .padding(.top, 10)
+                .padding(.bottom, 6)
+
+            rows
+                .padding(.horizontal, 12)
+                .padding(.bottom, 8)
+        }
+        .background(DS.Colors.card)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 }
 
