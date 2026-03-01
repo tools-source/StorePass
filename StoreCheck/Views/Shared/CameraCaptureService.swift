@@ -8,6 +8,7 @@ final class CameraCaptureService: ObservableObject {
     let session = AVCaptureSession()
 
     @Published var lastErrorMessage: String?
+    @Published private(set) var isReadyToCapture = false
 
     // MARK: - Private
     private let sessionQueue = DispatchQueue(label: "com.storecheck.camera.sessionQueue")
@@ -21,12 +22,19 @@ final class CameraCaptureService: ObservableObject {
     private var activeVideoConnection: AVCaptureConnection?
 
     private var currentPosition: AVCaptureDevice.Position = .front
+    private var sessionObservers: [NSObjectProtocol] = []
 
     // Keep strong ref while capture is in-flight
     private var inFlightPhotoDelegate: PhotoCaptureDelegate?
 
     // MARK: - Init
-    init() {}
+    init() {
+        observeSessionNotifications()
+    }
+
+    deinit {
+        removeSessionObservers()
+    }
 
     // MARK: - Permissions
     @MainActor
@@ -70,6 +78,7 @@ final class CameraCaptureService: ObservableObject {
 
             if self.isConfigured {
                 CameraLog.log("[Camera] configure skipped: already configured")
+                self.updateReadiness(reason: "configureSkipped")
                 return
             }
             if self.isConfiguring {
@@ -79,15 +88,16 @@ final class CameraCaptureService: ObservableObject {
             guard self.isAuthorizedForCamera else {
                 CameraLog.log("[Camera] configure blocked: permission not granted")
                 self.postError("Camera permission is required before starting capture.")
+                self.updateReadiness(reason: "configureNoPermission")
                 return
             }
 
             self.isConfiguring = true
             CameraLog.log("[Camera] configure begin")
 
-            // IMPORTANT: don’t configure while running
+            // IMPORTANT: don't configure while running
             if self.session.isRunning {
-                CameraLog.log("[Camera] configure: session is running → stopping first")
+                CameraLog.log("[Camera] configure: session is running -> stopping first")
                 self.session.stopRunning()
             }
 
@@ -96,6 +106,7 @@ final class CameraCaptureService: ObservableObject {
                 self.session.commitConfiguration()
                 self.isConfiguring = false
                 self.isConfigured = true
+                self.updateReadiness(reason: "configureComplete")
                 CameraLog.log("[Camera] configure end (configured=\(self.isConfigured))")
             }
 
@@ -142,6 +153,7 @@ final class CameraCaptureService: ObservableObject {
 
             // Cache connection
             self.activeVideoConnection = self.photoOutput.connection(with: .video)
+            self.currentPosition = selectedDevice.position
 
             CameraLog.log("[Camera] configured ok device=\(selectedDevice.position.rawValue) preset=\(self.session.sessionPreset.rawValue)")
         }
@@ -153,6 +165,7 @@ final class CameraCaptureService: ObservableObject {
 
             if !self.isConfigured {
                 CameraLog.log("[Camera] start skipped: not configured")
+                self.updateReadiness(reason: "startSkippedNotConfigured")
                 return
             }
             if self.isConfiguring {
@@ -161,6 +174,7 @@ final class CameraCaptureService: ObservableObject {
             }
             if self.session.isRunning {
                 CameraLog.log("[Camera] start skipped: already running")
+                self.updateReadiness(reason: "startAlreadyRunning")
                 return
             }
             if self.isStarting {
@@ -169,9 +183,11 @@ final class CameraCaptureService: ObservableObject {
             }
 
             self.isStarting = true
-            CameraLog.log("[Camera] startRunning…")
+            CameraLog.log("[Camera] startRunning...")
             self.session.startRunning()
             self.isStarting = false
+            self.activeVideoConnection = self.photoOutput.connection(with: .video)
+            self.updateReadiness(reason: "startSession")
             CameraLog.log("[Camera] started running=\(self.session.isRunning)")
         }
     }
@@ -181,10 +197,12 @@ final class CameraCaptureService: ObservableObject {
             guard let self else { return }
             guard self.session.isRunning else {
                 CameraLog.log("[Camera] stop skipped: already stopped")
+                self.updateReadiness(reason: "stopAlreadyStopped")
                 return
             }
-            CameraLog.log("[Camera] stopRunning…")
+            CameraLog.log("[Camera] stopRunning...")
             self.session.stopRunning()
+            self.updateReadiness(reason: "stopSession")
         }
     }
 
@@ -217,16 +235,9 @@ final class CameraCaptureService: ObservableObject {
 
             CameraLog.log("[Camera] capture requested")
 
-            guard self.isConfigured else {
+            guard self.isReadyForCaptureOnSessionQueue() else {
                 self.postError("Camera not ready yet. Try again.")
-                CameraLog.log("[Camera] capture blocked: not configured")
-                DispatchQueue.main.async { completion(nil) }
-                return
-            }
-
-            guard self.session.isRunning else {
-                self.postError("Camera is starting… please try again.")
-                CameraLog.log("[Camera] capture blocked: session not running")
+                CameraLog.log("[Camera] capture blocked: not ready")
                 DispatchQueue.main.async { completion(nil) }
                 return
             }
@@ -270,10 +281,12 @@ final class CameraCaptureService: ObservableObject {
             mediaType: .video,
             position: position
         )
+
         if let device = discovery.devices.first {
-            CameraLog.log("[Camera] selected device position=\(position.rawValue) name=\(device.localizedName)")
+            CameraLog.log("[Camera] selected device name=\(device.localizedName) id=\(device.uniqueID) position=\(position.rawValue)")
             return device
         }
+
         CameraLog.log("[Camera] no device for position=\(position.rawValue)")
         return nil
     }
@@ -290,8 +303,122 @@ final class CameraCaptureService: ObservableObject {
         }
     }
 
+    private func observeSessionNotifications() {
+        let center = NotificationCenter.default
+
+        let runtimeObserver = center.addObserver(
+            forName: .AVCaptureSessionRuntimeError,
+            object: session,
+            queue: nil
+        ) { [weak self] notification in
+            guard let self else { return }
+            self.sessionQueue.async {
+                let nsError = notification.userInfo?[AVCaptureSessionErrorKey] as? NSError
+                let domain = nsError?.domain ?? "unknown"
+                let code = nsError?.code ?? -1
+                CameraLog.log("[Camera] runtimeError domain=\(domain) code=\(code) wasRunning=\(self.session.isRunning)")
+
+                self.updateReadiness(reason: "runtimeError")
+
+                if code == AVError.mediaServicesWereReset.rawValue || code == AVError.deviceWasDisconnected.rawValue {
+                    self.safeRestartSession(reason: "runtimeError:\(code)")
+                }
+            }
+        }
+
+        let interruptedObserver = center.addObserver(
+            forName: .AVCaptureSessionWasInterrupted,
+            object: session,
+            queue: nil
+        ) { [weak self] notification in
+            guard let self else { return }
+            self.sessionQueue.async {
+                let reasonNum = notification.userInfo?[AVCaptureSessionInterruptionReasonKey] as? NSNumber
+                let reason = reasonNum.flatMap { AVCaptureSession.InterruptionReason(rawValue: $0.intValue) }
+                let reasonString = reason.map { "\($0.rawValue)" } ?? "unknown"
+                CameraLog.log("[Camera] wasInterrupted reason=\(reasonString) wasRunning=\(self.session.isRunning)")
+                self.updateReadiness(reason: "interrupted")
+            }
+        }
+
+        let interruptionEndedObserver = center.addObserver(
+            forName: .AVCaptureSessionInterruptionEnded,
+            object: session,
+            queue: nil
+        ) { [weak self] _ in
+            guard let self else { return }
+            self.sessionQueue.async {
+                CameraLog.log("[Camera] interruptionEnded wasRunning=\(self.session.isRunning)")
+                self.safeRestartSession(reason: "interruptionEnded")
+            }
+        }
+
+        sessionObservers = [runtimeObserver, interruptedObserver, interruptionEndedObserver]
+    }
+
+    private func removeSessionObservers() {
+        let center = NotificationCenter.default
+        sessionObservers.forEach { center.removeObserver($0) }
+        sessionObservers.removeAll()
+    }
+
+    private func safeRestartSession(reason: String) {
+        CameraLog.log("[Camera] safeRestart begin reason=\(reason) wasRunning=\(session.isRunning)")
+
+        if session.isRunning {
+            session.stopRunning()
+        }
+        updateReadiness(reason: "safeRestartStop")
+
+        sessionQueue.asyncAfter(deadline: .now() + .milliseconds(200)) { [weak self] in
+            guard let self else { return }
+            guard self.isConfigured else {
+                CameraLog.log("[Camera] safeRestart skipped: not configured")
+                self.updateReadiness(reason: "safeRestartNotConfigured")
+                return
+            }
+
+            if self.activeVideoConnection == nil {
+                self.activeVideoConnection = self.photoOutput.connection(with: .video)
+                CameraLog.log("[Camera] safeRestart refetchedConnection=\(self.activeVideoConnection != nil)")
+            }
+
+            if !self.session.isRunning {
+                self.session.startRunning()
+            }
+
+            if self.activeVideoConnection == nil {
+                self.activeVideoConnection = self.photoOutput.connection(with: .video)
+            }
+
+            self.updateReadiness(reason: "safeRestartStart")
+            CameraLog.log("[Camera] safeRestart end running=\(self.session.isRunning)")
+        }
+    }
+
+    private func isReadyForCaptureOnSessionQueue() -> Bool {
+        let ready = isConfigured && session.isRunning && (photoOutput.connection(with: .video) != nil)
+        if !ready {
+            updateReadiness(reason: "captureGate")
+        }
+        return ready
+    }
+
+    private func updateReadiness(reason: String) {
+        let connection = photoOutput.connection(with: .video)
+        activeVideoConnection = connection ?? activeVideoConnection
+        let ready = isConfigured && session.isRunning && (connection != nil)
+
+        DispatchQueue.main.async {
+            self.isReadyToCapture = ready
+        }
+
+        CameraLog.log("[Camera] readiness reason=\(reason) configured=\(isConfigured) running=\(session.isRunning) connection=\(connection != nil) ready=\(ready)")
+    }
+
     private func fail(_ message: String) {
         CameraLog.log("[Camera] FAIL: \(message)")
+        updateReadiness(reason: "fail")
         postError(message)
     }
 

@@ -8,7 +8,6 @@ struct CameraCaptureSheet: View {
     let onCaptured: (UIImage) -> Void
 
     @StateObject private var cameraService = CameraCaptureService()
-    @State private var didRunInitialSetup = false
     @State private var didSetupCamera = false
 
     var body: some View {
@@ -18,16 +17,15 @@ struct CameraCaptureSheet: View {
                     CustomCameraView(cameraService: cameraService) {
                         cameraService.capturePhoto { image in
                             guard let image else {
-                                PhotoVerifyLogger.log("[UI] camera capture returned nil image")
+                                PhotoVerifyLogger.log("[Camera] capture returned nil image")
                                 return
                             }
 
-                            PhotoVerifyLogger.log("[UI] image captured size=\(Int(image.size.width))x\(Int(image.size.height))")
+                            PhotoVerifyLogger.log("[Camera] image captured size=\(Int(image.size.width))x\(Int(image.size.height))")
                             onCaptured(image)
                             isPresented = false
                         }
                     }
-                    // ✅ avoids "Cannot infer contextual base in reference to member 'bottom'"
                     .ignoresSafeArea(.all, edges: .bottom)
                 } else {
                     unavailableUI(message: "Camera not available on this device.")
@@ -38,7 +36,7 @@ struct CameraCaptureSheet: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
-                        PhotoVerifyLogger.log("[UI] camera sheet canceled")
+                        PhotoVerifyLogger.log("[Camera] camera sheet canceled")
                         isPresented = false
                     }
                 }
@@ -51,7 +49,7 @@ struct CameraCaptureSheet: View {
             Task {
                 let granted = await cameraService.requestCameraPermissionIfNeeded()
                 guard granted else {
-                    print("[UI] camera sheet setup stopped: permission not granted")
+                    PhotoVerifyLogger.log("[Camera] setup stopped: permission not granted")
                     return
                 }
 
@@ -61,8 +59,7 @@ struct CameraCaptureSheet: View {
             }
         }
         .onDisappear {
-            PhotoVerifyLogger.log("[UI] camera sheet dismissed")
-            didRunInitialSetup = false
+            PhotoVerifyLogger.log("[Camera] camera sheet dismissed")
             cameraService.stopSession()
         }
     }
@@ -100,19 +97,32 @@ struct CustomCameraView: View {
                     }
                 }
 
-            Button(action: onCaptureTap) {
-                Circle()
-                    .fill(.white)
-                    .frame(width: 76, height: 76)
-                    .overlay {
-                        Circle()
-                            .stroke(.black.opacity(0.2), lineWidth: 2)
-                            .padding(6)
-                    }
+            VStack(spacing: 8) {
+                if !cameraService.isReadyToCapture {
+                    Text("Camera not ready")
+                        .font(.footnote)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(.black.opacity(0.65))
+                        .foregroundStyle(.white)
+                        .clipShape(Capsule())
+                }
+
+                Button(action: onCaptureTap) {
+                    Circle()
+                        .fill(.white)
+                        .frame(width: 76, height: 76)
+                        .overlay {
+                            Circle()
+                                .stroke(.black.opacity(0.2), lineWidth: 2)
+                                .padding(6)
+                        }
+                }
+                .disabled(!cameraService.isReadyToCapture)
+                .opacity(cameraService.isReadyToCapture ? 1 : 0.45)
             }
             .padding(.bottom, 28)
         }
-        // ✅ Keep portrait-only stable (no orientation fight / no iOS 17 deprecated API)
         .onReceive(NotificationCenter.default.publisher(for: UIDevice.orientationDidChangeNotification)) { _ in
             cameraService.updateRotationForCurrentDevice()
         }
