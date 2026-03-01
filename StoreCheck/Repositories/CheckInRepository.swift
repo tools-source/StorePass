@@ -17,16 +17,6 @@ protocol CheckInRepositoryProtocol {
     ) -> CheckInListenerToken
 
     func createCheckIn(_ checkIn: CheckIn) async throws
-    func attachPhoto(
-        checkinId: String,
-        storeId: String,
-        employeeId: String,
-        kind: CheckInPhotoKind,
-        photoPath: String,
-        photoURL: String,
-        capturedAt: Date,
-        uploadedAt: Date
-    ) async throws
 
     func checkout(
         checkinId: String,
@@ -35,7 +25,8 @@ protocol CheckInRepositoryProtocol {
         checkoutLat: Double,
         checkoutLng: Double,
         distanceMeters: Double,
-        accuracyMeters: Double
+        accuracyMeters: Double,
+        verification: Verify2ReadEvidence
     ) async throws
     func updateCheckIn(_ checkIn: CheckIn) async throws
     func updateCheckInTimes(checkIn: CheckIn, newCheckInTime: Date, newCheckOutTime: Date?) async throws
@@ -158,65 +149,6 @@ final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
     }
 
 
-    func attachPhoto(
-        checkinId: String,
-        storeId: String,
-        employeeId: String,
-        kind: CheckInPhotoKind,
-        photoPath: String,
-        photoURL: String,
-        capturedAt: Date,
-        uploadedAt: Date
-    ) async throws {
-        var payload: [String: Any] = [
-            "updatedAt": FieldValue.serverTimestamp()
-        ]
-
-        switch kind {
-        case .checkIn:
-            payload["checkInPhotoPath"] = photoPath
-            payload["checkInPhotoURL"] = photoURL
-            payload["checkInPhotoCapturedAt"] = Timestamp(date: capturedAt)
-            payload["checkInPhotoUploadedAt"] = Timestamp(date: uploadedAt)
-        case .checkOut:
-            payload["checkOutPhotoPath"] = photoPath
-            payload["checkOutPhotoURL"] = photoURL
-            payload["checkOutPhotoCapturedAt"] = Timestamp(date: capturedAt)
-            payload["checkOutPhotoUploadedAt"] = Timestamp(date: uploadedAt)
-        }
-
-        let rootRef = db.collection("checkins").document(checkinId)
-        let employeeMirrorRef = db.collection("employeeCheckins")
-            .document(employeeId)
-            .collection("checkins")
-            .document(checkinId)
-
-        let storeSnapshot = try await db.collection("stores").document(storeId).getDocument()
-        guard let managerId = storeSnapshot.data()?["managerId"] as? String,
-              !managerId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw NSError(domain: "StorePass", code: 4010, userInfo: [NSLocalizedDescriptionKey: "Store manager could not be resolved."])
-        }
-
-        let managerMirrorRef = db.collection("managerCheckins")
-            .document(managerId)
-            .collection("stores")
-            .document(storeId)
-            .collection("checkins")
-            .document(checkinId)
-
-        let batch = db.batch()
-        batch.setData(payload, forDocument: rootRef, merge: true)
-        batch.setData(payload, forDocument: employeeMirrorRef, merge: true)
-        batch.setData(payload, forDocument: managerMirrorRef, merge: true)
-
-        do {
-            try await batch.commit()
-        } catch {
-            logFirestoreError(prefix: "[CheckIn] attachPhoto", error: error)
-            throw mapFirestoreError(error)
-        }
-    }
-
     func checkout(
         checkinId: String,
         storeId: String,
@@ -224,7 +156,8 @@ final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
         checkoutLat: Double,
         checkoutLng: Double,
         distanceMeters: Double,
-        accuracyMeters: Double
+        accuracyMeters: Double,
+        verification: Verify2ReadEvidence
     ) async throws {
         guard let uid = Auth.auth().currentUser?.uid else {
             throw NSError(domain: "StorePass", code: 4001, userInfo: [NSLocalizedDescriptionKey: "You must be signed in."])
@@ -293,7 +226,21 @@ final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
                 "checkOutLng": checkoutLng,
                 "checkOutDistanceMeters": distanceMeters,
                 "checkOutAccuracyMeters": accuracyMeters,
-                "durationSeconds": durationSeconds
+                "durationSeconds": durationSeconds,
+                "checkoutVerifyMethod": verification.method,
+                "checkoutVerifyStatus": verification.status,
+                "checkoutVerifyReason": verification.reason as Any,
+                "checkoutVerifyRead1Lat": verification.read1Lat,
+                "checkoutVerifyRead1Lng": verification.read1Lng,
+                "checkoutVerifyRead1Accuracy": verification.read1Accuracy,
+                "checkoutVerifyRead1At": Timestamp(date: verification.read1At),
+                "checkoutVerifyRead2Lat": verification.read2Lat,
+                "checkoutVerifyRead2Lng": verification.read2Lng,
+                "checkoutVerifyRead2Accuracy": verification.read2Accuracy,
+                "checkoutVerifyRead2At": Timestamp(date: verification.read2At),
+                "checkoutVerifyDistance1Meters": verification.distance1Meters,
+                "checkoutVerifyDistance2Meters": verification.distance2Meters,
+                "checkoutVerifyDriftMeters": verification.driftMeters
             ]
 
             print("[CheckOut][WRITE] path=checkins/\(checkinId) keys=\(payload.keys.sorted())")
@@ -637,16 +584,34 @@ final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
             "employeeEmail": checkIn.employeeEmail as Any,
             "storeName": resolvedStoreName,
             "managerId": storeData?["managerId"] as Any,
-            "checkInPhotoURL": checkIn.checkInPhotoURL as Any,
-            "checkOutPhotoURL": checkIn.checkOutPhotoURL as Any,
-            "checkInPhotoPath": checkIn.checkInPhotoPath as Any,
-            "checkOutPhotoPath": checkIn.checkOutPhotoPath as Any,
-            "checkInPhotoCapturedAt": checkIn.checkInPhotoCapturedAt.map { Timestamp(date: $0) } as Any,
-            "checkOutPhotoCapturedAt": checkIn.checkOutPhotoCapturedAt.map { Timestamp(date: $0) } as Any,
-            "checkInPhotoUploadedAt": checkIn.checkInPhotoUploadedAt.map { Timestamp(date: $0) } as Any,
-            "checkOutPhotoUploadedAt": checkIn.checkOutPhotoUploadedAt.map { Timestamp(date: $0) } as Any,
-            "photoRequired": checkIn.photoRequired,
-            "photoVersion": checkIn.photoVersion
+            "verifyMethod": checkIn.verifyMethod as Any,
+            "verifyStatus": checkIn.verifyStatus as Any,
+            "verifyReason": checkIn.verifyReason as Any,
+            "verifyRead1Lat": checkIn.verifyRead1Lat as Any,
+            "verifyRead1Lng": checkIn.verifyRead1Lng as Any,
+            "verifyRead1Accuracy": checkIn.verifyRead1Accuracy as Any,
+            "verifyRead1At": checkIn.verifyRead1At.map { Timestamp(date: $0) } as Any,
+            "verifyRead2Lat": checkIn.verifyRead2Lat as Any,
+            "verifyRead2Lng": checkIn.verifyRead2Lng as Any,
+            "verifyRead2Accuracy": checkIn.verifyRead2Accuracy as Any,
+            "verifyRead2At": checkIn.verifyRead2At.map { Timestamp(date: $0) } as Any,
+            "verifyDistance1Meters": checkIn.verifyDistance1Meters as Any,
+            "verifyDistance2Meters": checkIn.verifyDistance2Meters as Any,
+            "verifyDriftMeters": checkIn.verifyDriftMeters as Any,
+            "checkoutVerifyMethod": checkIn.checkoutVerifyMethod as Any,
+            "checkoutVerifyStatus": checkIn.checkoutVerifyStatus as Any,
+            "checkoutVerifyReason": checkIn.checkoutVerifyReason as Any,
+            "checkoutVerifyRead1Lat": checkIn.checkoutVerifyRead1Lat as Any,
+            "checkoutVerifyRead1Lng": checkIn.checkoutVerifyRead1Lng as Any,
+            "checkoutVerifyRead1Accuracy": checkIn.checkoutVerifyRead1Accuracy as Any,
+            "checkoutVerifyRead1At": checkIn.checkoutVerifyRead1At.map { Timestamp(date: $0) } as Any,
+            "checkoutVerifyRead2Lat": checkIn.checkoutVerifyRead2Lat as Any,
+            "checkoutVerifyRead2Lng": checkIn.checkoutVerifyRead2Lng as Any,
+            "checkoutVerifyRead2Accuracy": checkIn.checkoutVerifyRead2Accuracy as Any,
+            "checkoutVerifyRead2At": checkIn.checkoutVerifyRead2At.map { Timestamp(date: $0) } as Any,
+            "checkoutVerifyDistance1Meters": checkIn.checkoutVerifyDistance1Meters as Any,
+            "checkoutVerifyDistance2Meters": checkIn.checkoutVerifyDistance2Meters as Any,
+            "checkoutVerifyDriftMeters": checkIn.checkoutVerifyDriftMeters as Any
         ]
 
         if includeCheckoutFields {
@@ -783,16 +748,34 @@ final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
             employeeName: data["employeeName"] as? String ?? "Employee",
             employeeEmail: data["employeeEmail"] as? String,
             storeName: data["storeName"] as? String ?? "Store",
-            checkInPhotoURL: data["checkInPhotoURL"] as? String,
-            checkOutPhotoURL: data["checkOutPhotoURL"] as? String,
-            checkInPhotoPath: data["checkInPhotoPath"] as? String,
-            checkOutPhotoPath: data["checkOutPhotoPath"] as? String,
-            checkInPhotoCapturedAt: decodeDate(data["checkInPhotoCapturedAt"]),
-            checkOutPhotoCapturedAt: decodeDate(data["checkOutPhotoCapturedAt"]),
-            checkInPhotoUploadedAt: decodeDate(data["checkInPhotoUploadedAt"]),
-            checkOutPhotoUploadedAt: decodeDate(data["checkOutPhotoUploadedAt"]),
-            photoRequired: data["photoRequired"] as? Bool ?? true,
-            photoVersion: data["photoVersion"] as? Int ?? 1
+            verifyMethod: data["verifyMethod"] as? String,
+            verifyStatus: data["verifyStatus"] as? String,
+            verifyReason: data["verifyReason"] as? String,
+            verifyRead1Lat: data["verifyRead1Lat"] as? Double,
+            verifyRead1Lng: data["verifyRead1Lng"] as? Double,
+            verifyRead1Accuracy: data["verifyRead1Accuracy"] as? Double,
+            verifyRead1At: decodeDate(data["verifyRead1At"]),
+            verifyRead2Lat: data["verifyRead2Lat"] as? Double,
+            verifyRead2Lng: data["verifyRead2Lng"] as? Double,
+            verifyRead2Accuracy: data["verifyRead2Accuracy"] as? Double,
+            verifyRead2At: decodeDate(data["verifyRead2At"]),
+            verifyDistance1Meters: data["verifyDistance1Meters"] as? Double,
+            verifyDistance2Meters: data["verifyDistance2Meters"] as? Double,
+            verifyDriftMeters: data["verifyDriftMeters"] as? Double,
+            checkoutVerifyMethod: data["checkoutVerifyMethod"] as? String,
+            checkoutVerifyStatus: data["checkoutVerifyStatus"] as? String,
+            checkoutVerifyReason: data["checkoutVerifyReason"] as? String,
+            checkoutVerifyRead1Lat: data["checkoutVerifyRead1Lat"] as? Double,
+            checkoutVerifyRead1Lng: data["checkoutVerifyRead1Lng"] as? Double,
+            checkoutVerifyRead1Accuracy: data["checkoutVerifyRead1Accuracy"] as? Double,
+            checkoutVerifyRead1At: decodeDate(data["checkoutVerifyRead1At"]),
+            checkoutVerifyRead2Lat: data["checkoutVerifyRead2Lat"] as? Double,
+            checkoutVerifyRead2Lng: data["checkoutVerifyRead2Lng"] as? Double,
+            checkoutVerifyRead2Accuracy: data["checkoutVerifyRead2Accuracy"] as? Double,
+            checkoutVerifyRead2At: decodeDate(data["checkoutVerifyRead2At"]),
+            checkoutVerifyDistance1Meters: data["checkoutVerifyDistance1Meters"] as? Double,
+            checkoutVerifyDistance2Meters: data["checkoutVerifyDistance2Meters"] as? Double,
+            checkoutVerifyDriftMeters: data["checkoutVerifyDriftMeters"] as? Double
         )
     }
 

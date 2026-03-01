@@ -7,11 +7,7 @@ protocol CheckInServiceProtocol {
     func submitCheckIn(
         user: UserProfile,
         store: Store,
-        checkinId: String,
-        checkInPhotoPath: String,
-        checkInPhotoURL: String,
-        checkInPhotoCapturedAt: Date,
-        checkInPhotoUploadedAt: Date
+        checkinId: String
     ) async throws -> CheckIn
 }
 
@@ -79,11 +75,7 @@ final class CheckInService: CheckInServiceProtocol {
     func submitCheckIn(
         user: UserProfile,
         store: Store,
-        checkinId: String,
-        checkInPhotoPath: String,
-        checkInPhotoURL: String,
-        checkInPhotoCapturedAt: Date,
-        checkInPhotoUploadedAt: Date
+        checkinId: String
     ) async throws -> CheckIn {
         guard let location = locationService.currentLocation else {
             throw NSError(domain: "StorePass", code: 3001, userInfo: [NSLocalizedDescriptionKey: "Location unavailable."])
@@ -111,16 +103,34 @@ final class CheckInService: CheckInServiceProtocol {
             employeeName: user.name,
             employeeEmail: user.email,
             storeName: store.name,
-            checkInPhotoURL: checkInPhotoURL,
-            checkOutPhotoURL: nil,
-            checkInPhotoPath: checkInPhotoPath,
-            checkOutPhotoPath: nil,
-            checkInPhotoCapturedAt: checkInPhotoCapturedAt,
-            checkOutPhotoCapturedAt: nil,
-            checkInPhotoUploadedAt: checkInPhotoUploadedAt,
-            checkOutPhotoUploadedAt: nil,
-            photoRequired: true,
-            photoVersion: 1
+            verifyMethod: nil,
+            verifyStatus: nil,
+            verifyReason: nil,
+            verifyRead1Lat: nil,
+            verifyRead1Lng: nil,
+            verifyRead1Accuracy: nil,
+            verifyRead1At: nil,
+            verifyRead2Lat: nil,
+            verifyRead2Lng: nil,
+            verifyRead2Accuracy: nil,
+            verifyRead2At: nil,
+            verifyDistance1Meters: nil,
+            verifyDistance2Meters: nil,
+            verifyDriftMeters: nil,
+            checkoutVerifyMethod: nil,
+            checkoutVerifyStatus: nil,
+            checkoutVerifyReason: nil,
+            checkoutVerifyRead1Lat: nil,
+            checkoutVerifyRead1Lng: nil,
+            checkoutVerifyRead1Accuracy: nil,
+            checkoutVerifyRead1At: nil,
+            checkoutVerifyRead2Lat: nil,
+            checkoutVerifyRead2Lng: nil,
+            checkoutVerifyRead2Accuracy: nil,
+            checkoutVerifyRead2At: nil,
+            checkoutVerifyDistance1Meters: nil,
+            checkoutVerifyDistance2Meters: nil,
+            checkoutVerifyDriftMeters: nil
         )
 
         do {
