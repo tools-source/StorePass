@@ -13,7 +13,7 @@ final class EmployeeDashboardViewModel: ObservableObject {
     @Published var joinStatusMessage: String?
     @Published var todaysCheckIns: [CheckIn] = []
     @Published var lastLocationRefreshAt: Date?
-    @Published var isShowingCamera = false
+    @Published var isShowingPhotoPicker = false
     @Published var pendingPhotoPurpose: CheckInPhotoKind?
     @Published var isPhotoCheckInInProgress = false
     @Published var checkInRetryMessage: String?
@@ -26,7 +26,7 @@ final class EmployeeDashboardViewModel: ObservableObject {
     private let locationService: LocationServiceProtocol
     private let imageUploadService: ImageUploadServiceProtocol
     private let photoCheckInPipeline: PhotoCheckInPipelineProtocol
-    private let photoCompressionQuality: CGFloat = 0.75
+    private let photoCompressionQuality: CGFloat = 0.7
 
     init(
         authService: AuthService,
@@ -89,21 +89,31 @@ final class EmployeeDashboardViewModel: ObservableObject {
     }
 
     func beginCheckInPhotoCapture() {
+        refreshLocation()
+        guard blockedReason == nil else {
+            errorMessage = blockedReason
+            return
+        }
         pendingPhotoPurpose = .checkIn
-        isShowingCamera = true
-        PhotoVerifyLogger.log("camera launch requested purpose=checkIn")
+        isShowingPhotoPicker = true
+        PhotoVerifyLogger.log("photo picker launch requested purpose=checkIn")
     }
 
     func beginCheckOutPhotoCapture() {
+        refreshLocation()
+        guard blockedReason == nil else {
+            errorMessage = blockedReason
+            return
+        }
         pendingPhotoPurpose = .checkOut
-        isShowingCamera = true
-        PhotoVerifyLogger.log("camera launch requested purpose=checkOut")
+        isShowingPhotoPicker = true
+        PhotoVerifyLogger.log("photo picker launch requested purpose=checkOut")
     }
 
     func didCancelPhotoCapture() {
         PhotoVerifyLogger.log("photo capture canceled; skipping check-in/check-out")
         pendingPhotoPurpose = nil
-        isShowingCamera = false
+        isShowingPhotoPicker = false
     }
 
     func processCapturedPhoto(_ image: UIImage) async {
@@ -132,7 +142,7 @@ final class EmployeeDashboardViewModel: ObservableObject {
             PhotoVerifyLogger.log("[CheckInPhoto] correlationId=\(result.correlationId) step=viewmodel_success checkInId=\(result.checkInId) path=\(result.photoPath)")
 
             checkInSuccessBanner = true
-            isShowingCamera = false
+            isShowingPhotoPicker = false
             try await loadTodaySessions()
         } catch {
             let friendlyError = userFacingPhotoFlowError(error, fallback: "Couldn’t complete photo check-in. Please try again.")
@@ -160,13 +170,16 @@ final class EmployeeDashboardViewModel: ObservableObject {
         }
 
         do {
-            guard let jpegData = image.jpegData(compressionQuality: photoCompressionQuality) else {
+            guard var jpegData = image.jpegData(compressionQuality: photoCompressionQuality) else {
                 throw NSError(domain: "StorePass", code: 5201, userInfo: [NSLocalizedDescriptionKey: "Could not process photo."])
+            }
+            if jpegData.count > 2_000_000, let reduced = image.jpegData(compressionQuality: 0.55) {
+                jpegData = reduced
             }
             PhotoVerifyLogger.log("jpeg prepared purpose=checkOut compression=\(photoCompressionQuality) bytes=\(jpegData.count)")
 
             let uploadPath = CheckInPhotoStoragePath.makePath(storeId: store.id, employeeId: user.id, checkinId: activeSession.id, kind: .checkOut)
-            PhotoVerifyLogger.log("upload start purpose=checkOut path=\(uploadPath)")
+            PhotoVerifyLogger.log("upload start purpose=checkOut path=\(uploadPath) bytes=\(jpegData.count)")
             let upload = try await imageUploadService.uploadCheckInPhotoData(
                 imageData: jpegData,
                 storeId: store.id,

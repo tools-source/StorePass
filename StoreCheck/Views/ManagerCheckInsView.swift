@@ -196,25 +196,9 @@ struct ManagerCheckInsView: View {
             }
 
             .sheet(isPresented: Binding(get: { selectedFullPhotoURL != nil }, set: { if !$0 { selectedFullPhotoURL = nil } })) {
-                NavigationStack {
-                    ZStack {
-                        DS.Colors.background.ignoresSafeArea()
-                        AsyncImage(url: selectedFullPhotoURL) { image in
-                            image
-                                .resizable()
-                                .scaledToFit()
-                                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        } placeholder: {
-                            ProgressView()
-                        }
-                        .padding(DS.Spacing.m)
-                    }
-                    .navigationTitle("Photo")
-                    .navigationBarTitleDisplayMode(.inline)
-                    .toolbar {
-                        ToolbarItem(placement: .topBarTrailing) {
-                            Button("Done") { selectedFullPhotoURL = nil }
-                        }
+                if let selectedFullPhotoURL {
+                    PhotoViewer(title: "Photo", url: selectedFullPhotoURL) {
+                        self.selectedFullPhotoURL = nil
                     }
                 }
             }
@@ -331,18 +315,7 @@ struct ManagerCheckInsView: View {
                 Text(viewModel.formattedDuration(item))
                     .font(.system(.caption, design: .monospaced).weight(.semibold))
                     .frame(width: 72, alignment: .trailing)
-                if item.hasCheckInPhoto || item.hasCheckOutPhoto {
-                    HStack(spacing: 4) {
-                        if item.hasCheckInPhoto {
-                            Image(systemName: "camera.fill")
-                        }
-                        if item.hasCheckOutPhoto {
-                            Image(systemName: "camera.badge.ellipsis")
-                        }
-                    }
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                }
+                photoIndicator(for: item)
             }
             .font(.subheadline)
 
@@ -386,6 +359,37 @@ struct ManagerCheckInsView: View {
             Button("Delete", role: .destructive) {
                 Task { await viewModel.delete(item) }
             }
+        }
+    }
+
+    @ViewBuilder
+    private func photoIndicator(for item: CheckIn) -> some View {
+        if let urlString = item.checkInPhotoURL, let url = URL(string: urlString) {
+            Button {
+                selectedFullPhotoURL = url
+            } label: {
+                AsyncImage(url: url) { image in
+                    image
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: 24, height: 24)
+                        .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                } placeholder: {
+                    Text("Photo")
+                        .font(.caption2.weight(.semibold))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(DS.Colors.background, in: Capsule())
+                }
+            }
+            .buttonStyle(.plain)
+        } else if item.hasCheckInPhoto {
+            Text("Photo")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(DS.Colors.background, in: Capsule())
         }
     }
 

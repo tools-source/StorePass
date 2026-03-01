@@ -9,8 +9,10 @@
 /* Begin PBXBuildFile section */
 		0B3067FC2F4C2625003A33F7 /* FirebaseFunctions in Frameworks */ = {isa = PBXBuildFile; productRef = 0B3067FB2F4C2625003A33F7 /* FirebaseFunctions */; };
 		0B3067FE2F4C2625003A33F7 /* FirebaseStorage in Frameworks */ = {isa = PBXBuildFile; productRef = 0B3067FF2F4C2625003A33F7 /* FirebaseStorage */; };
-		0B3068012F5402BD003A33F7 /* CameraCaptureService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B3068002F5402BA003A33F7 /* CameraCaptureService.swift */; };
 		0B3068072F540A80003A33F7 /* PhotoVerifyLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B3068062F540A80003A33F7 /* PhotoVerifyLogger.swift */; };
+		A1B2C3D42F56000100AAA001 /* PhotoVerificationPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D42F56000100AAA002 /* PhotoVerificationPicker.swift */; };
+		A1B2C3D42F56000100AAA003 /* PhotoVerificationSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D42F56000100AAA004 /* PhotoVerificationSheet.swift */; };
+		A1B2C3D42F56000100AAA005 /* PhotoViewer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D42F56000100AAA006 /* PhotoViewer.swift */; };
 		0B6BDCF12F49726000996928 /* FirestoreStoreRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B6BDCF02F49720B00996928 /* FirestoreStoreRepository.swift */; };
 		0B885E2D2F41905D0011D606 /* FirebaseAuth in Frameworks */ = {isa = PBXBuildFile; productRef = 0B885E2C2F41905D0011D606 /* FirebaseAuth */; };
 		0B885E2F2F41905D0011D606 /* FirebaseCore in Frameworks */ = {isa = PBXBuildFile; productRef = 0B885E2E2F41905D0011D606 /* FirebaseCore */; };
@@ -69,7 +71,6 @@
 		BEEFABCD1234000000000094 /* AppLockViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000091 /* AppLockViewModel.swift */; };
 		BEEFABCD1234000000000095 /* AppLockOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000092 /* AppLockOverlayView.swift */; };
 		BEEFABCD12340000000000A1 /* TimesheetComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD12340000000000A0 /* TimesheetComponents.swift */; };
-		BEEFABCD12340000000000A4 /* CameraCaptureSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD12340000000000A3 /* CameraCaptureSheet.swift */; };
 		BEEFABCD12340000000000A6 /* ImageUploadService.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD12340000000000A5 /* ImageUploadService.swift */; };
 		BEEFABCD12340000000000A8 /* CheckInPhotoStoragePath.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD12340000000000A7 /* CheckInPhotoStoragePath.swift */; };
 		C0DE00000000000000000011 /* AppLockManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE00000000000000000001 /* AppLockManager.swift */; };
@@ -79,7 +80,6 @@
 
 /* Begin PBXFileReference section */
 		0B3067FD2F4C3532003A33F7 /* StoreCheck.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = StoreCheck.entitlements; sourceTree = "<group>"; };
-		0B3068002F5402BA003A33F7 /* CameraCaptureService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraCaptureService.swift; sourceTree = "<group>"; };
 		0B3068062F540A80003A33F7 /* PhotoVerifyLogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoVerifyLogger.swift; sourceTree = "<group>"; };
 		0B6BDCF02F49720B00996928 /* FirestoreStoreRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FirestoreStoreRepository.swift; sourceTree = "<group>"; };
 		0B885E3A2F419CF50011D606 /* GoogleService-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "GoogleService-Info.plist"; sourceTree = "<group>"; };
@@ -137,7 +137,9 @@
 		BEEFABCD1234000000000091 /* AppLockViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLockViewModel.swift; sourceTree = "<group>"; };
 		BEEFABCD1234000000000092 /* AppLockOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLockOverlayView.swift; sourceTree = "<group>"; };
 		BEEFABCD12340000000000A0 /* TimesheetComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimesheetComponents.swift; sourceTree = "<group>"; };
-		BEEFABCD12340000000000A3 /* CameraCaptureSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraCaptureSheet.swift; sourceTree = "<group>"; };
+		A1B2C3D42F56000100AAA002 /* PhotoVerificationPicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoVerificationPicker.swift; sourceTree = "<group>"; };
+		A1B2C3D42F56000100AAA004 /* PhotoVerificationSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoVerificationSheet.swift; sourceTree = "<group>"; };
+		A1B2C3D42F56000100AAA006 /* PhotoViewer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoViewer.swift; sourceTree = "<group>"; };
 		BEEFABCD12340000000000A5 /* ImageUploadService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageUploadService.swift; sourceTree = "<group>"; };
 		BEEFABCD12340000000000A7 /* CheckInPhotoStoragePath.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CheckInPhotoStoragePath.swift; sourceTree = "<group>"; };
 		C0DE00000000000000000001 /* AppLockManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLockManager.swift; sourceTree = "<group>"; };
@@ -343,9 +345,10 @@
 			isa = PBXGroup;
 			children = (
 				0B3068062F540A80003A33F7 /* PhotoVerifyLogger.swift */,
-				0B3068002F5402BA003A33F7 /* CameraCaptureService.swift */,
 				BEEFABCD12340000000000A0 /* TimesheetComponents.swift */,
-				BEEFABCD12340000000000A3 /* CameraCaptureSheet.swift */,
+				A1B2C3D42F56000100AAA002 /* PhotoVerificationPicker.swift */,
+				A1B2C3D42F56000100AAA004 /* PhotoVerificationSheet.swift */,
+				A1B2C3D42F56000100AAA006 /* PhotoViewer.swift */,
 			);
 			path = Shared;
 			sourceTree = "<group>";
@@ -482,6 +485,9 @@
 				BEEFABCD1234000000000043 /* StoreManagementViewModel.swift in Sources */,
 				BEEFABCD1234000000000075 /* AuthViewModel.swift in Sources */,
 				0B3068072F540A80003A33F7 /* PhotoVerifyLogger.swift in Sources */,
+				A1B2C3D42F56000100AAA001 /* PhotoVerificationPicker.swift in Sources */,
+				A1B2C3D42F56000100AAA003 /* PhotoVerificationSheet.swift in Sources */,
+				A1B2C3D42F56000100AAA005 /* PhotoViewer.swift in Sources */,
 				BEEFABCD1234000000000044 /* EmployeeDashboardView.swift in Sources */,
 				BEEFABCD1234000000000045 /* EmployeeHistoryView.swift in Sources */,
 				BEEFABCD1234000000000046 /* EmployeeTabView.swift in Sources */,
@@ -491,11 +497,9 @@
 				BEEFABCD1234000000000049 /* ManagerDashboardView.swift in Sources */,
 				BEEFABCD123400000000008B /* ManagerCheckInsView.swift in Sources */,
 				BEEFABCD12340000000000A1 /* TimesheetComponents.swift in Sources */,
-				BEEFABCD12340000000000A4 /* CameraCaptureSheet.swift in Sources */,
 				BEEFABCD123400000000004A /* ManagerTabView.swift in Sources */,
 				BEEFABCD123400000000004B /* RootView.swift in Sources */,
 				BEEFABCD1234000000000088 /* ManagerAccessRequiredView.swift in Sources */,
-				0B3068012F5402BD003A33F7 /* CameraCaptureService.swift in Sources */,
 				BEEFABCD1234000000000093 /* BiometricAuthService.swift in Sources */,
 				BEEFABCD1234000000000094 /* AppLockViewModel.swift in Sources */,
 				BEEFABCD1234000000000095 /* AppLockOverlayView.swift in Sources */,
