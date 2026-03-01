@@ -32,6 +32,9 @@ service firebase.storage {
         && firestore.get(/databases/(default)/documents/stores/$(storeId)).data.managerId == myUid();
     }
 
+    // Employee photo uploads are scoped to a single check-in folder and filename.
+    // Expected path (logged by app on failure):
+    // checkinPhotos/{storeId}/{uid}/{checkInId}/checkin.jpg
     match /checkinPhotos/{storeId}/{employeeId}/{checkinId}/{fileName} {
       allow write: if signedIn()
         && employeeId == myUid()
@@ -39,6 +42,7 @@ service firebase.storage {
         && isStoreMember(employeeId, storeId)
         && (fileName == "checkin.jpg" || fileName == "checkout.jpg");
 
+      // Employee can read own photo; manager can read only for stores they own.
       allow read: if signedIn() && (
         employeeId == myUid()
         || isStoreManager(storeId)

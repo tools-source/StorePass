@@ -10,7 +10,8 @@ struct EmployeeDashboardView: View {
         checkInService: CheckInServiceProtocol,
         checkInRepository: CheckInRepositoryProtocol,
         locationService: LocationServiceProtocol,
-        imageUploadService: ImageUploadServiceProtocol
+        imageUploadService: ImageUploadServiceProtocol,
+        photoCheckInPipeline: PhotoCheckInPipelineProtocol
     ) {
         _vm = StateObject(wrappedValue: EmployeeDashboardViewModel(
             authService: authService,
@@ -18,7 +19,8 @@ struct EmployeeDashboardView: View {
             checkInService: checkInService,
             checkInRepository: checkInRepository,
             locationService: locationService,
-            imageUploadService: imageUploadService
+            imageUploadService: imageUploadService,
+            photoCheckInPipeline: photoCheckInPipeline
         ))
     }
 
@@ -54,7 +56,19 @@ struct EmployeeHomeView: View {
                             }
                         }
                         .buttonStyle(PrimaryButtonStyle())
-                        .disabled(viewModel.activeSession == nil && viewModel.blockedReason != nil)
+                        .disabled(
+                            viewModel.isPhotoCheckInInProgress
+                                || (viewModel.activeSession == nil && viewModel.blockedReason != nil)
+                        )
+
+                        if viewModel.isPhotoCheckInInProgress {
+                            HStack(spacing: 8) {
+                                ProgressView()
+                                Text("Uploading photo…")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
 
                         if let reason = viewModel.blockedReason {
                             Text(reason).font(.caption).foregroundStyle(.orange)
@@ -77,6 +91,14 @@ struct EmployeeHomeView: View {
                 Button("OK", role: .cancel) { }
             } message: {
                 Text(viewModel.errorMessage ?? "")
+            }
+            .alert("Photo check-in failed", isPresented: $viewModel.showCheckInRetryAlert) {
+                Button("Try again") {
+                    viewModel.retryPhotoCheckIn()
+                }
+                Button("Cancel", role: .cancel) { }
+            } message: {
+                Text(viewModel.checkInRetryMessage ?? "Couldn’t complete check-in.")
             }
             .alert(
                 "Leave store",
