@@ -91,7 +91,7 @@ final class EmployeeDashboardViewModel: ObservableObject {
             errorMessage = blockedReason
             return
         }
-        pendingPhotoPurpose = .checkIn
+        pendingPhotoPurpose = CheckInPhotoKind.checkIn
         isShowingPhotoPicker = true
         PhotoVerifyLogger.log("photo picker launch requested purpose=checkIn")
     }
@@ -102,7 +102,7 @@ final class EmployeeDashboardViewModel: ObservableObject {
             errorMessage = blockedReason
             return
         }
-        pendingPhotoPurpose = .checkOut
+        pendingPhotoPurpose = CheckInPhotoKind.checkOut
         isShowingPhotoPicker = true
         PhotoVerifyLogger.log("photo picker launch requested purpose=checkOut")
     }
@@ -116,9 +116,9 @@ final class EmployeeDashboardViewModel: ObservableObject {
     func processCapturedPhoto(_ image: UIImage) async {
         guard let purpose = pendingPhotoPurpose else { return }
         switch purpose {
-        case .checkIn:
+        case CheckInPhotoKind.checkIn:
             await checkIn(with: image)
-        case .checkOut:
+        case CheckInPhotoKind.checkOut:
             await checkOut(with: image)
         }
         pendingPhotoPurpose = nil
@@ -190,14 +190,14 @@ final class EmployeeDashboardViewModel: ObservableObject {
             )
             try await checkInRepository.createCheckIn(checkIn)
 
-            let uploadPath = CheckInPhotoStoragePath.makePath(storeId: store.id, employeeId: user.id, checkinId: checkIn.id, kind: .checkIn)
+            let uploadPath = CheckInPhotoStoragePath.makePath(storeId: store.id, employeeId: user.id, checkinId: checkIn.id, kind: CheckInPhotoKind.checkIn)
             PhotoVerifyLogger.log("upload start purpose=checkIn path=\(uploadPath) bytes=\(jpegData.count)")
             let upload = try await imageUploadService.uploadCheckInPhotoData(
                 imageData: jpegData,
                 storeId: store.id,
                 employeeId: user.id,
                 checkinId: checkIn.id,
-                kind: .checkIn
+                kind: CheckInPhotoKind.checkIn
             )
             let uploadedAt = Date()
             let capturedAt = Date()
@@ -207,7 +207,7 @@ final class EmployeeDashboardViewModel: ObservableObject {
                 checkinId: checkIn.id,
                 storeId: store.id,
                 employeeId: user.id,
-                kind: .checkIn,
+                kind: CheckInPhotoKind.checkIn,
                 photoPath: upload.path,
                 photoURL: upload.downloadURL,
                 capturedAt: capturedAt,
@@ -253,14 +253,14 @@ final class EmployeeDashboardViewModel: ObservableObject {
             }
             PhotoVerifyLogger.log("jpeg prepared purpose=checkOut compression=\(photoCompressionQuality) bytes=\(jpegData.count)")
 
-            let uploadPath = CheckInPhotoStoragePath.makePath(storeId: store.id, employeeId: user.id, checkinId: activeSession.id, kind: .checkOut)
+            let uploadPath = CheckInPhotoStoragePath.makePath(storeId: store.id, employeeId: user.id, checkinId: activeSession.id, kind: CheckInPhotoKind.checkOut)
             PhotoVerifyLogger.log("upload start purpose=checkOut path=\(uploadPath) bytes=\(jpegData.count)")
             let upload = try await imageUploadService.uploadCheckInPhotoData(
                 imageData: jpegData,
                 storeId: store.id,
                 employeeId: user.id,
                 checkinId: activeSession.id,
-                kind: .checkOut
+                kind: CheckInPhotoKind.checkOut
             )
             let uploadedAt = Date()
             PhotoVerifyLogger.log("upload end purpose=checkOut path=\(upload.path) downloadURL=\(upload.downloadURL)")
@@ -280,7 +280,7 @@ final class EmployeeDashboardViewModel: ObservableObject {
                 checkinId: activeSession.id,
                 storeId: store.id,
                 employeeId: user.id,
-                kind: .checkOut,
+                kind: CheckInPhotoKind.checkOut,
                 photoPath: upload.path,
                 photoURL: upload.downloadURL,
                 capturedAt: Date(),

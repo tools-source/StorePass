@@ -25,12 +25,17 @@ protocol ImageUploadServiceProtocol {
     ) async throws -> UploadedImageResult
 }
 
-enum CheckInPhotoKind: String {
-    case checkIn = "checkin"
-    case checkOut = "checkout"
+enum CheckInPhotoKind: String, Codable {
+    case checkIn
+    case checkOut
 
     var filename: String {
-        rawValue == "checkin" ? "checkin.jpg" : "checkout.jpg"
+        switch self {
+        case .checkIn:
+            return "checkin.jpg"
+        case .checkOut:
+            return "checkout.jpg"
+        }
     }
 }
 
