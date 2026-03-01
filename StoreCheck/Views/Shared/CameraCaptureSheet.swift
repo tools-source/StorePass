@@ -8,6 +8,7 @@ struct CameraCaptureSheet: View {
     let onCaptured: (UIImage) -> Void
 
     @StateObject private var cameraService = CameraCaptureService()
+    @State private var didRunInitialSetup = false
 
     var body: some View {
         NavigationStack {
@@ -44,14 +45,24 @@ struct CameraCaptureSheet: View {
         }
         .onAppear {
             PhotoVerifyLogger.log("[UI] camera sheet opened title=\(title)")
-            cameraService.configureSessionIfNeeded()
-            cameraService.startSession()
+            guard !didRunInitialSetup else { return }
+            didRunInitialSetup = true
 
-            // ✅ Portrait-only stable (iOS 17+ safe)
-            cameraService.updateVideoRotationAngle(0)
+            Task {
+                let granted = await cameraService.requestCameraPermissionIfNeeded()
+                guard granted else {
+                    PhotoVerifyLogger.log("[UI] camera sheet setup stopped: permission not granted")
+                    return
+                }
+
+                cameraService.configureSessionIfNeeded()
+                cameraService.startSession()
+                cameraService.updateRotationForCurrentDevice()
+            }
         }
         .onDisappear {
             PhotoVerifyLogger.log("[UI] camera sheet dismissed")
+            didRunInitialSetup = false
             cameraService.stopSession()
         }
     }
@@ -103,7 +114,7 @@ struct CustomCameraView: View {
         }
         // ✅ Keep portrait-only stable (no orientation fight / no iOS 17 deprecated API)
         .onReceive(NotificationCenter.default.publisher(for: UIDevice.orientationDidChangeNotification)) { _ in
-            cameraService.updateVideoRotationAngle(0)
+            cameraService.updateRotationForCurrentDevice()
         }
     }
 }
@@ -116,20 +127,11 @@ struct CameraPreviewView: UIViewRepresentable {
         view.previewLayer.videoGravity = .resizeAspectFill
         view.previewLayer.session = session
 
-        // ✅ iOS 17+ safe: use rotation angle
-        if let connection = view.previewLayer.connection, connection.isVideoRotationAngleSupported(0) {
-            connection.videoRotationAngle = 0
-        }
-
         return view
     }
 
     func updateUIView(_ uiView: PreviewContainerView, context: Context) {
         uiView.previewLayer.session = session
-
-        if let connection = uiView.previewLayer.connection, connection.isVideoRotationAngleSupported(0) {
-            connection.videoRotationAngle = 0
-        }
     }
 }
 
