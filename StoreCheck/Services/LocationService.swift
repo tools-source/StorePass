@@ -8,6 +8,7 @@ protocol LocationServiceProtocol: AnyObject {
     var lastErrorMessage: String? { get }
     func requestWhenInUseAuthorization()
     func requestLocation()
+    func requestSingleAccurateLocation(timeoutSeconds: TimeInterval) async throws -> CLLocation
     func distance(from: CLLocationCoordinate2D, to: CLLocationCoordinate2D) -> Double
 }
 
@@ -17,6 +18,7 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
     @Published private(set) var lastErrorMessage: String?
 
     private let manager = CLLocationManager()
+    private var locationContinuation: CheckedContinuation<CLLocation, Error>?
 
     var isPreciseLocationEnabled: Bool {
         manager.accuracyAuthorization == .fullAccuracy
@@ -42,6 +44,46 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
         manager.requestLocation()
     }
 
+    func requestSingleAccurateLocation(timeoutSeconds: TimeInterval = 8) async throws -> CLLocation {
+        guard authorizationStatus == .authorizedAlways || authorizationStatus == .authorizedWhenInUse else {
+            throw NSError(domain: "StorePass", code: 5301, userInfo: [NSLocalizedDescriptionKey: "Location permission is required before checking in."])
+        }
+
+        if let currentLocation, abs(currentLocation.timestamp.timeIntervalSinceNow) <= 5 {
+            return currentLocation
+        }
+
+        return try await withThrowingTaskGroup(of: CLLocation.self) { group in
+            group.addTask { [weak self] in
+                try await withCheckedThrowingContinuation { continuation in
+                    guard let self else {
+                        continuation.resume(throwing: NSError(domain: "StorePass", code: 5302, userInfo: [NSLocalizedDescriptionKey: "Location service is unavailable."]))
+                        return
+                    }
+
+                    if let existing = self.locationContinuation {
+                        existing.resume(throwing: NSError(domain: "StorePass", code: 5303, userInfo: [NSLocalizedDescriptionKey: "Another location request is already in progress."]))
+                    }
+
+                    self.locationContinuation = continuation
+                    self.manager.requestLocation()
+                }
+            }
+
+            group.addTask {
+                let nanoseconds = UInt64(timeoutSeconds * 1_000_000_000)
+                try await Task.sleep(nanoseconds: nanoseconds)
+                throw NSError(domain: "StorePass", code: 5304, userInfo: [NSLocalizedDescriptionKey: "Location request timed out."])
+            }
+
+            guard let first = try await group.next() else {
+                throw NSError(domain: "StorePass", code: 5305, userInfo: [NSLocalizedDescriptionKey: "Location could not be resolved."])
+            }
+            group.cancelAll()
+            return first
+        }
+    }
+
     func distance(from: CLLocationCoordinate2D, to: CLLocationCoordinate2D) -> Double {
         CLLocation(latitude: from.latitude, longitude: from.longitude)
             .distance(from: CLLocation(latitude: to.latitude, longitude: to.longitude))
@@ -57,6 +99,10 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         currentLocation = locations.last
         lastErrorMessage = nil
+        if let location = locations.last {
+            locationContinuation?.resume(returning: location)
+            locationContinuation = nil
+        }
     }
 
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
@@ -66,5 +112,7 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
         } else {
             lastErrorMessage = error.localizedDescription
         }
+        locationContinuation?.resume(throwing: error)
+        locationContinuation = nil
     }
 }

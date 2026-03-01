@@ -1,6 +1,5 @@
-import FirebaseStorage
+import CoreLocation
 import Foundation
-import UIKit
 
 @MainActor
 final class EmployeeDashboardViewModel: ObservableObject {
@@ -13,34 +12,52 @@ final class EmployeeDashboardViewModel: ObservableObject {
     @Published var joinStatusMessage: String?
     @Published var todaysCheckIns: [CheckIn] = []
     @Published var lastLocationRefreshAt: Date?
-    @Published var isShowingPhotoPicker = false
-    @Published var pendingPhotoPurpose: CheckInPhotoKind?
-    @Published var isPhotoCheckInInProgress = false
-    @Published var checkInRetryMessage: String?
-    @Published var showCheckInRetryAlert = false
+    @Published var isVerificationInProgress = false
 
     private let authService: AuthService
     private let storeRepository: StoreRepositoryProtocol
     private let checkInService: CheckInServiceProtocol
     private let checkInRepository: CheckInRepositoryProtocol
     private let locationService: LocationServiceProtocol
-    private let imageUploadService: ImageUploadServiceProtocol
-    private let photoCompressionQuality: CGFloat = 0.7
+
+    // Tuning constants for geo-fence verification.
+    private let verifyReadDelaySeconds: UInt64 = 7
+    private let verifyAccuracyThresholdMeters: Double = 50
+    private let verifyStrictDriftThresholdMeters: Double = 150
+    private let verifyHighConfidenceAccuracyMeters: Double = 25
+    private let verifyRelaxedDriftThresholdMeters: Double = 250
 
     init(
         authService: AuthService,
         storeRepository: StoreRepositoryProtocol,
         checkInService: CheckInServiceProtocol,
         checkInRepository: CheckInRepositoryProtocol,
-        locationService: LocationServiceProtocol,
-        imageUploadService: ImageUploadServiceProtocol
+        locationService: LocationServiceProtocol
     ) {
         self.authService = authService
         self.storeRepository = storeRepository
         self.checkInService = checkInService
         self.checkInRepository = checkInRepository
         self.locationService = locationService
-        self.imageUploadService = imageUploadService
+    }
+
+    private enum Verify2ReadError: LocalizedError {
+        case permissionDenied
+        case lowAccuracy
+        case outsideStore
+        case unstableLocation
+        case locationUnavailable
+
+        var errorDescription: String? {
+            switch self {
+            case .permissionDenied:
+                return "Location permission is required before checking in."
+            case .lowAccuracy:
+                return "Location accuracy is too low. Move closer to a window and retry."
+            case .outsideStore, .unstableLocation, .locationUnavailable:
+                return "We couldn’t confirm you’re inside the store. Try again near the entrance."
+            }
+        }
     }
 
     var blockedReason: String? {
@@ -85,46 +102,20 @@ final class EmployeeDashboardViewModel: ObservableObject {
         }
     }
 
-    func beginCheckInPhotoCapture() {
-        refreshLocation()
-        guard blockedReason == nil else {
-            errorMessage = blockedReason
-            return
+    func beginCheckIn() {
+        Task {
+            await runCheckInFlow()
         }
-        pendingPhotoPurpose = CheckInPhotoKind.checkIn
-        isShowingPhotoPicker = true
-        PhotoVerifyLogger.log("photo picker launch requested purpose=checkIn")
     }
 
-    func beginCheckOutPhotoCapture() {
-        refreshLocation()
-        guard blockedReason == nil else {
-            errorMessage = blockedReason
-            return
+    func beginCheckOut() {
+        Task {
+            await runCheckOutFlow()
         }
-        pendingPhotoPurpose = CheckInPhotoKind.checkOut
-        isShowingPhotoPicker = true
-        PhotoVerifyLogger.log("photo picker launch requested purpose=checkOut")
     }
 
-    func didCancelPhotoCapture() {
-        PhotoVerifyLogger.log("photo capture canceled; skipping check-in/check-out")
-        pendingPhotoPurpose = nil
-        isShowingPhotoPicker = false
-    }
-
-    func processCapturedPhoto(_ image: UIImage) async {
-        guard let purpose = pendingPhotoPurpose else { return }
-        switch purpose {
-        case CheckInPhotoKind.checkIn:
-            await checkIn(with: image)
-        case CheckInPhotoKind.checkOut:
-            await checkOut(with: image)
-        }
-        pendingPhotoPurpose = nil
-    }
-
-    private func checkIn(with image: UIImage) async {
+    private func runCheckInFlow() async {
+        guard !isVerificationInProgress else { return }
         guard let user = authService.currentUser else {
             errorMessage = "Sign in required."
             return
@@ -133,164 +124,161 @@ final class EmployeeDashboardViewModel: ObservableObject {
             errorMessage = "No assigned store available."
             return
         }
+        refreshLocation()
         guard blockedReason == nil else {
             errorMessage = blockedReason
             return
         }
-        guard let location = locationService.currentLocation else {
-            errorMessage = "Location unavailable."
-            return
-        }
 
-        isPhotoCheckInInProgress = true
+        isVerificationInProgress = true
+        defer { isVerificationInProgress = false }
 
         do {
-            guard var jpegData = image.jpegData(compressionQuality: photoCompressionQuality) else {
-                throw NSError(domain: "StorePass", code: 5201, userInfo: [NSLocalizedDescriptionKey: "Could not process photo."])
-            }
-            if jpegData.count > 2_000_000, let reduced = image.jpegData(compressionQuality: 0.55) {
-                jpegData = reduced
-            }
-            PhotoVerifyLogger.log("jpeg prepared purpose=checkIn compression=\(photoCompressionQuality) bytes=\(jpegData.count)")
-
-            let now = Date()
-            let distance = locationService.distance(from: location.coordinate, to: store.coordinate)
-            let approved = distance <= Double(store.radiusMeters)
-
+            let verify = try await runTwoReadVerification(for: store)
+            let approved = verify.status == "approved"
             let checkIn = CheckIn(
                 id: UUID().uuidString,
                 employeeId: user.id,
                 storeId: store.id,
-                checkInTime: now,
+                checkInTime: Date(),
                 checkOutTime: nil,
-                clientLat: location.coordinate.latitude,
-                clientLng: location.coordinate.longitude,
-                distanceMeters: distance,
-                accuracyMeters: location.horizontalAccuracy,
+                clientLat: verify.read2Lat,
+                clientLng: verify.read2Lng,
+                distanceMeters: verify.distance2Meters,
+                accuracyMeters: verify.read2Accuracy,
                 checkOutLat: nil,
                 checkOutLng: nil,
                 checkOutDistanceMeters: nil,
                 checkOutAccuracyMeters: nil,
                 durationSeconds: nil,
                 status: approved ? .approved : .rejected,
-                rejectReason: approved ? nil : "Out of range",
+                rejectReason: approved ? nil : verify.reason,
                 employeeName: user.name,
                 employeeEmail: user.email,
                 storeName: store.name,
-                checkInPhotoURL: nil,
-                checkOutPhotoURL: nil,
-                checkInPhotoPath: nil,
-                checkOutPhotoPath: nil,
-                checkInPhotoCapturedAt: nil,
-                checkOutPhotoCapturedAt: nil,
-                checkInPhotoUploadedAt: nil,
-                checkOutPhotoUploadedAt: nil,
-                photoRequired: true,
-                photoVersion: 1
-            )
-            try await checkInRepository.createCheckIn(checkIn)
-
-            let uploadPath = CheckInPhotoStoragePath.makePath(storeId: store.id, employeeId: user.id, checkinId: checkIn.id, kind: CheckInPhotoKind.checkIn)
-            PhotoVerifyLogger.log("upload start purpose=checkIn path=\(uploadPath) bytes=\(jpegData.count)")
-            let upload = try await imageUploadService.uploadCheckInPhotoData(
-                imageData: jpegData,
-                storeId: store.id,
-                employeeId: user.id,
-                checkinId: checkIn.id,
-                kind: CheckInPhotoKind.checkIn
-            )
-            let uploadedAt = Date()
-            let capturedAt = Date()
-            PhotoVerifyLogger.log("upload end purpose=checkIn path=\(upload.path) downloadURL=\(upload.downloadURL)")
-
-            try await checkInRepository.attachPhoto(
-                checkinId: checkIn.id,
-                storeId: store.id,
-                employeeId: user.id,
-                kind: CheckInPhotoKind.checkIn,
-                photoPath: upload.path,
-                photoURL: upload.downloadURL,
-                capturedAt: capturedAt,
-                uploadedAt: uploadedAt
+                verifyMethod: verify.method,
+                verifyStatus: verify.status,
+                verifyReason: verify.reason,
+                verifyRead1Lat: verify.read1Lat,
+                verifyRead1Lng: verify.read1Lng,
+                verifyRead1Accuracy: verify.read1Accuracy,
+                verifyRead1At: verify.read1At,
+                verifyRead2Lat: verify.read2Lat,
+                verifyRead2Lng: verify.read2Lng,
+                verifyRead2Accuracy: verify.read2Accuracy,
+                verifyRead2At: verify.read2At,
+                verifyDistance1Meters: verify.distance1Meters,
+                verifyDistance2Meters: verify.distance2Meters,
+                verifyDriftMeters: verify.driftMeters,
+                checkoutVerifyMethod: nil,
+                checkoutVerifyStatus: nil,
+                checkoutVerifyReason: nil,
+                checkoutVerifyRead1Lat: nil,
+                checkoutVerifyRead1Lng: nil,
+                checkoutVerifyRead1Accuracy: nil,
+                checkoutVerifyRead1At: nil,
+                checkoutVerifyRead2Lat: nil,
+                checkoutVerifyRead2Lng: nil,
+                checkoutVerifyRead2Accuracy: nil,
+                checkoutVerifyRead2At: nil,
+                checkoutVerifyDistance1Meters: nil,
+                checkoutVerifyDistance2Meters: nil,
+                checkoutVerifyDriftMeters: nil
             )
 
-            PhotoVerifyLogger.log("firestore update end purpose=checkIn checkinId=\(checkIn.id)")
+            if approved {
+                try await checkInRepository.createCheckIn(checkIn)
+                checkInSuccessBanner = true
+            } else {
+                errorMessage = verify.reason ?? Verify2ReadError.outsideStore.localizedDescription
+            }
 
-            checkInSuccessBanner = true
-            isShowingPhotoPicker = false
             try await loadTodaySessions()
         } catch {
-            let friendlyError = userFacingPhotoFlowError(error, fallback: "Couldn’t complete photo check-in. Please try again.")
-            checkInRetryMessage = friendlyError
-            showCheckInRetryAlert = true
-        }
-
-        isPhotoCheckInInProgress = false
-    }
-
-    func retryPhotoCheckIn() {
-        checkInRetryMessage = nil
-        showCheckInRetryAlert = false
-        if activeSession == nil {
-            beginCheckInPhotoCapture()
+            errorMessage = error.localizedDescription
         }
     }
 
-    private func checkOut(with image: UIImage) async {
+    private func runCheckOutFlow() async {
+        guard !isVerificationInProgress else { return }
         guard let activeSession, let store = selectedStore else { return }
-        guard let user = authService.currentUser else { return }
-        guard let location = locationService.currentLocation else {
-            errorMessage = "Location unavailable."
-            return
-        }
+        refreshLocation()
+
+        isVerificationInProgress = true
+        defer { isVerificationInProgress = false }
 
         do {
-            guard var jpegData = image.jpegData(compressionQuality: photoCompressionQuality) else {
-                throw NSError(domain: "StorePass", code: 5201, userInfo: [NSLocalizedDescriptionKey: "Could not process photo."])
+            let verify = try await runTwoReadVerification(for: store)
+            guard verify.status == "approved" else {
+                errorMessage = verify.reason ?? Verify2ReadError.outsideStore.localizedDescription
+                return
             }
-            if jpegData.count > 2_000_000, let reduced = image.jpegData(compressionQuality: 0.55) {
-                jpegData = reduced
-            }
-            PhotoVerifyLogger.log("jpeg prepared purpose=checkOut compression=\(photoCompressionQuality) bytes=\(jpegData.count)")
 
-            let uploadPath = CheckInPhotoStoragePath.makePath(storeId: store.id, employeeId: user.id, checkinId: activeSession.id, kind: CheckInPhotoKind.checkOut)
-            PhotoVerifyLogger.log("upload start purpose=checkOut path=\(uploadPath) bytes=\(jpegData.count)")
-            let upload = try await imageUploadService.uploadCheckInPhotoData(
-                imageData: jpegData,
-                storeId: store.id,
-                employeeId: user.id,
-                checkinId: activeSession.id,
-                kind: CheckInPhotoKind.checkOut
-            )
-            let uploadedAt = Date()
-            PhotoVerifyLogger.log("upload end purpose=checkOut path=\(upload.path) downloadURL=\(upload.downloadURL)")
-
-            let distance = locationService.distance(from: location.coordinate, to: store.coordinate)
-            PhotoVerifyLogger.log("firestore update start purpose=checkOut checkinId=\(activeSession.id)")
             try await checkInRepository.checkout(
                 checkinId: activeSession.id,
                 storeId: store.id,
                 managerId: nil,
-                checkoutLat: location.coordinate.latitude,
-                checkoutLng: location.coordinate.longitude,
-                distanceMeters: distance,
-                accuracyMeters: location.horizontalAccuracy
+                checkoutLat: verify.read2Lat,
+                checkoutLng: verify.read2Lng,
+                distanceMeters: verify.distance2Meters,
+                accuracyMeters: verify.read2Accuracy,
+                verification: verify
             )
-            try await checkInRepository.attachPhoto(
-                checkinId: activeSession.id,
-                storeId: store.id,
-                employeeId: user.id,
-                kind: CheckInPhotoKind.checkOut,
-                photoPath: upload.path,
-                photoURL: upload.downloadURL,
-                capturedAt: Date(),
-                uploadedAt: uploadedAt
-            )
-            PhotoVerifyLogger.log("firestore update end purpose=checkOut checkinId=\(activeSession.id)")
             try await loadTodaySessions()
         } catch {
-            errorMessage = userFacingPhotoFlowError(error, fallback: "Couldn’t upload photo. Please try again.")
+            errorMessage = error.localizedDescription
         }
+    }
+
+    private func runTwoReadVerification(for store: Store) async throws -> Verify2ReadEvidence {
+        locationService.requestWhenInUseAuthorization()
+        let auth = locationService.authorizationStatus
+        guard auth == .authorizedWhenInUse || auth == .authorizedAlways else {
+            throw Verify2ReadError.permissionDenied
+        }
+
+        let read1 = try await locationService.requestSingleAccurateLocation(timeoutSeconds: 8)
+        print("[Verify2Read] step=read1 lat=\(read1.coordinate.latitude) lng=\(read1.coordinate.longitude) accuracy=\(read1.horizontalAccuracy)")
+
+        try await Task.sleep(nanoseconds: verifyReadDelaySeconds * 1_000_000_000)
+
+        let read2 = try await locationService.requestSingleAccurateLocation(timeoutSeconds: 8)
+        print("[Verify2Read] step=read2 lat=\(read2.coordinate.latitude) lng=\(read2.coordinate.longitude) accuracy=\(read2.horizontalAccuracy)")
+
+        let storeLocation = CLLocation(latitude: store.coordinate.latitude, longitude: store.coordinate.longitude)
+        let distance1 = read1.distance(from: storeLocation)
+        let distance2 = read2.distance(from: storeLocation)
+        let drift = read2.distance(from: read1)
+
+        let accuracy2 = read2.horizontalAccuracy
+        let isInsideFence = distance2 <= Double(store.radiusMeters)
+        let isAccurate = accuracy2 > 0 && accuracy2 <= verifyAccuracyThresholdMeters
+
+        let driftLimit: Double
+        if accuracy2 <= verifyHighConfidenceAccuracyMeters {
+            driftLimit = verifyRelaxedDriftThresholdMeters
+        } else {
+            driftLimit = verifyStrictDriftThresholdMeters
+        }
+        let isDriftAcceptable = drift <= driftLimit
+
+        print("[Verify2Read] step=computed distance1=\(distance1) distance2=\(distance2) drift=\(drift) accuracy1=\(read1.horizontalAccuracy) accuracy2=\(accuracy2) radius=\(store.radiusMeters)")
+
+        if !isAccurate {
+            print("[Verify2Read] step=rejected reason=low_accuracy")
+            throw Verify2ReadError.lowAccuracy
+        }
+        if !isInsideFence {
+            print("[Verify2Read] step=rejected reason=outside_fence")
+            return Verify2ReadEvidence(method: "geo_2read_v1", status: "rejected", reason: Verify2ReadError.outsideStore.localizedDescription, read1Lat: read1.coordinate.latitude, read1Lng: read1.coordinate.longitude, read1Accuracy: read1.horizontalAccuracy, read1At: read1.timestamp, read2Lat: read2.coordinate.latitude, read2Lng: read2.coordinate.longitude, read2Accuracy: read2.horizontalAccuracy, read2At: read2.timestamp, distance1Meters: distance1, distance2Meters: distance2, driftMeters: drift)
+        }
+        if !isDriftAcceptable {
+            print("[Verify2Read] step=rejected reason=unstable_location driftLimit=\(driftLimit)")
+            return Verify2ReadEvidence(method: "geo_2read_v1", status: "rejected", reason: Verify2ReadError.unstableLocation.localizedDescription, read1Lat: read1.coordinate.latitude, read1Lng: read1.coordinate.longitude, read1Accuracy: read1.horizontalAccuracy, read1At: read1.timestamp, read2Lat: read2.coordinate.latitude, read2Lng: read2.coordinate.longitude, read2Accuracy: read2.horizontalAccuracy, read2At: read2.timestamp, distance1Meters: distance1, distance2Meters: distance2, driftMeters: drift)
+        }
+
+        print("[Verify2Read] step=accepted distance2=\(distance2) drift=\(drift) accuracy2=\(accuracy2)")
+        return Verify2ReadEvidence(method: "geo_2read_v1", status: "approved", reason: nil, read1Lat: read1.coordinate.latitude, read1Lng: read1.coordinate.longitude, read1Accuracy: read1.horizontalAccuracy, read1At: read1.timestamp, read2Lat: read2.coordinate.latitude, read2Lng: read2.coordinate.longitude, read2Accuracy: read2.horizontalAccuracy, read2At: read2.timestamp, distance1Meters: distance1, distance2Meters: distance2, driftMeters: drift)
     }
 
     private func loadTodaySessions() async throws {
@@ -326,21 +314,6 @@ final class EmployeeDashboardViewModel: ObservableObject {
             errorMessage = error.localizedDescription
             print("[Stores] Join-by-code error: \(error.localizedDescription)")
         }
-    }
-
-    private func userFacingPhotoFlowError(_ error: Error, fallback: String) -> String? {
-        let nsError = error as NSError
-
-        if nsError.domain == StorageErrorDomain,
-           nsError.code == StorageErrorCode.objectNotFound.rawValue {
-            return nil
-        }
-
-        if nsError.domain == StorageErrorDomain {
-            return fallback
-        }
-
-        return error.localizedDescription
     }
 
     func leaveStore(storeId: String) async {

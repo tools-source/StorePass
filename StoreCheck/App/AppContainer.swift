@@ -11,7 +11,6 @@ final class AppContainer: ObservableObject {
     private let locationServiceFactory: () -> LocationService
     private let csvExporterFactory: () -> CSVExportServiceProtocol
     private let offlineQueueFactory: () -> OfflineCheckInQueueProtocol
-    private let imageUploadServiceFactory: () -> ImageUploadServiceProtocol
 
     lazy var authRepository: AuthRepositoryProtocol = authRepositoryFactory()
     lazy var userRepository: UserRepositoryProtocol = userRepositoryFactory()
@@ -22,7 +21,6 @@ final class AppContainer: ObservableObject {
     lazy var locationService: LocationService = locationServiceFactory()
     lazy var csvExporter: CSVExportServiceProtocol = csvExporterFactory()
     lazy var offlineQueue: OfflineCheckInQueueProtocol = offlineQueueFactory()
-    lazy var imageUploadService: ImageUploadServiceProtocol = imageUploadServiceFactory()
 
     lazy var authService: AuthService = AuthService()
 
@@ -44,8 +42,7 @@ final class AppContainer: ObservableObject {
         checkInRepositoryFactory: @escaping () -> CheckInRepositoryProtocol = { FirestoreCheckInRepository() },
         locationServiceFactory: @escaping () -> LocationService = { LocationService() },
         csvExporterFactory: @escaping () -> CSVExportServiceProtocol = { CSVExportService() },
-        offlineQueueFactory: @escaping () -> OfflineCheckInQueueProtocol = { OfflineCheckInQueue() },
-        imageUploadServiceFactory: @escaping () -> ImageUploadServiceProtocol = { ImageUploadService() }
+        offlineQueueFactory: @escaping () -> OfflineCheckInQueueProtocol = { OfflineCheckInQueue() }
     ) {
         self.authRepositoryFactory = authRepositoryFactory
         self.userRepositoryFactory = userRepositoryFactory
@@ -56,6 +53,5 @@ final class AppContainer: ObservableObject {
         self.locationServiceFactory = locationServiceFactory
         self.csvExporterFactory = csvExporterFactory
         self.offlineQueueFactory = offlineQueueFactory
-        self.imageUploadServiceFactory = imageUploadServiceFactory
     }
 }

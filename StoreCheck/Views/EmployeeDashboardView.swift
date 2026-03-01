@@ -1,5 +1,4 @@
 import SwiftUI
-import UIKit
 
 struct EmployeeDashboardView: View {
     @StateObject private var vm: EmployeeDashboardViewModel
@@ -9,16 +8,14 @@ struct EmployeeDashboardView: View {
         storeRepository: StoreRepositoryProtocol,
         checkInService: CheckInServiceProtocol,
         checkInRepository: CheckInRepositoryProtocol,
-        locationService: LocationServiceProtocol,
-        imageUploadService: ImageUploadServiceProtocol
+        locationService: LocationServiceProtocol
     ) {
         _vm = StateObject(wrappedValue: EmployeeDashboardViewModel(
             authService: authService,
             storeRepository: storeRepository,
             checkInService: checkInService,
             checkInRepository: checkInRepository,
-            locationService: locationService,
-            imageUploadService: imageUploadService
+            locationService: locationService
         ))
     }
 
@@ -48,21 +45,21 @@ struct EmployeeHomeView: View {
 
                         Button(viewModel.activeSession == nil ? "Check In" : "Check Out") {
                             if viewModel.activeSession == nil {
-                                viewModel.beginCheckInPhotoCapture()
+                                viewModel.beginCheckIn()
                             } else {
-                                viewModel.beginCheckOutPhotoCapture()
+                                viewModel.beginCheckOut()
                             }
                         }
                         .buttonStyle(PrimaryButtonStyle())
                         .disabled(
-                            viewModel.isPhotoCheckInInProgress
+                            viewModel.isVerificationInProgress
                                 || (viewModel.activeSession == nil && viewModel.blockedReason != nil)
                         )
 
-                        if viewModel.isPhotoCheckInInProgress {
+                        if viewModel.isVerificationInProgress {
                             HStack(spacing: 8) {
                                 ProgressView()
-                                Text("Uploading photo…")
+                                Text("Confirming live location…")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
@@ -89,14 +86,6 @@ struct EmployeeHomeView: View {
                 Button("OK", role: .cancel) { }
             } message: {
                 Text(viewModel.errorMessage ?? "")
-            }
-            .alert("Photo check-in failed", isPresented: $viewModel.showCheckInRetryAlert) {
-                Button("Try again") {
-                    viewModel.retryPhotoCheckIn()
-                }
-                Button("Cancel", role: .cancel) { }
-            } message: {
-                Text(viewModel.checkInRetryMessage ?? "Couldn’t complete check-in.")
             }
             .alert(
                 "Leave store",
@@ -146,23 +135,6 @@ struct EmployeeHomeView: View {
                     .toolbar {
                         ToolbarItem(placement: .topBarTrailing) {
                             Button("Done") { showManageStores = false }
-                        }
-                    }
-                }
-            }
-            .sheet(isPresented: $viewModel.isShowingPhotoPicker, onDismiss: {
-                if viewModel.pendingPhotoPurpose != nil {
-                    viewModel.didCancelPhotoCapture()
-                }
-            }) {
-                PhotoVerificationSheet(
-                    isPresented: $viewModel.isShowingPhotoPicker,
-                    title: viewModel.pendingPhotoPurpose == .checkOut ? "Check Out Photo" : "Check In Photo"
-                ) { image in
-                    Task {
-                        await viewModel.processCapturedPhoto(image)
-                        if viewModel.checkInSuccessBanner {
-                            UINotificationFeedbackGenerator().notificationOccurred(.success)
                         }
                     }
                 }

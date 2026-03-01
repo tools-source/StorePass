@@ -11,8 +11,6 @@ struct ManagerCheckInsView: View {
     @State private var editCheckOutTime = Date()
     @State private var editHasNoCheckout = false
     @State private var editTimesValidationError: String?
-    @State private var selectedPhotoCheckIn: CheckIn?
-    @State private var selectedFullPhotoURL: URL?
 
     init(
         storeRepository: StoreRepositoryProtocol,
@@ -166,42 +164,6 @@ struct ManagerCheckInsView: View {
                     }
                 }
             }
-            .sheet(item: $selectedPhotoCheckIn) { checkIn in
-                NavigationStack {
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: DS.Spacing.m) {
-                            Text(checkIn.employeeName)
-                                .font(.headline)
-                            Text(checkIn.storeName)
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                            Text("In: \(viewModel.formattedTime(checkIn.checkInTime)) • Out: \(checkIn.checkOutTime.map(viewModel.formattedTime) ?? "—")")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-
-                            photoCard(title: "Check In Photo", urlString: checkIn.checkInPhotoURL)
-                            photoCard(title: "Check Out Photo", urlString: checkIn.checkOutPhotoURL)
-                        }
-                        .padding(DS.Spacing.l)
-                    }
-                    .background(DS.Colors.background)
-                    .navigationTitle("Photos")
-                    .navigationBarTitleDisplayMode(.inline)
-                    .toolbar {
-                        ToolbarItem(placement: .topBarTrailing) {
-                            Button("Done") { selectedPhotoCheckIn = nil }
-                        }
-                    }
-                }
-            }
-
-            .sheet(isPresented: Binding(get: { selectedFullPhotoURL != nil }, set: { if !$0 { selectedFullPhotoURL = nil } })) {
-                if let selectedFullPhotoURL {
-                    PhotoViewer(title: "Photo", url: selectedFullPhotoURL) {
-                        self.selectedFullPhotoURL = nil
-                    }
-                }
-            }
         }
     }
 
@@ -294,6 +256,8 @@ struct ManagerCheckInsView: View {
                 .frame(width: 95, alignment: .leading)
             Text("Time")
                 .frame(width: 72, alignment: .trailing)
+            Text("Verify")
+                .frame(width: 78, alignment: .trailing)
         }
         .font(.caption.weight(.semibold))
         .foregroundStyle(.secondary)
@@ -315,13 +279,15 @@ struct ManagerCheckInsView: View {
                 Text(viewModel.formattedDuration(item))
                     .font(.system(.caption, design: .monospaced).weight(.semibold))
                     .frame(width: 72, alignment: .trailing)
-                photoIndicator(for: item)
+                verificationBadge(for: item)
             }
             .font(.subheadline)
 
             Text("\(item.status.rawValue.capitalized) • \(Int(item.distanceMeters))m • ±\(Int(item.accuracyMeters))m")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
+
+            verificationDetails(for: item)
         }
         .padding(.vertical, 4)
         .swipeActions(edge: .leading) {
@@ -350,83 +316,33 @@ struct ManagerCheckInsView: View {
             .tint(.indigo)
         }
         .swipeActions(edge: .trailing) {
-            if item.hasCheckInPhoto || item.hasCheckOutPhoto {
-                Button("Photos") {
-                    selectedPhotoCheckIn = item
-                }
-                .tint(.indigo)
-            }
             Button("Delete", role: .destructive) {
                 Task { await viewModel.delete(item) }
             }
         }
     }
 
-    @ViewBuilder
-    private func photoIndicator(for item: CheckIn) -> some View {
-        if let urlString = item.checkInPhotoURL, let url = URL(string: urlString) {
-            Button {
-                selectedFullPhotoURL = url
-            } label: {
-                AsyncImage(url: url) { image in
-                    image
-                        .resizable()
-                        .scaledToFill()
-                        .frame(width: 24, height: 24)
-                        .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
-                } placeholder: {
-                    Text("Photo")
-                        .font(.caption2.weight(.semibold))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(DS.Colors.background, in: Capsule())
-                }
-            }
-            .buttonStyle(.plain)
-        } else if item.hasCheckInPhoto {
-            Text("Photo")
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(DS.Colors.background, in: Capsule())
-        }
+    private func verificationBadge(for item: CheckIn) -> some View {
+        let approved = item.verifyStatus == "approved"
+        return Text(approved ? "Inside ✓" : "Outside ✕")
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(approved ? .green : .red)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+            .background(DS.Colors.background, in: Capsule())
     }
 
-    private func photoCard(title: String, urlString: String?) -> some View {
-        VStack(alignment: .leading, spacing: DS.Spacing.s) {
-            Text(title)
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(DS.Colors.textPrimary)
-
-            if let urlString, let url = URL(string: urlString) {
-                Button {
-                    selectedFullPhotoURL = url
-                } label: {
-                    AsyncImage(url: url) { image in
-                        image
-                            .resizable()
-                            .scaledToFill()
-                            .frame(maxWidth: .infinity)
-                            .frame(height: 140)
-                            .clipped()
-                    } placeholder: {
-                        ProgressView()
-                            .frame(maxWidth: .infinity, minHeight: 140)
-                    }
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                }
-                .buttonStyle(.plain)
-            } else {
-                Text("No photo captured")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+    @ViewBuilder
+    private func verificationDetails(for item: CheckIn) -> some View {
+        if let distance2 = item.verifyDistance2Meters,
+           let accuracy2 = item.verifyRead2Accuracy,
+           let drift = item.verifyDriftMeters,
+           let read1At = item.verifyRead1At,
+           let read2At = item.verifyRead2At {
+            Text("Verify: d2 \(Int(distance2))m • ±\(Int(accuracy2))m • drift \(Int(drift))m • r1 \(viewModel.formattedTime(read1At)) • r2 \(viewModel.formattedTime(read2At))")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
         }
-        .padding(DS.Spacing.m)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(DS.Colors.card)
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
     private func validateEditTimes(checkInTime: Date, checkOutTime: Date?) -> String? {
