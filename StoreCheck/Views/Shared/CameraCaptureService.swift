@@ -12,6 +12,9 @@ final class CameraCaptureService: ObservableObject {
     // MARK: - Private
     private let sessionQueue = DispatchQueue(label: "com.storecheck.camera.sessionQueue")
     private var isConfigured = false
+    private var isConfiguring = false
+    private var isStarting = false
+    private var isAuthorizedForCamera = false
 
     private let photoOutput = AVCapturePhotoOutput()
     private var activeVideoConnection: AVCaptureConnection?
@@ -24,19 +27,78 @@ final class CameraCaptureService: ObservableObject {
     // MARK: - Init
     init() {}
 
+    // MARK: - Permissions
+    func requestCameraPermissionIfNeeded() async -> Bool {
+        let status = AVCaptureDevice.authorizationStatus(for: .video)
+        PhotoVerifyLogger.log("[Camera] permission status=\(status.rawValue)")
+
+        switch status {
+        case .authorized:
+            isAuthorizedForCamera = true
+            DispatchQueue.main.async {
+                self.lastErrorMessage = nil
+            }
+            PhotoVerifyLogger.log("[Camera] permission already authorized")
+            return true
+        case .notDetermined:
+            let granted = await AVCaptureDevice.requestAccess(for: .video)
+            isAuthorizedForCamera = granted
+            PhotoVerifyLogger.log("[Camera] permission request result granted=\(granted)")
+            if !granted {
+                postError("Camera access is denied. Enable camera permission in Settings.")
+            } else {
+                DispatchQueue.main.async {
+                    self.lastErrorMessage = nil
+                }
+            }
+            return granted
+        case .denied, .restricted:
+            isAuthorizedForCamera = false
+            PhotoVerifyLogger.log("[Camera] permission denied_or_restricted")
+            postError("Camera access is denied or restricted. Enable camera permission in Settings.")
+            return false
+        @unknown default:
+            isAuthorizedForCamera = false
+            PhotoVerifyLogger.log("[Camera] permission unknown status")
+            postError("Unable to determine camera permission status.")
+            return false
+        }
+    }
+
     // MARK: - Session lifecycle
     func configureSessionIfNeeded() {
-        guard !isConfigured else { return }
-
-        DispatchQueue.main.async {
-            self.lastErrorMessage = nil
-        }
-
         sessionQueue.async { [weak self] in
             guard let self else { return }
 
+            if self.isConfigured {
+                PhotoVerifyLogger.log("[Camera] configure skipped: already configured")
+                return
+            }
+
+            if self.isConfiguring {
+                PhotoVerifyLogger.log("[Camera] configure skipped: configuration already in progress")
+                return
+            }
+
+            guard self.isAuthorizedForCamera else {
+                PhotoVerifyLogger.log("[Camera] configure blocked: camera permission not granted")
+                self.postError("Camera permission is required before starting capture.")
+                return
+            }
+
+            self.isConfiguring = true
+
+            DispatchQueue.main.async {
+                self.lastErrorMessage = nil
+            }
+
+            PhotoVerifyLogger.log("[Camera] configure begin")
             self.session.beginConfiguration()
-            defer { self.session.commitConfiguration() }
+            defer {
+                self.session.commitConfiguration()
+                self.isConfiguring = false
+                PhotoVerifyLogger.log("[Camera] configure end")
+            }
 
             // Pick a preset that works broadly
             if self.session.canSetSessionPreset(.photo) {
@@ -78,6 +140,9 @@ final class CameraCaptureService: ObservableObject {
 
             // Cache the video connection (rotation)
             self.activeVideoConnection = self.photoOutput.connection(with: .video)
+            if self.activeVideoConnection == nil {
+                PhotoVerifyLogger.log("[Camera] warning: no active video connection after configure")
+            }
 
             self.isConfigured = true
             PhotoVerifyLogger.log("[Camera] configured ok position=\(device.position.rawValue) preset=\(self.session.sessionPreset.rawValue)")
@@ -89,31 +154,78 @@ final class CameraCaptureService: ObservableObject {
             guard let self else { return }
 
             if !self.isConfigured {
-                PhotoVerifyLogger.log("[Camera] startSession called before configured; configuring now")
-                self.configureSessionIfNeeded()
+                PhotoVerifyLogger.log("[Camera] start skipped: not configured")
                 return
             }
 
-            if !self.session.isRunning {
-                PhotoVerifyLogger.log("[Camera] starting session…")
-                self.session.startRunning()
-                PhotoVerifyLogger.log("[Camera] session running=\(self.session.isRunning)")
+            if self.session.isRunning {
+                PhotoVerifyLogger.log("[Camera] start skipped: already running")
+                return
             }
+
+            if self.isStarting {
+                PhotoVerifyLogger.log("[Camera] start skipped: start already in progress")
+                return
+            }
+
+            self.isStarting = true
+            PhotoVerifyLogger.log("[Camera] session start requested")
+            self.session.startRunning()
+            self.isStarting = false
+            PhotoVerifyLogger.log("[Camera] session started running=\(self.session.isRunning)")
         }
     }
 
     func stopSession() {
         sessionQueue.async { [weak self] in
             guard let self else { return }
-            if self.session.isRunning {
-                PhotoVerifyLogger.log("[Camera] stopping session…")
-                self.session.stopRunning()
+            if !self.session.isRunning {
+                PhotoVerifyLogger.log("[Camera] stop skipped: already stopped")
+                return
             }
+
+            PhotoVerifyLogger.log("[Camera] session stop requested")
+            self.session.stopRunning()
+            PhotoVerifyLogger.log("[Camera] session stopped running=\(self.session.isRunning)")
         }
     }
 
     // MARK: - Rotation (iOS 17+ safe)
-    /// Call this with 0/90/180/270 (or -90) depending on device orientation.
+    func updateRotationForCurrentDevice() {
+        let orientation = UIDevice.current.orientation
+        let angle = Self.rotationAngle(for: orientation)
+
+        sessionQueue.async { [weak self] in
+            guard let self else { return }
+            guard self.isConfigured else {
+                PhotoVerifyLogger.log("[Camera] rotation skipped: session not configured orientation=\(orientation.rawValue)")
+                return
+            }
+
+            guard let connection = self.activeVideoConnection else {
+                self.activeVideoConnection = self.photoOutput.connection(with: .video)
+                guard let refreshedConnection = self.activeVideoConnection else {
+                    PhotoVerifyLogger.log("[Camera] rotation skipped: no video connection orientation=\(orientation.rawValue)")
+                    return
+                }
+
+                self.applyRotationAngle(angle, to: refreshedConnection)
+                return
+            }
+
+            self.applyRotationAngle(angle, to: connection)
+        }
+    }
+
+    private func applyRotationAngle(_ angle: Double, to connection: AVCaptureConnection) {
+        if connection.isVideoRotationAngleSupported(angle) {
+            connection.videoRotationAngle = angle
+            PhotoVerifyLogger.log("[Camera] rotation applied angle=\(angle)")
+        } else {
+            PhotoVerifyLogger.log("[Camera] rotation not supported angle=\(angle)")
+        }
+    }
+
     func updateVideoRotationAngle(_ angle: Double) {
         sessionQueue.async { [weak self] in
             guard let self else { return }
@@ -128,16 +240,12 @@ final class CameraCaptureService: ObservableObject {
         }
     }
 
-    /// Backward-compatible helper if your UI is still calling AVCaptureVideoOrientation.
-    @available(iOS, deprecated: 17.0, message: "Use updateVideoRotationAngle(_:) instead.")
-    func updateVideoOrientation(_ orientation: AVCaptureVideoOrientation) {
-        updateVideoRotationAngle(Self.rotationAngle(for: orientation))
-    }
-
     // MARK: - Capture
     func capturePhoto(completion: @escaping (UIImage?) -> Void) {
         sessionQueue.async { [weak self] in
             guard let self else { return }
+
+            PhotoVerifyLogger.log("[Camera] capture requested")
 
             guard self.isConfigured else {
                 self.postError("Camera not ready yet. Try again.")
@@ -147,8 +255,19 @@ final class CameraCaptureService: ObservableObject {
             }
 
             if !self.session.isRunning {
-                PhotoVerifyLogger.log("[Camera] capture requested while session not running → starting")
-                self.session.startRunning()
+                PhotoVerifyLogger.log("[Camera] capture blocked: session not running")
+                DispatchQueue.main.async { completion(nil) }
+                return
+            }
+
+            guard let connection = self.photoOutput.connection(with: .video) else {
+                PhotoVerifyLogger.log("[Camera] capture blocked: no photo output video connection")
+                DispatchQueue.main.async { completion(nil) }
+                return
+            }
+
+            if connection.isVideoRotationAngleSupported(connection.videoRotationAngle) {
+                self.activeVideoConnection = connection
             }
 
             // Build settings
@@ -173,6 +292,7 @@ final class CameraCaptureService: ObservableObject {
             let delegate = PhotoCaptureDelegate { [weak self] image in
                 guard let self else { return }
                 self.inFlightPhotoDelegate = nil
+                PhotoVerifyLogger.log("[Camera] capture completed success=\(image != nil)")
                 DispatchQueue.main.async {
                     completion(image)
                 }
@@ -205,13 +325,14 @@ final class CameraCaptureService: ObservableObject {
         return nil
     }
 
-    private static func rotationAngle(for orientation: AVCaptureVideoOrientation) -> Double {
+    private static func rotationAngle(for orientation: UIDeviceOrientation) -> Double {
         switch orientation {
-        case .portrait: return 0
-        case .landscapeRight: return 90
-        case .portraitUpsideDown: return 180
-        case .landscapeLeft: return 270
-        @unknown default: return 0
+        case .portrait: return 90
+        case .portraitUpsideDown: return 270
+        case .landscapeLeft: return 180
+        case .landscapeRight: return 0
+        case .faceUp, .faceDown, .unknown: return 90
+        @unknown default: return 90
         }
     }
 
