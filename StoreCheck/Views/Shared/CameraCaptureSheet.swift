@@ -9,6 +9,7 @@ struct CameraCaptureSheet: View {
 
     @StateObject private var cameraService = CameraCaptureService()
     @State private var didRunInitialSetup = false
+    @State private var didSetupCamera = false
 
     var body: some View {
         NavigationStack {
@@ -44,14 +45,13 @@ struct CameraCaptureSheet: View {
             }
         }
         .onAppear {
-            PhotoVerifyLogger.log("[UI] camera sheet opened title=\(title)")
-            guard !didRunInitialSetup else { return }
-            didRunInitialSetup = true
+            guard !didSetupCamera else { return }
+            didSetupCamera = true
 
             Task {
                 let granted = await cameraService.requestCameraPermissionIfNeeded()
                 guard granted else {
-                    PhotoVerifyLogger.log("[UI] camera sheet setup stopped: permission not granted")
+                    print("[UI] camera sheet setup stopped: permission not granted")
                     return
                 }
 

@@ -33,12 +33,12 @@
 	<string>1</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>StorePass requires camera access to capture check-in and check-out verification photos.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
 	<string>StorePass uses your location to validate geo-fenced check-ins.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>StorePass uses your location to verify you are at your assigned store when checking in.</string>
-	<key>NSCameraUsageDescription</key>
-	<string>StorePass requires camera access to capture check-in and check-out verification photos.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
