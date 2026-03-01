@@ -191,26 +191,23 @@ final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
             .collection("checkins")
             .document(checkinId)
 
-        var managerMirrorRef: DocumentReference?
-        if let managerId = try await resolveManagerIdIfPresent(checkinId: checkinId, storeId: storeId) {
-            let candidateRef = db.collection("managerCheckins")
-                .document(managerId)
-                .collection("stores")
-                .document(storeId)
-                .collection("checkins")
-                .document(checkinId)
-            let snapshot = try await candidateRef.getDocument()
-            if snapshot.exists {
-                managerMirrorRef = candidateRef
-            }
+        let storeSnapshot = try await db.collection("stores").document(storeId).getDocument()
+        guard let managerId = storeSnapshot.data()?["managerId"] as? String,
+              !managerId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw NSError(domain: "StorePass", code: 4010, userInfo: [NSLocalizedDescriptionKey: "Store manager could not be resolved."])
         }
+
+        let managerMirrorRef = db.collection("managerCheckins")
+            .document(managerId)
+            .collection("stores")
+            .document(storeId)
+            .collection("checkins")
+            .document(checkinId)
 
         let batch = db.batch()
         batch.setData(payload, forDocument: rootRef, merge: true)
         batch.setData(payload, forDocument: employeeMirrorRef, merge: true)
-        if let managerMirrorRef {
-            batch.setData(payload, forDocument: managerMirrorRef, merge: true)
-        }
+        batch.setData(payload, forDocument: managerMirrorRef, merge: true)
 
         do {
             try await batch.commit()
