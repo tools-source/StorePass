@@ -60,7 +60,7 @@ final class PhotoCheckInPipeline: PhotoCheckInPipelineProtocol {
     init(
         db: Firestore? = nil,
         storage: Storage? = nil,
-        compressionQuality: CGFloat = 0.75
+        compressionQuality: CGFloat = 0.7
     ) {
         FirebaseBootstrap.assertConfigured(context: "PhotoCheckInPipeline.init")
         self.db = db ?? Firestore.firestore()
@@ -88,8 +88,11 @@ final class PhotoCheckInPipeline: PhotoCheckInPipelineProtocol {
             )
             log(correlationId: correlationId, step: "create_doc_ok", extra: "checkInId=\(checkInId)")
 
-            guard let jpegData = image.jpegData(compressionQuality: compressionQuality), !jpegData.isEmpty else {
+            guard var jpegData = image.jpegData(compressionQuality: compressionQuality), !jpegData.isEmpty else {
                 throw PhotoCheckInPipelineError.photoEncodingFailed
+            }
+            if jpegData.count > 2_000_000, let reduced = image.jpegData(compressionQuality: 0.55), !reduced.isEmpty {
+                jpegData = reduced
             }
 
             let photoPath = CheckInPhotoStoragePath.makePath(storeId: storeId, employeeId: uid, checkinId: checkInId, kind: .checkIn)
@@ -190,7 +193,7 @@ final class PhotoCheckInPipeline: PhotoCheckInPipelineProtocol {
             "storeName": store.name,
             "photoRequired": true,
             "photoVersion": 1,
-            "status": "checking_in",
+            "status": "pending_photo",
             "checkInTime": FieldValue.serverTimestamp(),
             "createdAt": FieldValue.serverTimestamp(),
             "updatedAt": FieldValue.serverTimestamp()
@@ -227,7 +230,8 @@ final class PhotoCheckInPipeline: PhotoCheckInPipelineProtocol {
             "checkInPhotoPath": photoPath,
             "photoUploadedAt": FieldValue.serverTimestamp(),
             "checkInPhotoUploadedAt": FieldValue.serverTimestamp(),
-            "status": "checked_in",
+            "status": "approved",
+            "checkInPhotoCapturedAt": FieldValue.serverTimestamp(),
             "updatedAt": FieldValue.serverTimestamp()
         ]
 
