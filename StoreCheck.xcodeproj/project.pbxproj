@@ -9,6 +9,8 @@
 /* Begin PBXBuildFile section */
 		0B3067FC2F4C2625003A33F7 /* FirebaseFunctions in Frameworks */ = {isa = PBXBuildFile; productRef = 0B3067FB2F4C2625003A33F7 /* FirebaseFunctions */; };
 		0B3067FE2F4C2625003A33F7 /* FirebaseStorage in Frameworks */ = {isa = PBXBuildFile; productRef = 0B3067FF2F4C2625003A33F7 /* FirebaseStorage */; };
+		0B3068012F5402BD003A33F7 /* CameraCaptureService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B3068002F5402BA003A33F7 /* CameraCaptureService.swift */; };
+		0B3068072F540A80003A33F7 /* PhotoVerifyLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B3068062F540A80003A33F7 /* PhotoVerifyLogger.swift */; };
 		0B6BDCF12F49726000996928 /* FirestoreStoreRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B6BDCF02F49720B00996928 /* FirestoreStoreRepository.swift */; };
 		0B885E2D2F41905D0011D606 /* FirebaseAuth in Frameworks */ = {isa = PBXBuildFile; productRef = 0B885E2C2F41905D0011D606 /* FirebaseAuth */; };
 		0B885E2F2F41905D0011D606 /* FirebaseCore in Frameworks */ = {isa = PBXBuildFile; productRef = 0B885E2E2F41905D0011D606 /* FirebaseCore */; };
@@ -63,13 +65,13 @@
 		BEEFABCD1234000000000088 /* ManagerAccessRequiredView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000082 /* ManagerAccessRequiredView.swift */; };
 		BEEFABCD123400000000008A /* ManagerCheckInsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD123400000000008C /* ManagerCheckInsViewModel.swift */; };
 		BEEFABCD123400000000008B /* ManagerCheckInsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD123400000000008D /* ManagerCheckInsView.swift */; };
+		BEEFABCD1234000000000093 /* BiometricAuthService.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000090 /* BiometricAuthService.swift */; };
+		BEEFABCD1234000000000094 /* AppLockViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000091 /* AppLockViewModel.swift */; };
+		BEEFABCD1234000000000095 /* AppLockOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000092 /* AppLockOverlayView.swift */; };
 		BEEFABCD12340000000000A1 /* TimesheetComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD12340000000000A0 /* TimesheetComponents.swift */; };
 		BEEFABCD12340000000000A4 /* CameraCaptureSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD12340000000000A3 /* CameraCaptureSheet.swift */; };
 		BEEFABCD12340000000000A6 /* ImageUploadService.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD12340000000000A5 /* ImageUploadService.swift */; };
 		BEEFABCD12340000000000A8 /* CheckInPhotoStoragePath.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD12340000000000A7 /* CheckInPhotoStoragePath.swift */; };
-		BEEFABCD1234000000000093 /* BiometricAuthService.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000090 /* BiometricAuthService.swift */; };
-		BEEFABCD1234000000000094 /* AppLockViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000091 /* AppLockViewModel.swift */; };
-		BEEFABCD1234000000000095 /* AppLockOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000092 /* AppLockOverlayView.swift */; };
 		C0DE00000000000000000011 /* AppLockManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE00000000000000000001 /* AppLockManager.swift */; };
 		C0DE00000000000000000012 /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE00000000000000000002 /* KeychainStore.swift */; };
 		C0DE00000000000000000013 /* AppLockOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE00000000000000000003 /* AppLockOverlay.swift */; };
@@ -77,6 +79,8 @@
 
 /* Begin PBXFileReference section */
 		0B3067FD2F4C3532003A33F7 /* StoreCheck.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = StoreCheck.entitlements; sourceTree = "<group>"; };
+		0B3068002F5402BA003A33F7 /* CameraCaptureService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraCaptureService.swift; sourceTree = "<group>"; };
+		0B3068062F540A80003A33F7 /* PhotoVerifyLogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoVerifyLogger.swift; sourceTree = "<group>"; };
 		0B6BDCF02F49720B00996928 /* FirestoreStoreRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FirestoreStoreRepository.swift; sourceTree = "<group>"; };
 		0B885E3A2F419CF50011D606 /* GoogleService-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "GoogleService-Info.plist"; sourceTree = "<group>"; };
 		BEEFABCD1234000000000001 /* AppContainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppContainer.swift; sourceTree = "<group>"; };
@@ -129,13 +133,13 @@
 		BEEFABCD1234000000000082 /* ManagerAccessRequiredView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManagerAccessRequiredView.swift; sourceTree = "<group>"; };
 		BEEFABCD123400000000008C /* ManagerCheckInsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManagerCheckInsViewModel.swift; sourceTree = "<group>"; };
 		BEEFABCD123400000000008D /* ManagerCheckInsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManagerCheckInsView.swift; sourceTree = "<group>"; };
+		BEEFABCD1234000000000090 /* BiometricAuthService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BiometricAuthService.swift; sourceTree = "<group>"; };
+		BEEFABCD1234000000000091 /* AppLockViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLockViewModel.swift; sourceTree = "<group>"; };
+		BEEFABCD1234000000000092 /* AppLockOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLockOverlayView.swift; sourceTree = "<group>"; };
 		BEEFABCD12340000000000A0 /* TimesheetComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimesheetComponents.swift; sourceTree = "<group>"; };
 		BEEFABCD12340000000000A3 /* CameraCaptureSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraCaptureSheet.swift; sourceTree = "<group>"; };
 		BEEFABCD12340000000000A5 /* ImageUploadService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageUploadService.swift; sourceTree = "<group>"; };
 		BEEFABCD12340000000000A7 /* CheckInPhotoStoragePath.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CheckInPhotoStoragePath.swift; sourceTree = "<group>"; };
-		BEEFABCD1234000000000090 /* BiometricAuthService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BiometricAuthService.swift; sourceTree = "<group>"; };
-		BEEFABCD1234000000000091 /* AppLockViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLockViewModel.swift; sourceTree = "<group>"; };
-		BEEFABCD1234000000000092 /* AppLockOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLockOverlayView.swift; sourceTree = "<group>"; };
 		C0DE00000000000000000001 /* AppLockManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLockManager.swift; sourceTree = "<group>"; };
 		C0DE00000000000000000002 /* KeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainStore.swift; sourceTree = "<group>"; };
 		C0DE00000000000000000003 /* AppLockOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLockOverlay.swift; sourceTree = "<group>"; };
@@ -325,15 +329,6 @@
 			path = Employee;
 			sourceTree = "<group>";
 		};
-		BEEFABCD12340000000000A2 /* Shared */ = {
-			isa = PBXGroup;
-			children = (
-				BEEFABCD12340000000000A0 /* TimesheetComponents.swift */,
-				BEEFABCD12340000000000A3 /* CameraCaptureSheet.swift */,
-			);
-			path = Shared;
-			sourceTree = "<group>";
-		};
 		BEEFABCD1234000000000096 /* AppLock */ = {
 			isa = PBXGroup;
 			children = (
@@ -342,6 +337,17 @@
 				BEEFABCD1234000000000092 /* AppLockOverlayView.swift */,
 			);
 			path = AppLock;
+			sourceTree = "<group>";
+		};
+		BEEFABCD12340000000000A2 /* Shared */ = {
+			isa = PBXGroup;
+			children = (
+				0B3068062F540A80003A33F7 /* PhotoVerifyLogger.swift */,
+				0B3068002F5402BA003A33F7 /* CameraCaptureService.swift */,
+				BEEFABCD12340000000000A0 /* TimesheetComponents.swift */,
+				BEEFABCD12340000000000A3 /* CameraCaptureSheet.swift */,
+			);
+			path = Shared;
 			sourceTree = "<group>";
 		};
 		C0DE00000000000000000010 /* Security */ = {
@@ -475,6 +481,7 @@
 				BEEFABCD1234000000000042 /* RootViewModel.swift in Sources */,
 				BEEFABCD1234000000000043 /* StoreManagementViewModel.swift in Sources */,
 				BEEFABCD1234000000000075 /* AuthViewModel.swift in Sources */,
+				0B3068072F540A80003A33F7 /* PhotoVerifyLogger.swift in Sources */,
 				BEEFABCD1234000000000044 /* EmployeeDashboardView.swift in Sources */,
 				BEEFABCD1234000000000045 /* EmployeeHistoryView.swift in Sources */,
 				BEEFABCD1234000000000046 /* EmployeeTabView.swift in Sources */,
@@ -488,6 +495,7 @@
 				BEEFABCD123400000000004A /* ManagerTabView.swift in Sources */,
 				BEEFABCD123400000000004B /* RootView.swift in Sources */,
 				BEEFABCD1234000000000088 /* ManagerAccessRequiredView.swift in Sources */,
+				0B3068012F5402BD003A33F7 /* CameraCaptureService.swift in Sources */,
 				BEEFABCD1234000000000093 /* BiometricAuthService.swift in Sources */,
 				BEEFABCD1234000000000094 /* AppLockViewModel.swift in Sources */,
 				BEEFABCD1234000000000095 /* AppLockOverlayView.swift in Sources */,

@@ -1,3 +1,11 @@
+//
+//  CameraCaptureSheet 2.swift
+//  StoreCheck
+//
+//  Created by Majdi Nagi on 3/1/26.
+//
+
+
 import AVFoundation
 import SwiftUI
 import UIKit

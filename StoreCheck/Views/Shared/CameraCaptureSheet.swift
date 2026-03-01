@@ -16,15 +16,17 @@ struct CameraCaptureSheet: View {
                     CustomCameraView(cameraService: cameraService) {
                         cameraService.capturePhoto { image in
                             guard let image else {
-                                PhotoVerifyLogger.log("camera capture returned nil image")
+                                PhotoVerifyLogger.log("[UI] camera capture returned nil image")
                                 return
                             }
-                            PhotoVerifyLogger.log("image captured; size=\(Int(image.size.width))x\(Int(image.size.height))")
+
+                            PhotoVerifyLogger.log("[UI] image captured size=\(Int(image.size.width))x\(Int(image.size.height))")
                             onCaptured(image)
                             isPresented = false
                         }
                     }
-                    .ignoresSafeArea(edges: .bottom)
+                    // ✅ avoids "Cannot infer contextual base in reference to member 'bottom'"
+                    .ignoresSafeArea(.all, edges: .bottom)
                 } else {
                     unavailableUI(message: "Camera not available on this device.")
                 }
@@ -34,19 +36,22 @@ struct CameraCaptureSheet: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
-                        PhotoVerifyLogger.log("camera sheet canceled from toolbar")
+                        PhotoVerifyLogger.log("[UI] camera sheet canceled")
                         isPresented = false
                     }
                 }
             }
         }
         .onAppear {
-            PhotoVerifyLogger.log("camera sheet opened title=\(title)")
+            PhotoVerifyLogger.log("[UI] camera sheet opened title=\(title)")
             cameraService.configureSessionIfNeeded()
             cameraService.startSession()
-            cameraService.updateVideoOrientation(.portrait)
+
+            // ✅ Portrait-only stable (iOS 17+ safe)
+            cameraService.updateVideoRotationAngle(0)
         }
         .onDisappear {
+            PhotoVerifyLogger.log("[UI] camera sheet dismissed")
             cameraService.stopSession()
         }
     }
@@ -56,6 +61,7 @@ struct CameraCaptureSheet: View {
             Image(systemName: "camera.slash.fill")
                 .font(.system(size: 34))
                 .foregroundStyle(DS.Colors.textSecondary)
+
             Text(message)
                 .multilineTextAlignment(.center)
                 .foregroundStyle(DS.Colors.textPrimary)
@@ -78,7 +84,7 @@ struct CustomCameraView: View {
                             .padding(8)
                             .background(.black.opacity(0.7))
                             .foregroundStyle(.white)
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                             .padding(.top, 16)
                     }
                 }
@@ -95,8 +101,9 @@ struct CustomCameraView: View {
             }
             .padding(.bottom, 28)
         }
+        // ✅ Keep portrait-only stable (no orientation fight / no iOS 17 deprecated API)
         .onReceive(NotificationCenter.default.publisher(for: UIDevice.orientationDidChangeNotification)) { _ in
-            cameraService.updateVideoOrientation(AVCaptureVideoOrientation.current)
+            cameraService.updateVideoRotationAngle(0)
         }
     }
 }
@@ -106,18 +113,22 @@ struct CameraPreviewView: UIViewRepresentable {
 
     func makeUIView(context: Context) -> PreviewContainerView {
         let view = PreviewContainerView()
-        view.previewLayer.session = session
         view.previewLayer.videoGravity = .resizeAspectFill
-        if let connection = view.previewLayer.connection, connection.isVideoOrientationSupported {
-            connection.videoOrientation = .portrait
+        view.previewLayer.session = session
+
+        // ✅ iOS 17+ safe: use rotation angle
+        if let connection = view.previewLayer.connection, connection.isVideoRotationAngleSupported(0) {
+            connection.videoRotationAngle = 0
         }
+
         return view
     }
 
     func updateUIView(_ uiView: PreviewContainerView, context: Context) {
         uiView.previewLayer.session = session
-        if let connection = uiView.previewLayer.connection, connection.isVideoOrientationSupported {
-            connection.videoOrientation = .portrait
+
+        if let connection = uiView.previewLayer.connection, connection.isVideoRotationAngleSupported(0) {
+            connection.videoRotationAngle = 0
         }
     }
 }
@@ -130,28 +141,5 @@ final class PreviewContainerView: UIView {
             fatalError("Unexpected layer type for PreviewContainerView")
         }
         return layer
-    }
-}
-
-enum PhotoVerifyLogger {
-    static func log(_ message: String) {
-        #if DEBUG
-        print("[PhotoVerify] \(message)")
-        #endif
-    }
-}
-
-private extension AVCaptureVideoOrientation {
-    static var current: AVCaptureVideoOrientation {
-        switch UIDevice.current.orientation {
-        case .landscapeLeft:
-            return .landscapeRight
-        case .landscapeRight:
-            return .landscapeLeft
-        case .portraitUpsideDown:
-            return .portraitUpsideDown
-        default:
-            return .portrait
-        }
     }
 }
