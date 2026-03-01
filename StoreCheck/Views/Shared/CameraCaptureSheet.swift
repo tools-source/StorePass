@@ -1,3 +1,4 @@
+import AVFoundation
 import SwiftUI
 import UIKit
 
@@ -6,21 +7,23 @@ struct CameraCaptureSheet: View {
     let title: String
     let onCaptured: (UIImage) -> Void
 
+    @StateObject private var cameraService = CameraCaptureService()
+
     var body: some View {
         NavigationStack {
             Group {
                 if UIImagePickerController.isSourceTypeAvailable(.camera) {
-                    SystemCameraPicker(
-                        onCaptured: { image in
+                    CustomCameraView(cameraService: cameraService) {
+                        cameraService.capturePhoto { image in
+                            guard let image else {
+                                PhotoVerifyLogger.log("camera capture returned nil image")
+                                return
+                            }
                             PhotoVerifyLogger.log("image captured; size=\(Int(image.size.width))x\(Int(image.size.height))")
                             onCaptured(image)
                             isPresented = false
-                        },
-                        onCancel: {
-                            PhotoVerifyLogger.log("camera sheet canceled by user")
-                            isPresented = false
                         }
-                    )
+                    }
                     .ignoresSafeArea(edges: .bottom)
                 } else {
                     unavailableUI(message: "Camera not available on this device.")
@@ -39,6 +42,12 @@ struct CameraCaptureSheet: View {
         }
         .onAppear {
             PhotoVerifyLogger.log("camera sheet opened title=\(title)")
+            cameraService.configureSessionIfNeeded()
+            cameraService.startSession()
+            cameraService.updateVideoOrientation(.portrait)
+        }
+        .onDisappear {
+            cameraService.stopSession()
         }
     }
 
@@ -55,49 +64,72 @@ struct CameraCaptureSheet: View {
     }
 }
 
-struct SystemCameraPicker: UIViewControllerRepresentable {
-    let onCaptured: (UIImage) -> Void
-    let onCancel: () -> Void
+struct CustomCameraView: View {
+    @ObservedObject var cameraService: CameraCaptureService
+    let onCaptureTap: () -> Void
 
-    func makeCoordinator() -> Coordinator {
-        Coordinator(parent: self)
-    }
+    var body: some View {
+        ZStack(alignment: .bottom) {
+            CameraPreviewView(session: cameraService.session)
+                .overlay(alignment: .top) {
+                    if let error = cameraService.lastErrorMessage {
+                        Text(error)
+                            .font(.footnote)
+                            .padding(8)
+                            .background(.black.opacity(0.7))
+                            .foregroundStyle(.white)
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                            .padding(.top, 16)
+                    }
+                }
 
-    func makeUIViewController(context: Context) -> UIImagePickerController {
-        let picker = UIImagePickerController()
-        picker.sourceType = .camera
-        picker.cameraDevice = .front
-        picker.cameraCaptureMode = .photo
-        picker.allowsEditing = false
-        picker.delegate = context.coordinator
-        PhotoVerifyLogger.log("configured UIImagePickerController sourceType=camera cameraDevice=front cameraCaptureMode=photo")
-        return picker
-    }
-
-    func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {}
-
-    final class Coordinator: NSObject, UINavigationControllerDelegate, UIImagePickerControllerDelegate {
-        private let parent: SystemCameraPicker
-
-        init(parent: SystemCameraPicker) {
-            self.parent = parent
-        }
-
-        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
-            parent.onCancel()
-        }
-
-        func imagePickerController(
-            _ picker: UIImagePickerController,
-            didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]
-        ) {
-            if let image = info[.originalImage] as? UIImage {
-                parent.onCaptured(image)
-            } else {
-                PhotoVerifyLogger.log("picker returned without UIImage; treating as cancel")
-                parent.onCancel()
+            Button(action: onCaptureTap) {
+                Circle()
+                    .fill(.white)
+                    .frame(width: 76, height: 76)
+                    .overlay {
+                        Circle()
+                            .stroke(.black.opacity(0.2), lineWidth: 2)
+                            .padding(6)
+                    }
             }
+            .padding(.bottom, 28)
         }
+        .onReceive(NotificationCenter.default.publisher(for: UIDevice.orientationDidChangeNotification)) { _ in
+            cameraService.updateVideoOrientation(AVCaptureVideoOrientation.current)
+        }
+    }
+}
+
+struct CameraPreviewView: UIViewRepresentable {
+    let session: AVCaptureSession
+
+    func makeUIView(context: Context) -> PreviewContainerView {
+        let view = PreviewContainerView()
+        view.previewLayer.session = session
+        view.previewLayer.videoGravity = .resizeAspectFill
+        if let connection = view.previewLayer.connection, connection.isVideoOrientationSupported {
+            connection.videoOrientation = .portrait
+        }
+        return view
+    }
+
+    func updateUIView(_ uiView: PreviewContainerView, context: Context) {
+        uiView.previewLayer.session = session
+        if let connection = uiView.previewLayer.connection, connection.isVideoOrientationSupported {
+            connection.videoOrientation = .portrait
+        }
+    }
+}
+
+final class PreviewContainerView: UIView {
+    override class var layerClass: AnyClass { AVCaptureVideoPreviewLayer.self }
+
+    var previewLayer: AVCaptureVideoPreviewLayer {
+        guard let layer = layer as? AVCaptureVideoPreviewLayer else {
+            fatalError("Unexpected layer type for PreviewContainerView")
+        }
+        return layer
     }
 }
 
@@ -106,5 +138,20 @@ enum PhotoVerifyLogger {
         #if DEBUG
         print("[PhotoVerify] \(message)")
         #endif
+    }
+}
+
+private extension AVCaptureVideoOrientation {
+    static var current: AVCaptureVideoOrientation {
+        switch UIDevice.current.orientation {
+        case .landscapeLeft:
+            return .landscapeRight
+        case .landscapeRight:
+            return .landscapeLeft
+        case .portraitUpsideDown:
+            return .portraitUpsideDown
+        default:
+            return .portrait
+        }
     }
 }
