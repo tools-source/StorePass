@@ -179,6 +179,12 @@ final class CameraService: NSObject, ObservableObject {
     private var lastStopRequest: Date?
     private var lastRecoveryAttempt: Date?
 
+    private func publishOnMain(_ update: @escaping @MainActor () -> Void) {
+        Task { @MainActor in
+            update()
+        }
+    }
+
     deinit {
         for token in runtimeObserverTokens {
             NotificationCenter.default.removeObserver(token)
@@ -190,20 +196,28 @@ final class CameraService: NSObject, ObservableObject {
         setupInProgress = true
 
         #if targetEnvironment(simulator)
-        unavailableMessage = "Camera not available on Simulator."
+        await MainActor.run {
+            self.unavailableMessage = "Camera not available on Simulator."
+        }
         CameraDebugLogger.log("simulatorDetected; camera setup skipped")
         setupInProgress = false
         return
         #endif
 
-        authorizationStatus = AVCaptureDevice.authorizationStatus(for: .video)
-        CameraDebugLogger.log("authorizationStatus=\(CameraDebugLogger.authorizationDescription(authorizationStatus))")
+        let initialAuthorizationStatus = AVCaptureDevice.authorizationStatus(for: .video)
+        await MainActor.run {
+            self.authorizationStatus = initialAuthorizationStatus
+        }
+        CameraDebugLogger.log("authorizationStatus=\(CameraDebugLogger.authorizationDescription(initialAuthorizationStatus))")
 
-        switch authorizationStatus {
+        switch initialAuthorizationStatus {
         case .notDetermined:
             let granted = await AVCaptureDevice.requestAccess(for: .video)
-            authorizationStatus = AVCaptureDevice.authorizationStatus(for: .video)
-            CameraDebugLogger.log("requestAccess result=\(granted) statusNow=\(CameraDebugLogger.authorizationDescription(authorizationStatus))")
+            let updatedAuthorizationStatus = AVCaptureDevice.authorizationStatus(for: .video)
+            await MainActor.run {
+                self.authorizationStatus = updatedAuthorizationStatus
+            }
+            CameraDebugLogger.log("requestAccess result=\(granted) statusNow=\(CameraDebugLogger.authorizationDescription(updatedAuthorizationStatus))")
             guard granted else {
                 setupInProgress = false
                 return
@@ -240,7 +254,7 @@ final class CameraService: NSObject, ObservableObject {
             }
             CameraDebugLogger.log("session.startRunning")
             self.session.startRunning()
-            DispatchQueue.main.async {
+            self.publishOnMain {
                 self.isRunning = self.session.isRunning
             }
         }
@@ -262,7 +276,7 @@ final class CameraService: NSObject, ObservableObject {
             }
             CameraDebugLogger.log("session.stopRunning")
             self.session.stopRunning()
-            DispatchQueue.main.async {
+            self.publishOnMain {
                 self.isRunning = self.session.isRunning
             }
         }
@@ -273,16 +287,42 @@ final class CameraService: NSObject, ObservableObject {
             guard let self else { return }
             guard self.isConfigured else {
                 CameraDebugLogger.log("capture blocked; session not configured")
-                DispatchQueue.main.async { completion(nil) }
+                self.publishOnMain { completion(nil) }
+                return
+            }
+
+            guard self.session.outputs.contains(where: { $0 === self.output }) else {
+                CameraDebugLogger.log("capture blocked; photo output missing from session")
+                self.publishOnMain { completion(nil) }
                 return
             }
 
             let settings = AVCapturePhotoSettings()
             settings.flashMode = .off
-            settings.photoQualityPrioritization = .quality
+            let maxQuality = self.output.maxPhotoQualityPrioritization
+            let desiredQuality: AVCapturePhotoOutput.QualityPrioritization = .quality
+            let finalQuality = Self.clampedQualityPrioritization(desired: desiredQuality, max: maxQuality)
+            settings.photoQualityPrioritization = finalQuality
+            print("[Camera] maxQuality=\(maxQuality) desired=\(desiredQuality) final=\(settings.photoQualityPrioritization)")
             self.pendingCaptures[settings.uniqueID] = completion
             CameraDebugLogger.log("capturePhoto requested uniqueID=\(settings.uniqueID)")
             self.output.capturePhoto(with: settings, delegate: self)
+        }
+    }
+
+    private static func clampedQualityPrioritization(
+        desired: AVCapturePhotoOutput.QualityPrioritization,
+        max: AVCapturePhotoOutput.QualityPrioritization
+    ) -> AVCapturePhotoOutput.QualityPrioritization {
+        switch max {
+        case .speed:
+            return .speed
+        case .balanced:
+            return desired == .quality ? .balanced : desired
+        case .quality:
+            return desired
+        @unknown default:
+            return .speed
         }
     }
 
@@ -300,10 +340,10 @@ final class CameraService: NSObject, ObservableObject {
             guard let selectedDevice else {
                 self.session.commitConfiguration()
                 CameraDebugLogger.log("session configuration failed; no camera device")
-                DispatchQueue.main.async {
+                self.isConfigured = false
+                self.publishOnMain {
                     self.unavailableMessage = "Camera not available on this device."
                     self.lastError = "Camera unavailable"
-                    self.isConfigured = false
                 }
                 return
             }
@@ -313,9 +353,9 @@ final class CameraService: NSObject, ObservableObject {
                 guard self.session.canAddInput(input) else {
                     self.session.commitConfiguration()
                     CameraDebugLogger.log("session cannot add selected input")
-                    DispatchQueue.main.async {
+                    self.isConfigured = false
+                    self.publishOnMain {
                         self.lastError = "Could not access camera input"
-                        self.isConfigured = false
                     }
                     return
                 }
@@ -324,9 +364,9 @@ final class CameraService: NSObject, ObservableObject {
             } catch {
                 self.session.commitConfiguration()
                 CameraDebugLogger.log("session failed to create input error=\(error.localizedDescription)")
-                DispatchQueue.main.async {
+                self.isConfigured = false
+                self.publishOnMain {
                     self.lastError = "Could not access camera"
-                    self.isConfigured = false
                 }
                 return
             }
@@ -334,9 +374,9 @@ final class CameraService: NSObject, ObservableObject {
             guard self.session.canAddOutput(self.output) else {
                 self.session.commitConfiguration()
                 CameraDebugLogger.log("session cannot add AVCapturePhotoOutput")
-                DispatchQueue.main.async {
+                self.isConfigured = false
+                self.publishOnMain {
                     self.lastError = "Could not configure photo output"
-                    self.isConfigured = false
                 }
                 return
             }
@@ -347,11 +387,11 @@ final class CameraService: NSObject, ObservableObject {
             self.session.commitConfiguration()
             self.installRuntimeObserversIfNeeded()
             CameraDebugLogger.log("session configuration commit complete")
+            self.isConfigured = true
 
-            DispatchQueue.main.async {
+            self.publishOnMain {
                 self.unavailableMessage = nil
                 self.lastError = nil
-                self.isConfigured = true
             }
         }
     }
@@ -393,7 +433,7 @@ final class CameraService: NSObject, ObservableObject {
         let code = nsError?.code ?? -1
         CameraDebugLogger.log("runtime error domain=\(domain) code=\(code) userInfo=\(notification.userInfo ?? [:])")
 
-        DispatchQueue.main.async {
+        publishOnMain {
             self.lastError = "Camera runtime error (\(code)). Retrying…"
         }
 
@@ -431,7 +471,7 @@ extension CameraService: AVCapturePhotoCaptureDelegate {
         self.sessionQueue.async { [weak self] in
             guard let self else { return }
             let completion = self.pendingCaptures.removeValue(forKey: uniqueID)
-            DispatchQueue.main.async {
+            self.publishOnMain {
                 completion?(data)
             }
         }
