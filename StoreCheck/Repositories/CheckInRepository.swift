@@ -27,7 +27,8 @@ protocol CheckInRepositoryProtocol {
         accuracyMeters: Double,
         checkOutPhotoPath: String,
         checkOutPhotoURL: String,
-        checkOutPhotoCapturedAt: Date
+        checkOutPhotoCapturedAt: Date,
+        checkOutPhotoUploadedAt: Date
     ) async throws
     func updateCheckIn(_ checkIn: CheckIn) async throws
     func updateCheckInTimes(checkIn: CheckIn, newCheckInTime: Date, newCheckOutTime: Date?) async throws
@@ -159,7 +160,8 @@ final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
         accuracyMeters: Double,
         checkOutPhotoPath: String,
         checkOutPhotoURL: String,
-        checkOutPhotoCapturedAt: Date
+        checkOutPhotoCapturedAt: Date,
+        checkOutPhotoUploadedAt: Date
     ) async throws {
         guard let uid = Auth.auth().currentUser?.uid else {
             throw NSError(domain: "StorePass", code: 4001, userInfo: [NSLocalizedDescriptionKey: "You must be signed in."])
@@ -231,7 +233,8 @@ final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
                 "durationSeconds": durationSeconds,
                 "checkOutPhotoPath": checkOutPhotoPath,
                 "checkOutPhotoURL": checkOutPhotoURL,
-                "checkOutPhotoCapturedAt": Timestamp(date: checkOutPhotoCapturedAt)
+                "checkOutPhotoCapturedAt": Timestamp(date: checkOutPhotoCapturedAt),
+                "checkOutPhotoUploadedAt": Timestamp(date: checkOutPhotoUploadedAt)
             ]
 
             print("[CheckOut][WRITE] path=checkins/\(checkinId) keys=\(payload.keys.sorted())")
@@ -565,6 +568,8 @@ final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
             "checkOutPhotoPath": checkIn.checkOutPhotoPath as Any,
             "checkInPhotoCapturedAt": checkIn.checkInPhotoCapturedAt.map { Timestamp(date: $0) } as Any,
             "checkOutPhotoCapturedAt": checkIn.checkOutPhotoCapturedAt.map { Timestamp(date: $0) } as Any,
+            "checkInPhotoUploadedAt": checkIn.checkInPhotoUploadedAt.map { Timestamp(date: $0) } as Any,
+            "checkOutPhotoUploadedAt": checkIn.checkOutPhotoUploadedAt.map { Timestamp(date: $0) } as Any,
             "photoRequired": checkIn.photoRequired,
             "photoVersion": checkIn.photoVersion
         ]
@@ -709,6 +714,8 @@ final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
             checkOutPhotoPath: data["checkOutPhotoPath"] as? String,
             checkInPhotoCapturedAt: decodeDate(data["checkInPhotoCapturedAt"]),
             checkOutPhotoCapturedAt: decodeDate(data["checkOutPhotoCapturedAt"]),
+            checkInPhotoUploadedAt: decodeDate(data["checkInPhotoUploadedAt"]),
+            checkOutPhotoUploadedAt: decodeDate(data["checkOutPhotoUploadedAt"]),
             photoRequired: data["photoRequired"] as? Bool ?? true,
             photoVersion: data["photoVersion"] as? Int ?? 1
         )

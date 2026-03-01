@@ -22,6 +22,7 @@ final class EmployeeDashboardViewModel: ObservableObject {
     private let checkInRepository: CheckInRepositoryProtocol
     private let locationService: LocationServiceProtocol
     private let imageUploadService: ImageUploadServiceProtocol
+    private let photoCompressionQuality: CGFloat = 0.75
 
     init(
         authService: AuthService,
@@ -84,11 +85,19 @@ final class EmployeeDashboardViewModel: ObservableObject {
     func beginCheckInPhotoCapture() {
         pendingPhotoPurpose = .checkIn
         isShowingCamera = true
+        PhotoVerifyLogger.log("camera launch requested purpose=checkIn")
     }
 
     func beginCheckOutPhotoCapture() {
         pendingPhotoPurpose = .checkOut
         isShowingCamera = true
+        PhotoVerifyLogger.log("camera launch requested purpose=checkOut")
+    }
+
+    func didCancelPhotoCapture() {
+        PhotoVerifyLogger.log("photo capture canceled; skipping check-in/check-out")
+        pendingPhotoPurpose = nil
+        isShowingCamera = false
     }
 
     func processCapturedPhoto(_ image: UIImage) async {
@@ -106,22 +115,37 @@ final class EmployeeDashboardViewModel: ObservableObject {
         guard let user = authService.currentUser, let store = selectedStore else { return }
         let checkinId = UUID().uuidString
         let capturedAt = Date()
+
         do {
-            let upload = try await imageUploadService.uploadCheckInPhoto(
-                image: image,
+            guard let jpegData = image.jpegData(compressionQuality: photoCompressionQuality) else {
+                throw NSError(domain: "StorePass", code: 5201, userInfo: [NSLocalizedDescriptionKey: "Could not process photo."])
+            }
+            PhotoVerifyLogger.log("jpeg prepared purpose=checkIn compression=\(photoCompressionQuality) bytes=\(jpegData.count)")
+
+            let uploadPath = CheckInPhotoStoragePath.makePath(storeId: store.id, employeeId: user.id, checkinId: checkinId, kind: .checkIn)
+            PhotoVerifyLogger.log("upload start purpose=checkIn path=\(uploadPath)")
+            let upload = try await imageUploadService.uploadCheckInPhotoData(
+                imageData: jpegData,
                 storeId: store.id,
                 employeeId: user.id,
                 checkinId: checkinId,
                 kind: .checkIn
             )
+            let uploadedAt = Date()
+            PhotoVerifyLogger.log("upload end purpose=checkIn path=\(upload.path) downloadURL=\(upload.downloadURL)")
+
+            PhotoVerifyLogger.log("firestore update start purpose=checkIn checkinId=\(checkinId)")
             _ = try await checkInService.submitCheckIn(
                 user: user,
                 store: store,
                 checkinId: checkinId,
                 checkInPhotoPath: upload.path,
                 checkInPhotoURL: upload.downloadURL,
-                checkInPhotoCapturedAt: capturedAt
+                checkInPhotoCapturedAt: capturedAt,
+                checkInPhotoUploadedAt: uploadedAt
             )
+            PhotoVerifyLogger.log("firestore update end purpose=checkIn checkinId=\(checkinId)")
+
             checkInSuccessBanner = true
             try await loadTodaySessions()
         } catch {
@@ -138,14 +162,25 @@ final class EmployeeDashboardViewModel: ObservableObject {
         }
 
         do {
-            let upload = try await imageUploadService.uploadCheckInPhoto(
-                image: image,
+            guard let jpegData = image.jpegData(compressionQuality: photoCompressionQuality) else {
+                throw NSError(domain: "StorePass", code: 5201, userInfo: [NSLocalizedDescriptionKey: "Could not process photo."])
+            }
+            PhotoVerifyLogger.log("jpeg prepared purpose=checkOut compression=\(photoCompressionQuality) bytes=\(jpegData.count)")
+
+            let uploadPath = CheckInPhotoStoragePath.makePath(storeId: store.id, employeeId: user.id, checkinId: activeSession.id, kind: .checkOut)
+            PhotoVerifyLogger.log("upload start purpose=checkOut path=\(uploadPath)")
+            let upload = try await imageUploadService.uploadCheckInPhotoData(
+                imageData: jpegData,
                 storeId: store.id,
                 employeeId: user.id,
                 checkinId: activeSession.id,
                 kind: .checkOut
             )
+            let uploadedAt = Date()
+            PhotoVerifyLogger.log("upload end purpose=checkOut path=\(upload.path) downloadURL=\(upload.downloadURL)")
+
             let distance = locationService.distance(from: location.coordinate, to: store.coordinate)
+            PhotoVerifyLogger.log("firestore update start purpose=checkOut checkinId=\(activeSession.id)")
             try await checkInRepository.checkout(
                 checkinId: activeSession.id,
                 storeId: store.id,
@@ -156,8 +191,10 @@ final class EmployeeDashboardViewModel: ObservableObject {
                 accuracyMeters: location.horizontalAccuracy,
                 checkOutPhotoPath: upload.path,
                 checkOutPhotoURL: upload.downloadURL,
-                checkOutPhotoCapturedAt: Date()
+                checkOutPhotoCapturedAt: Date(),
+                checkOutPhotoUploadedAt: uploadedAt
             )
+            PhotoVerifyLogger.log("firestore update end purpose=checkOut checkinId=\(activeSession.id)")
             try await loadTodaySessions()
         } catch {
             errorMessage = userFacingPhotoFlowError(error, fallback: "Couldn’t upload photo. Please try again.")
@@ -229,5 +266,4 @@ final class EmployeeDashboardViewModel: ObservableObject {
             errorMessage = error.localizedDescription
         }
     }
-
 }

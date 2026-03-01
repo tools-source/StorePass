@@ -31,6 +31,8 @@ struct CheckIn: Codable, Identifiable, Hashable {
     var checkOutPhotoPath: String?
     var checkInPhotoCapturedAt: Date?
     var checkOutPhotoCapturedAt: Date?
+    var checkInPhotoUploadedAt: Date? = nil
+    var checkOutPhotoUploadedAt: Date? = nil
     var photoRequired: Bool
     var photoVersion: Int
 

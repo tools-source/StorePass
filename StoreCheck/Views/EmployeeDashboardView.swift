@@ -130,7 +130,11 @@ struct EmployeeHomeView: View {
                     }
                 }
             }
-            .sheet(isPresented: $viewModel.isShowingCamera) {
+            .sheet(isPresented: $viewModel.isShowingCamera, onDismiss: {
+                if viewModel.pendingPhotoPurpose != nil {
+                    viewModel.didCancelPhotoCapture()
+                }
+            }) {
                 CameraCaptureSheet(
                     isPresented: $viewModel.isShowingCamera,
                     title: viewModel.pendingPhotoPurpose == .checkOut ? "Check Out Photo" : "Check In Photo"

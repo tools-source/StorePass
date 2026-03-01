@@ -10,7 +10,8 @@ protocol CheckInServiceProtocol {
         checkinId: String,
         checkInPhotoPath: String,
         checkInPhotoURL: String,
-        checkInPhotoCapturedAt: Date
+        checkInPhotoCapturedAt: Date,
+        checkInPhotoUploadedAt: Date
     ) async throws -> CheckIn
 }
 
@@ -81,7 +82,8 @@ final class CheckInService: CheckInServiceProtocol {
         checkinId: String,
         checkInPhotoPath: String,
         checkInPhotoURL: String,
-        checkInPhotoCapturedAt: Date
+        checkInPhotoCapturedAt: Date,
+        checkInPhotoUploadedAt: Date
     ) async throws -> CheckIn {
         guard let location = locationService.currentLocation else {
             throw NSError(domain: "StorePass", code: 3001, userInfo: [NSLocalizedDescriptionKey: "Location unavailable."])
@@ -115,6 +117,8 @@ final class CheckInService: CheckInServiceProtocol {
             checkOutPhotoPath: nil,
             checkInPhotoCapturedAt: checkInPhotoCapturedAt,
             checkOutPhotoCapturedAt: nil,
+            checkInPhotoUploadedAt: checkInPhotoUploadedAt,
+            checkOutPhotoUploadedAt: nil,
             photoRequired: true,
             photoVersion: 1
         )

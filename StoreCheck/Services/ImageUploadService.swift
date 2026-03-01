@@ -8,6 +8,14 @@ struct UploadedImageResult {
 }
 
 protocol ImageUploadServiceProtocol {
+    func uploadCheckInPhotoData(
+        imageData: Data,
+        storeId: String,
+        employeeId: String,
+        checkinId: String,
+        kind: CheckInPhotoKind
+    ) async throws -> UploadedImageResult
+
     func uploadCheckInPhoto(
         image: UIImage,
         storeId: String,
@@ -45,6 +53,26 @@ final class ImageUploadService: ImageUploadServiceProtocol {
         guard let processedImage = image.resizedMaintainingAspectRatio(maxDimension: maxDimension),
               let imageData = processedImage.jpegData(compressionQuality: compressionQuality) else {
             throw NSError(domain: "StorePass", code: 5201, userInfo: [NSLocalizedDescriptionKey: "Could not process photo."])
+        }
+
+        return try await uploadCheckInPhotoData(
+            imageData: imageData,
+            storeId: storeId,
+            employeeId: employeeId,
+            checkinId: checkinId,
+            kind: kind
+        )
+    }
+
+    func uploadCheckInPhotoData(
+        imageData: Data,
+        storeId: String,
+        employeeId: String,
+        checkinId: String,
+        kind: CheckInPhotoKind
+    ) async throws -> UploadedImageResult {
+        guard !imageData.isEmpty else {
+            throw NSError(domain: "StorePass", code: 5202, userInfo: [NSLocalizedDescriptionKey: "Photo data is empty."])
         }
 
         let path = CheckInPhotoStoragePath.makePath(storeId: storeId, employeeId: employeeId, checkinId: checkinId, kind: kind)
