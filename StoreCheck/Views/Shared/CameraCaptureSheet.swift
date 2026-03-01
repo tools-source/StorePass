@@ -125,7 +125,7 @@ private struct CameraPicker: UIViewControllerRepresentable {
         picker.delegate = context.coordinator
         picker.sourceType = .camera
         picker.cameraCaptureMode = .photo
-        picker.cameraDevice = .rear
+        picker.cameraDevice = CameraDeviceSelector.preferredPickerDevice
         picker.allowsEditing = false
         return picker
     }
@@ -157,6 +157,18 @@ private struct CameraPicker: UIViewControllerRepresentable {
 }
 
 private enum CameraDeviceSelector {
+    static var preferredPickerDevice: UIImagePickerController.CameraDevice {
+        if UIImagePickerController.isCameraDeviceAvailable(.rear) {
+            return .rear
+        }
+
+        if UIImagePickerController.isCameraDeviceAvailable(.front) {
+            return .front
+        }
+
+        return .rear
+    }
+
     static func selectSupportedBackCamera() -> AVCaptureDevice? {
         if let wideAngleBack = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back) {
             return wideAngleBack
