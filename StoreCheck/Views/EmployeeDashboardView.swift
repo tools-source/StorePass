@@ -33,12 +33,13 @@ struct EmployeeHomeView: View {
     @State private var pendingLeaveStore: Store?
     @State private var showManageStores = false
     @State private var isLocationExpanded = false
+    @FocusState private var isJoinCodeFocused: Bool
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: DS.Spacing.m) {
-                    JoinStoreCard(viewModel: viewModel)
+                    JoinStoreCard(viewModel: viewModel, isJoinCodeFocused: $isJoinCodeFocused)
 
                     currentStoreCard
 
@@ -334,6 +335,7 @@ struct EmployeeHomeView: View {
 
 private struct JoinStoreCard: View {
     @ObservedObject var viewModel: EmployeeDashboardViewModel
+    @FocusState.Binding var isJoinCodeFocused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: DS.Spacing.s) {
@@ -342,12 +344,15 @@ private struct JoinStoreCard: View {
             TextField("Enter store code", text: $viewModel.joinCodeInput)
                 .textInputAutocapitalization(.characters)
                 .autocorrectionDisabled()
+                .focused($isJoinCodeFocused)
                 .padding(12)
                 .background(DS.Colors.background)
                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
 
             Button("Join") {
+                isJoinCodeFocused = false
                 Task {
+                    try? await Task.sleep(nanoseconds: 50_000_000)
                     await viewModel.joinStoreByCode()
                 }
             }

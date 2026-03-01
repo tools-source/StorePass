@@ -66,6 +66,7 @@
 		BEEFABCD12340000000000A1 /* TimesheetComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD12340000000000A0 /* TimesheetComponents.swift */; };
 		BEEFABCD12340000000000A4 /* CameraCaptureSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD12340000000000A3 /* CameraCaptureSheet.swift */; };
 		BEEFABCD12340000000000A6 /* ImageUploadService.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD12340000000000A5 /* ImageUploadService.swift */; };
+		BEEFABCD12340000000000A8 /* CheckInPhotoStoragePath.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD12340000000000A7 /* CheckInPhotoStoragePath.swift */; };
 		BEEFABCD1234000000000093 /* BiometricAuthService.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000090 /* BiometricAuthService.swift */; };
 		BEEFABCD1234000000000094 /* AppLockViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000091 /* AppLockViewModel.swift */; };
 		BEEFABCD1234000000000095 /* AppLockOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000092 /* AppLockOverlayView.swift */; };
@@ -131,6 +132,7 @@
 		BEEFABCD12340000000000A0 /* TimesheetComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimesheetComponents.swift; sourceTree = "<group>"; };
 		BEEFABCD12340000000000A3 /* CameraCaptureSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraCaptureSheet.swift; sourceTree = "<group>"; };
 		BEEFABCD12340000000000A5 /* ImageUploadService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageUploadService.swift; sourceTree = "<group>"; };
+		BEEFABCD12340000000000A7 /* CheckInPhotoStoragePath.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CheckInPhotoStoragePath.swift; sourceTree = "<group>"; };
 		BEEFABCD1234000000000090 /* BiometricAuthService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BiometricAuthService.swift; sourceTree = "<group>"; };
 		BEEFABCD1234000000000091 /* AppLockViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLockViewModel.swift; sourceTree = "<group>"; };
 		BEEFABCD1234000000000092 /* AppLockOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLockOverlayView.swift; sourceTree = "<group>"; };
@@ -273,6 +275,7 @@
 				BEEFABCD1234000000000011 /* CheckInService.swift */,
 				BEEFABCD1234000000000012 /* DistanceCalculator.swift */,
 				BEEFABCD12340000000000A5 /* ImageUploadService.swift */,
+				BEEFABCD12340000000000A7 /* CheckInPhotoStoragePath.swift */,
 				BEEFABCD1234000000000013 /* LocationService.swift */,
 				BEEFABCD1234000000000014 /* OfflineCheckInQueue.swift */,
 			);
@@ -460,6 +463,7 @@
 				BEEFABCD1234000000000039 /* CheckInService.swift in Sources */,
 				BEEFABCD123400000000003A /* DistanceCalculator.swift in Sources */,
 				BEEFABCD12340000000000A6 /* ImageUploadService.swift in Sources */,
+				BEEFABCD12340000000000A8 /* CheckInPhotoStoragePath.swift in Sources */,
 				BEEFABCD123400000000003B /* LocationService.swift in Sources */,
 				BEEFABCD123400000000003C /* OfflineCheckInQueue.swift in Sources */,
 				BEEFABCD123400000000003D /* EmployeeDashboardViewModel.swift in Sources */,
