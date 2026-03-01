@@ -70,6 +70,8 @@ struct CameraCaptureSheet: View {
                         Circle().stroke(.black.opacity(0.8), lineWidth: 2).frame(width: 62, height: 62)
                     }
                 }
+                .disabled(!cameraService.isSessionRunning || cameraService.isCapturing)
+                .opacity((!cameraService.isSessionRunning || cameraService.isCapturing) ? 0.6 : 1)
                 .padding(.bottom, DS.Spacing.l)
             }
         }
@@ -163,11 +165,14 @@ final class PreviewView: UIView {
 
 final class CameraService: NSObject, ObservableObject {
     let session = AVCaptureSession()
+    private let photoOutput = AVCapturePhotoOutput()
+    private(set) var videoInput: AVCaptureDeviceInput?
     private let sessionQueue = DispatchQueue(label: "camera.session.queue")
-    private let output = AVCapturePhotoOutput()
 
-    @Published var isRunning = false
+    @Published var isSessionRunning = false
+    @Published var isCapturing = false
     @Published var lastError: String?
+    @Published var capturedImageData: Data?
     @Published var authorizationStatus: AVAuthorizationStatus = AVCaptureDevice.authorizationStatus(for: .video)
     @Published var unavailableMessage: String?
 
@@ -178,6 +183,7 @@ final class CameraService: NSObject, ObservableObject {
     private var lastStartRequest: Date?
     private var lastStopRequest: Date?
     private var lastRecoveryAttempt: Date?
+    private var captureTimeoutWorkItem: DispatchWorkItem?
 
     private func publishOnMain(_ update: @escaping @MainActor () -> Void) {
         Task { @MainActor in
@@ -198,6 +204,7 @@ final class CameraService: NSObject, ObservableObject {
         #if targetEnvironment(simulator)
         await MainActor.run {
             self.unavailableMessage = "Camera not available on Simulator."
+            self.lastError = "Camera not available on Simulator."
         }
         CameraDebugLogger.log("simulatorDetected; camera setup skipped")
         setupInProgress = false
@@ -222,9 +229,9 @@ final class CameraService: NSObject, ObservableObject {
                 setupInProgress = false
                 return
             }
-            configureSession()
+            configureSessionIfNeeded()
         case .authorized:
-            configureSession()
+            configureSessionIfNeeded()
         case .denied, .restricted:
             CameraDebugLogger.log("prepare blocked by authorization state")
         @unknown default:
@@ -250,12 +257,16 @@ final class CameraService: NSObject, ObservableObject {
             }
             guard !self.session.isRunning else {
                 CameraDebugLogger.log("start skipped; already running")
+                self.publishOnMain {
+                    self.isSessionRunning = true
+                }
                 return
             }
-            CameraDebugLogger.log("session.startRunning")
+            CameraDebugLogger.log("startRunning called")
             self.session.startRunning()
+            CameraDebugLogger.log("session.isRunning=\(self.session.isRunning)")
             self.publishOnMain {
-                self.isRunning = self.session.isRunning
+                self.isSessionRunning = self.session.isRunning
             }
         }
     }
@@ -272,12 +283,16 @@ final class CameraService: NSObject, ObservableObject {
             guard let self else { return }
             guard self.session.isRunning else {
                 CameraDebugLogger.log("stop skipped; already stopped")
+                self.publishOnMain {
+                    self.isSessionRunning = false
+                }
                 return
             }
-            CameraDebugLogger.log("session.stopRunning")
+            CameraDebugLogger.log("stopRunning called")
             self.session.stopRunning()
+            CameraDebugLogger.log("session.isRunning=\(self.session.isRunning)")
             self.publishOnMain {
-                self.isRunning = self.session.isRunning
+                self.isSessionRunning = false
             }
         }
     }
@@ -285,28 +300,81 @@ final class CameraService: NSObject, ObservableObject {
     func capturePhoto(_ completion: @escaping (Data?) -> Void) {
         sessionQueue.async { [weak self] in
             guard let self else { return }
+            let hasPhotoOutput = self.session.outputs.contains(where: { $0 === self.photoOutput })
+            CameraDebugLogger.log("capture requested running=\(self.session.isRunning) outputs=\(self.session.outputs.count) hasPhotoOutput=\(hasPhotoOutput)")
+
             guard self.isConfigured else {
                 CameraDebugLogger.log("capture blocked; session not configured")
-                self.publishOnMain { completion(nil) }
+                self.publishOnMain {
+                    self.lastError = "Camera is not ready yet."
+                    completion(nil)
+                }
                 return
             }
 
-            guard self.session.outputs.contains(where: { $0 === self.output }) else {
+            guard self.session.isRunning else {
+                CameraDebugLogger.log("capture blocked; session is not running")
+                self.publishOnMain {
+                    self.lastError = "Camera session is not running."
+                    completion(nil)
+                }
+                return
+            }
+
+            guard hasPhotoOutput else {
                 CameraDebugLogger.log("capture blocked; photo output missing from session")
-                self.publishOnMain { completion(nil) }
+                self.publishOnMain {
+                    self.lastError = "Camera output missing."
+                    completion(nil)
+                }
                 return
             }
 
             let settings = AVCapturePhotoSettings()
             settings.flashMode = .off
-            let maxQuality = self.output.maxPhotoQualityPrioritization
+            let maxQuality = self.photoOutput.maxPhotoQualityPrioritization
             let desiredQuality: AVCapturePhotoOutput.QualityPrioritization = .quality
             let finalQuality = Self.clampedQualityPrioritization(desired: desiredQuality, max: maxQuality)
             settings.photoQualityPrioritization = finalQuality
-            print("[Camera] maxQuality=\(maxQuality) desired=\(desiredQuality) final=\(settings.photoQualityPrioritization)")
-            self.pendingCaptures[settings.uniqueID] = completion
+            CameraDebugLogger.log("maxQuality=\(maxQuality) desired=\(desiredQuality) final=\(settings.photoQualityPrioritization)")
             CameraDebugLogger.log("capturePhoto requested uniqueID=\(settings.uniqueID)")
-            self.output.capturePhoto(with: settings, delegate: self)
+
+            self.pendingCaptures[settings.uniqueID] = completion
+            self.publishOnMain {
+                self.lastError = nil
+                self.isCapturing = true
+            }
+            self.startCaptureTimeoutWatchdog(for: settings.uniqueID)
+            self.photoOutput.capturePhoto(with: settings, delegate: self)
+        }
+    }
+
+    private func startCaptureTimeoutWatchdog(for uniqueID: Int64) {
+        captureTimeoutWorkItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.sessionQueue.async {
+                guard self.pendingCaptures[uniqueID] != nil else { return }
+                CameraDebugLogger.log("capture timeout triggered uniqueID=\(uniqueID)")
+                let completion = self.pendingCaptures.removeValue(forKey: uniqueID)
+                self.publishOnMain {
+                    self.isCapturing = false
+                    self.lastError = "Capture timed out. Please try again."
+                    completion?(nil)
+                }
+            }
+        }
+        captureTimeoutWorkItem = workItem
+        sessionQueue.asyncAfter(deadline: .now() + 8, execute: workItem)
+    }
+
+    private func clearCaptureState(uniqueID: Int64, data: Data?) {
+        captureTimeoutWorkItem?.cancel()
+        let completion = pendingCaptures.removeValue(forKey: uniqueID)
+        publishOnMain {
+            self.capturedImageData = data
+            self.isCapturing = false
+            completion?(data)
         }
     }
 
@@ -326,20 +394,22 @@ final class CameraService: NSObject, ObservableObject {
         }
     }
 
-    private func configureSession() {
+    private func configureSessionIfNeeded() {
         sessionQueue.async { [weak self] in
             guard let self else { return }
-            CameraDebugLogger.log("session configuration begin")
+            guard !self.isConfigured else {
+                CameraDebugLogger.log("configure skipped; already configured")
+                return
+            }
+
+            CameraDebugLogger.log("configure start")
             self.session.beginConfiguration()
             self.session.sessionPreset = .photo
-
-            self.session.inputs.forEach { self.session.removeInput($0) }
-            self.session.outputs.forEach { self.session.removeOutput($0) }
 
             let selectedDevice = CameraDeviceSelector.selectCamera(preferred: .front)
             guard let selectedDevice else {
                 self.session.commitConfiguration()
-                CameraDebugLogger.log("session configuration failed; no camera device")
+                CameraDebugLogger.log("commit failed; no device")
                 self.isConfigured = false
                 self.publishOnMain {
                     self.unavailableMessage = "Camera not available on this device."
@@ -347,12 +417,14 @@ final class CameraService: NSObject, ObservableObject {
                 }
                 return
             }
+            CameraDebugLogger.log("chosen device=\(selectedDevice.localizedName) position=\(CameraDebugLogger.positionDescription(selectedDevice.position))")
 
             do {
                 let input = try AVCaptureDeviceInput(device: selectedDevice)
-                guard self.session.canAddInput(input) else {
+                let canAddInput = self.session.canAddInput(input)
+                CameraDebugLogger.log("addInput ok=\(canAddInput)")
+                guard canAddInput else {
                     self.session.commitConfiguration()
-                    CameraDebugLogger.log("session cannot add selected input")
                     self.isConfigured = false
                     self.publishOnMain {
                         self.lastError = "Could not access camera input"
@@ -360,10 +432,10 @@ final class CameraService: NSObject, ObservableObject {
                     return
                 }
                 self.session.addInput(input)
-                CameraDebugLogger.log("session added input device=\(selectedDevice.localizedName)")
+                self.videoInput = input
             } catch {
                 self.session.commitConfiguration()
-                CameraDebugLogger.log("session failed to create input error=\(error.localizedDescription)")
+                CameraDebugLogger.log("addInput exception=\(error.localizedDescription)")
                 self.isConfigured = false
                 self.publishOnMain {
                     self.lastError = "Could not access camera"
@@ -371,24 +443,24 @@ final class CameraService: NSObject, ObservableObject {
                 return
             }
 
-            guard self.session.canAddOutput(self.output) else {
+            let canAddOutput = self.session.canAddOutput(self.photoOutput)
+            CameraDebugLogger.log("addOutput ok=\(canAddOutput)")
+            guard canAddOutput else {
                 self.session.commitConfiguration()
-                CameraDebugLogger.log("session cannot add AVCapturePhotoOutput")
                 self.isConfigured = false
                 self.publishOnMain {
                     self.lastError = "Could not configure photo output"
                 }
                 return
             }
-            self.session.addOutput(self.output)
-            self.output.isHighResolutionCaptureEnabled = true
-            CameraDebugLogger.log("session added AVCapturePhotoOutput")
 
+            self.session.addOutput(self.photoOutput)
+            self.photoOutput.isHighResolutionCaptureEnabled = true
             self.session.commitConfiguration()
-            self.installRuntimeObserversIfNeeded()
-            CameraDebugLogger.log("session configuration commit complete")
-            self.isConfigured = true
+            CameraDebugLogger.log("commit ok")
 
+            self.installRuntimeObserversIfNeeded()
+            self.isConfigured = true
             self.publishOnMain {
                 self.unavailableMessage = nil
                 self.lastError = nil
@@ -435,6 +507,8 @@ final class CameraService: NSObject, ObservableObject {
 
         publishOnMain {
             self.lastError = "Camera runtime error (\(code)). Retrying…"
+            self.isCapturing = false
+            self.isSessionRunning = false
         }
 
         sessionQueue.async { [weak self] in
@@ -447,9 +521,16 @@ final class CameraService: NSObject, ObservableObject {
 
             self.lastRecoveryAttempt = now
             CameraDebugLogger.log("runtime recovery started")
-            self.session.stopRunning()
+            if self.session.isRunning {
+                self.session.stopRunning()
+            }
             self.isConfigured = false
-            self.configureSession()
+            self.videoInput = nil
+            self.session.beginConfiguration()
+            self.session.inputs.forEach { self.session.removeInput($0) }
+            self.session.outputs.forEach { self.session.removeOutput($0) }
+            self.session.commitConfiguration()
+            self.configureSessionIfNeeded()
             self.start()
         }
     }
@@ -461,44 +542,60 @@ extension CameraService: AVCapturePhotoCaptureDelegate {
         didFinishProcessingPhoto photo: AVCapturePhoto,
         error: Error?
     ) {
+        let uniqueID = photo.resolvedSettings.uniqueID
+
         if let error {
-            CameraDebugLogger.log("didFinishProcessingPhoto error=\(error.localizedDescription)")
+            CameraDebugLogger.log("didFinishProcessingPhoto uniqueID=\(uniqueID) error=\(error.localizedDescription)")
+        } else {
+            CameraDebugLogger.log("didFinishProcessingPhoto uniqueID=\(uniqueID) success")
         }
 
         let data = photo.fileDataRepresentation()
-        let uniqueID = photo.resolvedSettings.uniqueID
 
         self.sessionQueue.async { [weak self] in
             guard let self else { return }
-            let completion = self.pendingCaptures.removeValue(forKey: uniqueID)
+            self.clearCaptureState(uniqueID: uniqueID, data: data)
+        }
+    }
+
+    nonisolated func photoOutput(
+        _ output: AVCapturePhotoOutput,
+        didFinishCaptureFor resolvedSettings: AVCaptureResolvedPhotoSettings,
+        error: Error?
+    ) {
+        let uniqueID = resolvedSettings.uniqueID
+        if let error {
+            CameraDebugLogger.log("didFinishCaptureFor uniqueID=\(uniqueID) error=\(error.localizedDescription)")
+            self.sessionQueue.async { [weak self] in
+                guard let self else { return }
+                self.clearCaptureState(uniqueID: uniqueID, data: nil)
+                self.publishOnMain {
+                    self.lastError = "Could not capture photo. Please try again."
+                }
+            }
+            return
+        }
+
+        CameraDebugLogger.log("didFinishCaptureFor uniqueID=\(uniqueID) complete")
+        self.sessionQueue.async { [weak self] in
+            guard let self else { return }
+            self.captureTimeoutWorkItem?.cancel()
             self.publishOnMain {
-                completion?(data)
+                self.isCapturing = false
             }
         }
     }
 }
 
 private enum CameraDeviceSelector {
-    private static let discoveryTypes: [AVCaptureDevice.DeviceType] = [
-        .builtInWideAngleCamera,
-    ]
-
     static func selectCamera(preferred: AVCaptureDevice.Position) -> AVCaptureDevice? {
-        let discoverySession = AVCaptureDevice.DiscoverySession(
-            deviceTypes: discoveryTypes,
-            mediaType: .video,
-            position: .unspecified
-        )
-
-        CameraDebugLogger.logDiscoveredDevices(discoverySession.devices)
-
         if preferred == .front,
-           let front = discoverySession.devices.first(where: { $0.position == .front && $0.deviceType == .builtInWideAngleCamera }) {
+           let front = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .front) {
             CameraDebugLogger.logSelectedDevice(front, reason: "preferred front wide-angle")
             return front
         }
 
-        if let back = discoverySession.devices.first(where: { $0.position == .back && $0.deviceType == .builtInWideAngleCamera }) {
+        if let back = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back) {
             CameraDebugLogger.logSelectedDevice(back, reason: "fallback back wide-angle")
             return back
         }
@@ -513,17 +610,6 @@ private enum CameraDebugLogger {
         #if DEBUG
         print("[Camera] \(message)")
         #endif
-    }
-
-    static func logDiscoveredDevices(_ devices: [AVCaptureDevice]) {
-        if devices.isEmpty {
-            log("discovered=[]")
-            return
-        }
-        let descriptions = devices.map { device in
-            "name=\(device.localizedName) type=\(device.deviceType.rawValue) position=\(positionDescription(device.position)) id=\(device.uniqueID)"
-        }
-        log("discovered=[\(descriptions.joined(separator: " | "))]")
     }
 
     static func logSelectedDevice(_ device: AVCaptureDevice, reason: String) {
