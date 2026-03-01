@@ -10,6 +10,7 @@ struct CameraCaptureSheet: View {
     @State private var capturedImage: UIImage?
     @State private var showPicker = false
     @State private var permissionDenied = false
+    @State private var cameraUnavailableMessage: String?
 
     var body: some View {
         NavigationStack {
@@ -36,6 +37,16 @@ struct CameraCaptureSheet: View {
                             }
                             .buttonStyle(PrimaryButtonStyle())
                         }
+                    }
+                    .padding(DS.Spacing.l)
+                } else if let cameraUnavailableMessage {
+                    VStack(spacing: DS.Spacing.s) {
+                        Image(systemName: "camera.slash.fill")
+                            .font(.system(size: 34))
+                            .foregroundStyle(DS.Colors.textSecondary)
+                        Text(cameraUnavailableMessage)
+                            .multilineTextAlignment(.center)
+                            .foregroundStyle(DS.Colors.textPrimary)
                     }
                     .padding(DS.Spacing.l)
                 } else if permissionDenied {
@@ -76,8 +87,19 @@ struct CameraCaptureSheet: View {
 
     private func requestCameraAndPresentIfNeeded() async {
         guard capturedImage == nil else { return }
+
+#if targetEnvironment(simulator)
+        cameraUnavailableMessage = "Camera not available on this device."
+        return
+#endif
+
+        guard CameraDeviceSelector.selectSupportedBackCamera() != nil else {
+            cameraUnavailableMessage = "Camera not available on this device."
+            return
+        }
+
         guard UIImagePickerController.isSourceTypeAvailable(.camera) else {
-            permissionDenied = true
+            cameraUnavailableMessage = "Camera not available on this device."
             return
         }
 
@@ -103,6 +125,7 @@ private struct CameraPicker: UIViewControllerRepresentable {
         picker.delegate = context.coordinator
         picker.sourceType = .camera
         picker.cameraCaptureMode = .photo
+        picker.cameraDevice = .rear
         picker.allowsEditing = false
         return picker
     }
@@ -130,5 +153,26 @@ private struct CameraPicker: UIViewControllerRepresentable {
         func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
             picker.dismiss(animated: true)
         }
+    }
+}
+
+private enum CameraDeviceSelector {
+    static func selectSupportedBackCamera() -> AVCaptureDevice? {
+        if let wideAngleBack = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back) {
+            return wideAngleBack
+        }
+
+        let discoverySession = AVCaptureDevice.DiscoverySession(
+            deviceTypes: [
+                .builtInWideAngleCamera,
+                .builtInDualCamera,
+                .builtInDualWideCamera,
+                .builtInTripleCamera,
+            ],
+            mediaType: .video,
+            position: .back
+        )
+
+        return discoverySession.devices.first(where: { $0.position == .back })
     }
 }
