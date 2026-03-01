@@ -25,7 +25,6 @@ final class EmployeeDashboardViewModel: ObservableObject {
     private let checkInRepository: CheckInRepositoryProtocol
     private let locationService: LocationServiceProtocol
     private let imageUploadService: ImageUploadServiceProtocol
-    private let photoCheckInPipeline: PhotoCheckInPipelineProtocol
     private let photoCompressionQuality: CGFloat = 0.7
 
     init(
@@ -34,8 +33,7 @@ final class EmployeeDashboardViewModel: ObservableObject {
         checkInService: CheckInServiceProtocol,
         checkInRepository: CheckInRepositoryProtocol,
         locationService: LocationServiceProtocol,
-        imageUploadService: ImageUploadServiceProtocol,
-        photoCheckInPipeline: PhotoCheckInPipelineProtocol
+        imageUploadService: ImageUploadServiceProtocol
     ) {
         self.authService = authService
         self.storeRepository = storeRepository
@@ -43,7 +41,6 @@ final class EmployeeDashboardViewModel: ObservableObject {
         self.checkInRepository = checkInRepository
         self.locationService = locationService
         self.imageUploadService = imageUploadService
-        self.photoCheckInPipeline = photoCheckInPipeline
     }
 
     var blockedReason: String? {
@@ -128,18 +125,95 @@ final class EmployeeDashboardViewModel: ObservableObject {
     }
 
     private func checkIn(with image: UIImage) async {
-        guard let user = authService.currentUser, let store = selectedStore else { return }
+        guard let user = authService.currentUser else {
+            errorMessage = "Sign in required."
+            return
+        }
+        guard let store = selectedStore else {
+            errorMessage = "No assigned store available."
+            return
+        }
+        guard blockedReason == nil else {
+            errorMessage = blockedReason
+            return
+        }
+        guard let location = locationService.currentLocation else {
+            errorMessage = "Location unavailable."
+            return
+        }
+
         isPhotoCheckInInProgress = true
 
         do {
-            let result = try await photoCheckInPipeline.run(
-                user: user,
-                store: store,
-                image: image,
-                locationStatus: locationStatus
+            guard var jpegData = image.jpegData(compressionQuality: photoCompressionQuality) else {
+                throw NSError(domain: "StorePass", code: 5201, userInfo: [NSLocalizedDescriptionKey: "Could not process photo."])
+            }
+            if jpegData.count > 2_000_000, let reduced = image.jpegData(compressionQuality: 0.55) {
+                jpegData = reduced
+            }
+            PhotoVerifyLogger.log("jpeg prepared purpose=checkIn compression=\(photoCompressionQuality) bytes=\(jpegData.count)")
+
+            let now = Date()
+            let distance = locationService.distance(from: location.coordinate, to: store.coordinate)
+            let approved = distance <= Double(store.radiusMeters)
+
+            let checkIn = CheckIn(
+                id: UUID().uuidString,
+                employeeId: user.id,
+                storeId: store.id,
+                checkInTime: now,
+                checkOutTime: nil,
+                clientLat: location.coordinate.latitude,
+                clientLng: location.coordinate.longitude,
+                distanceMeters: distance,
+                accuracyMeters: location.horizontalAccuracy,
+                checkOutLat: nil,
+                checkOutLng: nil,
+                checkOutDistanceMeters: nil,
+                checkOutAccuracyMeters: nil,
+                durationSeconds: nil,
+                status: approved ? .approved : .rejected,
+                rejectReason: approved ? nil : "Out of range",
+                employeeName: user.name,
+                employeeEmail: user.email,
+                storeName: store.name,
+                checkInPhotoURL: nil,
+                checkOutPhotoURL: nil,
+                checkInPhotoPath: nil,
+                checkOutPhotoPath: nil,
+                checkInPhotoCapturedAt: nil,
+                checkOutPhotoCapturedAt: nil,
+                checkInPhotoUploadedAt: nil,
+                checkOutPhotoUploadedAt: nil,
+                photoRequired: true,
+                photoVersion: 1
+            )
+            try await checkInRepository.createCheckIn(checkIn)
+
+            let uploadPath = CheckInPhotoStoragePath.makePath(storeId: store.id, employeeId: user.id, checkinId: checkIn.id, kind: .checkIn)
+            PhotoVerifyLogger.log("upload start purpose=checkIn path=\(uploadPath) bytes=\(jpegData.count)")
+            let upload = try await imageUploadService.uploadCheckInPhotoData(
+                imageData: jpegData,
+                storeId: store.id,
+                employeeId: user.id,
+                checkinId: checkIn.id,
+                kind: .checkIn
+            )
+            let uploadedAt = Date()
+            let capturedAt = Date()
+            PhotoVerifyLogger.log("upload end purpose=checkIn path=\(upload.path) downloadURL=\(upload.downloadURL)")
+
+            try await checkInRepository.attachCheckInPhoto(
+                checkinId: checkIn.id,
+                storeId: store.id,
+                managerId: nil,
+                checkInPhotoPath: upload.path,
+                checkInPhotoURL: upload.downloadURL,
+                checkInPhotoCapturedAt: capturedAt,
+                checkInPhotoUploadedAt: uploadedAt
             )
 
-            PhotoVerifyLogger.log("[CheckInPhoto] correlationId=\(result.correlationId) step=viewmodel_success checkInId=\(result.checkInId) path=\(result.photoPath)")
+            PhotoVerifyLogger.log("firestore update end purpose=checkIn checkinId=\(checkIn.id)")
 
             checkInSuccessBanner = true
             isShowingPhotoPicker = false
@@ -248,10 +322,6 @@ final class EmployeeDashboardViewModel: ObservableObject {
     }
 
     private func userFacingPhotoFlowError(_ error: Error, fallback: String) -> String? {
-        if let pipelineError = error as? PhotoCheckInPipelineError {
-            return pipelineError.errorDescription
-        }
-
         let nsError = error as NSError
 
         if nsError.domain == StorageErrorDomain,

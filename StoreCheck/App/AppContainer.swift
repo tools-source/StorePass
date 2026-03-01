@@ -12,7 +12,6 @@ final class AppContainer: ObservableObject {
     private let csvExporterFactory: () -> CSVExportServiceProtocol
     private let offlineQueueFactory: () -> OfflineCheckInQueueProtocol
     private let imageUploadServiceFactory: () -> ImageUploadServiceProtocol
-    private let photoCheckInPipelineFactory: () -> PhotoCheckInPipelineProtocol
 
     lazy var authRepository: AuthRepositoryProtocol = authRepositoryFactory()
     lazy var userRepository: UserRepositoryProtocol = userRepositoryFactory()
@@ -24,7 +23,6 @@ final class AppContainer: ObservableObject {
     lazy var csvExporter: CSVExportServiceProtocol = csvExporterFactory()
     lazy var offlineQueue: OfflineCheckInQueueProtocol = offlineQueueFactory()
     lazy var imageUploadService: ImageUploadServiceProtocol = imageUploadServiceFactory()
-    lazy var photoCheckInPipeline: PhotoCheckInPipelineProtocol = photoCheckInPipelineFactory()
 
     lazy var authService: AuthService = AuthService()
 
@@ -47,8 +45,7 @@ final class AppContainer: ObservableObject {
         locationServiceFactory: @escaping () -> LocationService = { LocationService() },
         csvExporterFactory: @escaping () -> CSVExportServiceProtocol = { CSVExportService() },
         offlineQueueFactory: @escaping () -> OfflineCheckInQueueProtocol = { OfflineCheckInQueue() },
-        imageUploadServiceFactory: @escaping () -> ImageUploadServiceProtocol = { ImageUploadService() },
-        photoCheckInPipelineFactory: @escaping () -> PhotoCheckInPipelineProtocol = { PhotoCheckInPipeline() }
+        imageUploadServiceFactory: @escaping () -> ImageUploadServiceProtocol = { ImageUploadService() }
     ) {
         self.authRepositoryFactory = authRepositoryFactory
         self.userRepositoryFactory = userRepositoryFactory
@@ -60,6 +57,5 @@ final class AppContainer: ObservableObject {
         self.csvExporterFactory = csvExporterFactory
         self.offlineQueueFactory = offlineQueueFactory
         self.imageUploadServiceFactory = imageUploadServiceFactory
-        self.photoCheckInPipelineFactory = photoCheckInPipelineFactory
     }
 }

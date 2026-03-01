@@ -17,6 +17,16 @@ protocol CheckInRepositoryProtocol {
     ) -> CheckInListenerToken
 
     func createCheckIn(_ checkIn: CheckIn) async throws
+    func attachCheckInPhoto(
+        checkinId: String,
+        storeId: String,
+        managerId: String?,
+        checkInPhotoPath: String,
+        checkInPhotoURL: String,
+        checkInPhotoCapturedAt: Date,
+        checkInPhotoUploadedAt: Date
+    ) async throws
+
     func checkout(
         checkinId: String,
         storeId: String,
@@ -146,6 +156,42 @@ final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
             logPreflightSummary(preflight: preflight, uid: uid, storeId: checkIn.storeId, prefix: "[RulesPreflight][RootWriteFailure]")
             logFirestoreError(prefix: "[CheckIn] createCheckIn", error: error)
             FirestorePermissionLogger.log(operation: "setData", path: "checkins/\(checkIn.id)", error: error, uid: uid)
+            throw mapFirestoreError(error)
+        }
+    }
+
+
+    func attachCheckInPhoto(
+        checkinId: String,
+        storeId: String,
+        managerId: String?,
+        checkInPhotoPath: String,
+        checkInPhotoURL: String,
+        checkInPhotoCapturedAt: Date,
+        checkInPhotoUploadedAt: Date
+    ) async throws {
+        guard let uid = Auth.auth().currentUser?.uid else {
+            throw NSError(domain: "StorePass", code: 4001, userInfo: [NSLocalizedDescriptionKey: "You must be signed in."])
+        }
+
+        let resolvedManagerId = try await resolveManagerId(storeId: storeId, preferredManagerId: managerId)
+        let payload: [String: Any] = [
+            "checkInPhotoPath": checkInPhotoPath,
+            "checkInPhotoURL": checkInPhotoURL,
+            "checkInPhotoCapturedAt": Timestamp(date: checkInPhotoCapturedAt),
+            "checkInPhotoUploadedAt": Timestamp(date: checkInPhotoUploadedAt),
+            "updatedAt": FieldValue.serverTimestamp()
+        ]
+
+        let batch = db.batch()
+        batch.updateData(payload, forDocument: db.collection("checkins").document(checkinId))
+        batch.updateData(payload, forDocument: db.collection("employeeCheckins").document(uid).collection("checkins").document(checkinId))
+        batch.updateData(payload, forDocument: db.collection("managerCheckins").document(resolvedManagerId).collection("stores").document(storeId).collection("checkins").document(checkinId))
+
+        do {
+            try await batch.commit()
+        } catch {
+            logFirestoreError(prefix: "[CheckIn] attachCheckInPhoto", error: error)
             throw mapFirestoreError(error)
         }
     }

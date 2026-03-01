@@ -10,8 +10,7 @@ struct EmployeeDashboardView: View {
         checkInService: CheckInServiceProtocol,
         checkInRepository: CheckInRepositoryProtocol,
         locationService: LocationServiceProtocol,
-        imageUploadService: ImageUploadServiceProtocol,
-        photoCheckInPipeline: PhotoCheckInPipelineProtocol
+        imageUploadService: ImageUploadServiceProtocol
     ) {
         _vm = StateObject(wrappedValue: EmployeeDashboardViewModel(
             authService: authService,
@@ -19,8 +18,7 @@ struct EmployeeDashboardView: View {
             checkInService: checkInService,
             checkInRepository: checkInRepository,
             locationService: locationService,
-            imageUploadService: imageUploadService,
-            photoCheckInPipeline: photoCheckInPipeline
+            imageUploadService: imageUploadService
         ))
     }
 
