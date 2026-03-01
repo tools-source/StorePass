@@ -12,6 +12,7 @@ struct ManagerCheckInsView: View {
     @State private var editHasNoCheckout = false
     @State private var editTimesValidationError: String?
     @State private var selectedPhotoCheckIn: CheckIn?
+    @State private var selectedFullPhotoURL: URL?
 
     init(
         storeRepository: StoreRepositoryProtocol,
@@ -189,6 +190,30 @@ struct ManagerCheckInsView: View {
                     .toolbar {
                         ToolbarItem(placement: .topBarTrailing) {
                             Button("Done") { selectedPhotoCheckIn = nil }
+                        }
+                    }
+                }
+            }
+
+            .sheet(isPresented: Binding(get: { selectedFullPhotoURL != nil }, set: { if !$0 { selectedFullPhotoURL = nil } })) {
+                NavigationStack {
+                    ZStack {
+                        DS.Colors.background.ignoresSafeArea()
+                        AsyncImage(url: selectedFullPhotoURL) { image in
+                            image
+                                .resizable()
+                                .scaledToFit()
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        } placeholder: {
+                            ProgressView()
+                        }
+                        .padding(DS.Spacing.m)
+                    }
+                    .navigationTitle("Photo")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            Button("Done") { selectedFullPhotoURL = nil }
                         }
                     }
                 }
@@ -371,13 +396,23 @@ struct ManagerCheckInsView: View {
                 .foregroundStyle(DS.Colors.textPrimary)
 
             if let urlString, let url = URL(string: urlString) {
-                AsyncImage(url: url) { image in
-                    image.resizable().scaledToFit()
-                } placeholder: {
-                    ProgressView()
-                        .frame(maxWidth: .infinity, minHeight: 220)
+                Button {
+                    selectedFullPhotoURL = url
+                } label: {
+                    AsyncImage(url: url) { image in
+                        image
+                            .resizable()
+                            .scaledToFill()
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 140)
+                            .clipped()
+                    } placeholder: {
+                        ProgressView()
+                            .frame(maxWidth: .infinity, minHeight: 140)
+                    }
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 }
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .buttonStyle(.plain)
             } else {
                 Text("No photo captured")
                     .font(.caption)
