@@ -11,6 +11,7 @@ struct ManagerCheckInsView: View {
     @State private var editCheckOutTime = Date()
     @State private var editHasNoCheckout = false
     @State private var editTimesValidationError: String?
+    @State private var selectedPhotoCheckIn: CheckIn?
 
     init(
         storeRepository: StoreRepositoryProtocol,
@@ -164,6 +165,34 @@ struct ManagerCheckInsView: View {
                     }
                 }
             }
+            .sheet(item: $selectedPhotoCheckIn) { checkIn in
+                NavigationStack {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: DS.Spacing.m) {
+                            Text(checkIn.employeeName)
+                                .font(.headline)
+                            Text(checkIn.storeName)
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                            Text("In: \(viewModel.formattedTime(checkIn.checkInTime)) • Out: \(checkIn.checkOutTime.map(viewModel.formattedTime) ?? "—")")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+
+                            photoCard(title: "Check In Photo", urlString: checkIn.checkInPhotoURL)
+                            photoCard(title: "Check Out Photo", urlString: checkIn.checkOutPhotoURL)
+                        }
+                        .padding(DS.Spacing.l)
+                    }
+                    .background(DS.Colors.background)
+                    .navigationTitle("Photos")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            Button("Done") { selectedPhotoCheckIn = nil }
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -277,6 +306,18 @@ struct ManagerCheckInsView: View {
                 Text(viewModel.formattedDuration(item))
                     .font(.system(.caption, design: .monospaced).weight(.semibold))
                     .frame(width: 72, alignment: .trailing)
+                if item.hasCheckInPhoto || item.hasCheckOutPhoto {
+                    HStack(spacing: 4) {
+                        if item.hasCheckInPhoto {
+                            Image(systemName: "camera.fill")
+                        }
+                        if item.hasCheckOutPhoto {
+                            Image(systemName: "camera.badge.ellipsis")
+                        }
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
             }
             .font(.subheadline)
 
@@ -311,10 +352,42 @@ struct ManagerCheckInsView: View {
             .tint(.indigo)
         }
         .swipeActions(edge: .trailing) {
+            if item.hasCheckInPhoto || item.hasCheckOutPhoto {
+                Button("Photos") {
+                    selectedPhotoCheckIn = item
+                }
+                .tint(.indigo)
+            }
             Button("Delete", role: .destructive) {
                 Task { await viewModel.delete(item) }
             }
         }
+    }
+
+    private func photoCard(title: String, urlString: String?) -> some View {
+        VStack(alignment: .leading, spacing: DS.Spacing.s) {
+            Text(title)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(DS.Colors.textPrimary)
+
+            if let urlString, let url = URL(string: urlString) {
+                AsyncImage(url: url) { image in
+                    image.resizable().scaledToFit()
+                } placeholder: {
+                    ProgressView()
+                        .frame(maxWidth: .infinity, minHeight: 220)
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            } else {
+                Text("No photo captured")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(DS.Spacing.m)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(DS.Colors.card)
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
     private func validateEditTimes(checkInTime: Date, checkOutTime: Date?) -> String? {

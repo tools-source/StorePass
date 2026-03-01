@@ -10,7 +10,8 @@ struct EmployeeTabView: View {
                 storeRepository: container.storeRepository,
                 checkInService: container.checkInService,
                 checkInRepository: container.checkInRepository,
-                locationService: container.locationService
+                locationService: container.locationService,
+                imageUploadService: container.imageUploadService
             )
             .tabItem { Label("Home", systemImage: "house") }
 

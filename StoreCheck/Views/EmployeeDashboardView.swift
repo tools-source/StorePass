@@ -9,14 +9,16 @@ struct EmployeeDashboardView: View {
         storeRepository: StoreRepositoryProtocol,
         checkInService: CheckInServiceProtocol,
         checkInRepository: CheckInRepositoryProtocol,
-        locationService: LocationServiceProtocol
+        locationService: LocationServiceProtocol,
+        imageUploadService: ImageUploadServiceProtocol
     ) {
         _vm = StateObject(wrappedValue: EmployeeDashboardViewModel(
             authService: authService,
             storeRepository: storeRepository,
             checkInService: checkInService,
             checkInRepository: checkInRepository,
-            locationService: locationService
+            locationService: locationService,
+            imageUploadService: imageUploadService
         ))
     }
 
@@ -44,15 +46,10 @@ struct EmployeeHomeView: View {
                         statusCard
 
                         Button(viewModel.activeSession == nil ? "Check In" : "Check Out") {
-                            Task {
-                                if viewModel.activeSession == nil {
-                                    await viewModel.checkIn()
-                                } else {
-                                    await viewModel.checkOut()
-                                }
-                                if viewModel.checkInSuccessBanner {
-                                    UINotificationFeedbackGenerator().notificationOccurred(.success)
-                                }
+                            if viewModel.activeSession == nil {
+                                viewModel.beginCheckInPhotoCapture()
+                            } else {
+                                viewModel.beginCheckOutPhotoCapture()
                             }
                         }
                         .buttonStyle(PrimaryButtonStyle())
@@ -128,6 +125,19 @@ struct EmployeeHomeView: View {
                     .toolbar {
                         ToolbarItem(placement: .topBarTrailing) {
                             Button("Done") { showManageStores = false }
+                        }
+                    }
+                }
+            }
+            .sheet(isPresented: $viewModel.isShowingCamera) {
+                CameraCaptureSheet(
+                    isPresented: $viewModel.isShowingCamera,
+                    title: viewModel.pendingPhotoPurpose == .checkOut ? "Check Out Photo" : "Check In Photo"
+                ) { image in
+                    Task {
+                        await viewModel.processCapturedPhoto(image)
+                        if viewModel.checkInSuccessBanner {
+                            UINotificationFeedbackGenerator().notificationOccurred(.success)
                         }
                     }
                 }

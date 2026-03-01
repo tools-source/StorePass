@@ -4,7 +4,14 @@ import Foundation
 protocol CheckInServiceProtocol {
     func evaluateLocation(for store: Store, user: UserProfile?) -> LocationCheckState
     func blockedReason(for state: LocationCheckState, user: UserProfile?, store: Store?) -> String?
-    func submitCheckIn(user: UserProfile, store: Store) async throws -> CheckIn
+    func submitCheckIn(
+        user: UserProfile,
+        store: Store,
+        checkinId: String,
+        checkInPhotoPath: String,
+        checkInPhotoURL: String,
+        checkInPhotoCapturedAt: Date
+    ) async throws -> CheckIn
 }
 
 final class CheckInService: CheckInServiceProtocol {
@@ -68,7 +75,14 @@ final class CheckInService: CheckInServiceProtocol {
         }
     }
 
-    func submitCheckIn(user: UserProfile, store: Store) async throws -> CheckIn {
+    func submitCheckIn(
+        user: UserProfile,
+        store: Store,
+        checkinId: String,
+        checkInPhotoPath: String,
+        checkInPhotoURL: String,
+        checkInPhotoCapturedAt: Date
+    ) async throws -> CheckIn {
         guard let location = locationService.currentLocation else {
             throw NSError(domain: "StorePass", code: 3001, userInfo: [NSLocalizedDescriptionKey: "Location unavailable."])
         }
@@ -76,7 +90,7 @@ final class CheckInService: CheckInServiceProtocol {
         let distance = locationService.distance(from: location.coordinate, to: store.coordinate)
         let approved = distance <= Double(store.radiusMeters)
         let checkIn = CheckIn(
-            id: UUID().uuidString,
+            id: checkinId,
             employeeId: user.id,
             storeId: store.id,
             checkInTime: Date(),
@@ -94,7 +108,15 @@ final class CheckInService: CheckInServiceProtocol {
             rejectReason: approved ? nil : "Out of range",
             employeeName: user.name,
             employeeEmail: user.email,
-            storeName: store.name
+            storeName: store.name,
+            checkInPhotoURL: checkInPhotoURL,
+            checkOutPhotoURL: nil,
+            checkInPhotoPath: checkInPhotoPath,
+            checkOutPhotoPath: nil,
+            checkInPhotoCapturedAt: checkInPhotoCapturedAt,
+            checkOutPhotoCapturedAt: nil,
+            photoRequired: true,
+            photoVersion: 1
         )
 
         do {
