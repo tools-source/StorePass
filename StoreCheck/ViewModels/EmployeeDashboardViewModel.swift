@@ -203,14 +203,15 @@ final class EmployeeDashboardViewModel: ObservableObject {
             let capturedAt = Date()
             PhotoVerifyLogger.log("upload end purpose=checkIn path=\(upload.path) downloadURL=\(upload.downloadURL)")
 
-            try await checkInRepository.attachCheckInPhoto(
+            try await checkInRepository.attachPhoto(
                 checkinId: checkIn.id,
                 storeId: store.id,
-                managerId: nil,
-                checkInPhotoPath: upload.path,
-                checkInPhotoURL: upload.downloadURL,
-                checkInPhotoCapturedAt: capturedAt,
-                checkInPhotoUploadedAt: uploadedAt
+                employeeId: user.id,
+                kind: .checkIn,
+                photoPath: upload.path,
+                photoURL: upload.downloadURL,
+                capturedAt: capturedAt,
+                uploadedAt: uploadedAt
             )
 
             PhotoVerifyLogger.log("firestore update end purpose=checkIn checkinId=\(checkIn.id)")
@@ -273,11 +274,17 @@ final class EmployeeDashboardViewModel: ObservableObject {
                 checkoutLat: location.coordinate.latitude,
                 checkoutLng: location.coordinate.longitude,
                 distanceMeters: distance,
-                accuracyMeters: location.horizontalAccuracy,
-                checkOutPhotoPath: upload.path,
-                checkOutPhotoURL: upload.downloadURL,
-                checkOutPhotoCapturedAt: Date(),
-                checkOutPhotoUploadedAt: uploadedAt
+                accuracyMeters: location.horizontalAccuracy
+            )
+            try await checkInRepository.attachPhoto(
+                checkinId: activeSession.id,
+                storeId: store.id,
+                employeeId: user.id,
+                kind: .checkOut,
+                photoPath: upload.path,
+                photoURL: upload.downloadURL,
+                capturedAt: Date(),
+                uploadedAt: uploadedAt
             )
             PhotoVerifyLogger.log("firestore update end purpose=checkOut checkinId=\(activeSession.id)")
             try await loadTodaySessions()

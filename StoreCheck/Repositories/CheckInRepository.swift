@@ -17,14 +17,15 @@ protocol CheckInRepositoryProtocol {
     ) -> CheckInListenerToken
 
     func createCheckIn(_ checkIn: CheckIn) async throws
-    func attachCheckInPhoto(
+    func attachPhoto(
         checkinId: String,
         storeId: String,
-        managerId: String?,
-        checkInPhotoPath: String,
-        checkInPhotoURL: String,
-        checkInPhotoCapturedAt: Date,
-        checkInPhotoUploadedAt: Date
+        employeeId: String,
+        kind: CheckInPhotoKind,
+        photoPath: String,
+        photoURL: String,
+        capturedAt: Date,
+        uploadedAt: Date
     ) async throws
 
     func checkout(
@@ -34,11 +35,7 @@ protocol CheckInRepositoryProtocol {
         checkoutLat: Double,
         checkoutLng: Double,
         distanceMeters: Double,
-        accuracyMeters: Double,
-        checkOutPhotoPath: String,
-        checkOutPhotoURL: String,
-        checkOutPhotoCapturedAt: Date,
-        checkOutPhotoUploadedAt: Date
+        accuracyMeters: Double
     ) async throws
     func updateCheckIn(_ checkIn: CheckIn) async throws
     func updateCheckInTimes(checkIn: CheckIn, newCheckInTime: Date, newCheckOutTime: Date?) async throws
@@ -161,37 +158,64 @@ final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
     }
 
 
-    func attachCheckInPhoto(
+    func attachPhoto(
         checkinId: String,
         storeId: String,
-        managerId: String?,
-        checkInPhotoPath: String,
-        checkInPhotoURL: String,
-        checkInPhotoCapturedAt: Date,
-        checkInPhotoUploadedAt: Date
+        employeeId: String,
+        kind: CheckInPhotoKind,
+        photoPath: String,
+        photoURL: String,
+        capturedAt: Date,
+        uploadedAt: Date
     ) async throws {
-        guard let uid = Auth.auth().currentUser?.uid else {
-            throw NSError(domain: "StorePass", code: 4001, userInfo: [NSLocalizedDescriptionKey: "You must be signed in."])
-        }
-
-        let resolvedManagerId = try await resolveManagerId(storeId: storeId, preferredManagerId: managerId)
-        let payload: [String: Any] = [
-            "checkInPhotoPath": checkInPhotoPath,
-            "checkInPhotoURL": checkInPhotoURL,
-            "checkInPhotoCapturedAt": Timestamp(date: checkInPhotoCapturedAt),
-            "checkInPhotoUploadedAt": Timestamp(date: checkInPhotoUploadedAt),
+        var payload: [String: Any] = [
             "updatedAt": FieldValue.serverTimestamp()
         ]
 
+        switch kind {
+        case .checkIn:
+            payload["checkInPhotoPath"] = photoPath
+            payload["checkInPhotoURL"] = photoURL
+            payload["checkInPhotoCapturedAt"] = Timestamp(date: capturedAt)
+            payload["checkInPhotoUploadedAt"] = Timestamp(date: uploadedAt)
+        case .checkOut:
+            payload["checkOutPhotoPath"] = photoPath
+            payload["checkOutPhotoURL"] = photoURL
+            payload["checkOutPhotoCapturedAt"] = Timestamp(date: capturedAt)
+            payload["checkOutPhotoUploadedAt"] = Timestamp(date: uploadedAt)
+        }
+
+        let rootRef = db.collection("checkins").document(checkinId)
+        let employeeMirrorRef = db.collection("employeeCheckins")
+            .document(employeeId)
+            .collection("checkins")
+            .document(checkinId)
+
+        var managerMirrorRef: DocumentReference?
+        if let managerId = try await resolveManagerIdIfPresent(checkinId: checkinId, storeId: storeId) {
+            let candidateRef = db.collection("managerCheckins")
+                .document(managerId)
+                .collection("stores")
+                .document(storeId)
+                .collection("checkins")
+                .document(checkinId)
+            let snapshot = try await candidateRef.getDocument()
+            if snapshot.exists {
+                managerMirrorRef = candidateRef
+            }
+        }
+
         let batch = db.batch()
-        batch.updateData(payload, forDocument: db.collection("checkins").document(checkinId))
-        batch.updateData(payload, forDocument: db.collection("employeeCheckins").document(uid).collection("checkins").document(checkinId))
-        batch.updateData(payload, forDocument: db.collection("managerCheckins").document(resolvedManagerId).collection("stores").document(storeId).collection("checkins").document(checkinId))
+        batch.setData(payload, forDocument: rootRef, merge: true)
+        batch.setData(payload, forDocument: employeeMirrorRef, merge: true)
+        if let managerMirrorRef {
+            batch.setData(payload, forDocument: managerMirrorRef, merge: true)
+        }
 
         do {
             try await batch.commit()
         } catch {
-            logFirestoreError(prefix: "[CheckIn] attachCheckInPhoto", error: error)
+            logFirestoreError(prefix: "[CheckIn] attachPhoto", error: error)
             throw mapFirestoreError(error)
         }
     }
@@ -203,11 +227,7 @@ final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
         checkoutLat: Double,
         checkoutLng: Double,
         distanceMeters: Double,
-        accuracyMeters: Double,
-        checkOutPhotoPath: String,
-        checkOutPhotoURL: String,
-        checkOutPhotoCapturedAt: Date,
-        checkOutPhotoUploadedAt: Date
+        accuracyMeters: Double
     ) async throws {
         guard let uid = Auth.auth().currentUser?.uid else {
             throw NSError(domain: "StorePass", code: 4001, userInfo: [NSLocalizedDescriptionKey: "You must be signed in."])
@@ -276,11 +296,7 @@ final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
                 "checkOutLng": checkoutLng,
                 "checkOutDistanceMeters": distanceMeters,
                 "checkOutAccuracyMeters": accuracyMeters,
-                "durationSeconds": durationSeconds,
-                "checkOutPhotoPath": checkOutPhotoPath,
-                "checkOutPhotoURL": checkOutPhotoURL,
-                "checkOutPhotoCapturedAt": Timestamp(date: checkOutPhotoCapturedAt),
-                "checkOutPhotoUploadedAt": Timestamp(date: checkOutPhotoUploadedAt)
+                "durationSeconds": durationSeconds
             ]
 
             print("[CheckOut][WRITE] path=checkins/\(checkinId) keys=\(payload.keys.sorted())")
@@ -565,6 +581,22 @@ final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
         } catch {
             throw mapFirestoreError(error)
         }
+    }
+
+    private func resolveManagerIdIfPresent(checkinId: String, storeId: String) async throws -> String? {
+        let checkinSnapshot = try await db.collection("checkins").document(checkinId).getDocument()
+        if let managerId = checkinSnapshot.data()?["managerId"] as? String,
+           !managerId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return managerId
+        }
+
+        let storeSnapshot = try await db.collection("stores").document(storeId).getDocument()
+        if let managerId = storeSnapshot.data()?["managerId"] as? String,
+           !managerId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return managerId
+        }
+
+        return nil
     }
 
     private func todaysCheckinsQuery(for filter: CheckInFilter) -> Query {
