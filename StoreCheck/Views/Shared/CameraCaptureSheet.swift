@@ -7,10 +7,8 @@ struct CameraCaptureSheet: View {
     let title: String
     let onCaptured: (UIImage) -> Void
 
+    @StateObject private var cameraService = CameraService()
     @State private var capturedImage: UIImage?
-    @State private var showPicker = false
-    @State private var permissionDenied = false
-    @State private var cameraUnavailableMessage: String?
 
     var body: some View {
         NavigationStack {
@@ -18,54 +16,13 @@ struct CameraCaptureSheet: View {
                 DS.Colors.background.ignoresSafeArea()
 
                 if let capturedImage {
-                    VStack(spacing: DS.Spacing.m) {
-                        Image(uiImage: capturedImage)
-                            .resizable()
-                            .scaledToFit()
-                            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-
-                        HStack(spacing: DS.Spacing.m) {
-                            Button("Retake") {
-                                self.capturedImage = nil
-                                showPicker = true
-                            }
-                            .buttonStyle(.bordered)
-
-                            Button("Use Photo") {
-                                onCaptured(capturedImage)
-                                isPresented = false
-                            }
-                            .buttonStyle(PrimaryButtonStyle())
-                        }
-                    }
-                    .padding(DS.Spacing.l)
-                } else if let cameraUnavailableMessage {
-                    VStack(spacing: DS.Spacing.s) {
-                        Image(systemName: "camera.slash.fill")
-                            .font(.system(size: 34))
-                            .foregroundStyle(DS.Colors.textSecondary)
-                        Text(cameraUnavailableMessage)
-                            .multilineTextAlignment(.center)
-                            .foregroundStyle(DS.Colors.textPrimary)
-                    }
-                    .padding(DS.Spacing.l)
-                } else if permissionDenied {
-                    VStack(spacing: DS.Spacing.s) {
-                        Image(systemName: "camera.fill")
-                            .font(.system(size: 34))
-                            .foregroundStyle(DS.Colors.textSecondary)
-                        Text("Camera access is required to continue.")
-                            .multilineTextAlignment(.center)
-                            .foregroundStyle(DS.Colors.textPrimary)
-                        Button("Open Settings") {
-                            guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
-                            UIApplication.shared.open(url)
-                        }
-                        .buttonStyle(.borderedProminent)
-                    }
-                    .padding(DS.Spacing.l)
+                    reviewUI(image: capturedImage)
+                } else if let message = cameraService.unavailableMessage {
+                    unavailableUI(message: message)
+                } else if cameraService.authorizationStatus == .denied || cameraService.authorizationStatus == .restricted {
+                    permissionDeniedUI
                 } else {
-                    ProgressView("Opening camera…")
+                    liveCameraUI
                 }
             }
             .navigationTitle(title)
@@ -77,101 +34,406 @@ struct CameraCaptureSheet: View {
             }
         }
         .task {
-            await requestCameraAndPresentIfNeeded()
-        }
-        .sheet(isPresented: $showPicker) {
-            CameraPicker(image: $capturedImage)
-                .ignoresSafeArea()
+            await cameraService.prepareIfNeeded()
         }
     }
 
-    private func requestCameraAndPresentIfNeeded() async {
-        guard capturedImage == nil else { return }
+    private var liveCameraUI: some View {
+        ZStack(alignment: .bottom) {
+            CameraPreviewView(session: cameraService.session)
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .padding(DS.Spacing.l)
+                .onAppear { cameraService.start() }
+                .onDisappear { cameraService.stop() }
 
-#if targetEnvironment(simulator)
-        CameraLogger.log("simulatorDetected; camera start skipped")
-        cameraUnavailableMessage = "Camera not available on Simulator."
+            VStack(spacing: DS.Spacing.s) {
+                if let lastError = cameraService.lastError {
+                    Text(lastError)
+                        .font(.footnote)
+                        .foregroundStyle(.red)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, DS.Spacing.l)
+                }
+
+                Button {
+                    cameraService.capturePhoto { data in
+                        guard let data,
+                              let image = UIImage(data: data) else {
+                            CameraDebugLogger.log("capture callback missing image data")
+                            return
+                        }
+                        capturedImage = image
+                    }
+                } label: {
+                    ZStack {
+                        Circle().fill(.white).frame(width: 76, height: 76)
+                        Circle().stroke(.black.opacity(0.8), lineWidth: 2).frame(width: 62, height: 62)
+                    }
+                }
+                .padding(.bottom, DS.Spacing.l)
+            }
+        }
+    }
+
+    private var permissionDeniedUI: some View {
+        VStack(spacing: DS.Spacing.s) {
+            Image(systemName: "camera.fill")
+                .font(.system(size: 34))
+                .foregroundStyle(DS.Colors.textSecondary)
+            Text("Camera access is required to continue.")
+                .multilineTextAlignment(.center)
+                .foregroundStyle(DS.Colors.textPrimary)
+            Button("Open Settings") {
+                guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
+                UIApplication.shared.open(url)
+            }
+            .buttonStyle(.borderedProminent)
+        }
+        .padding(DS.Spacing.l)
+    }
+
+    private func unavailableUI(message: String) -> some View {
+        VStack(spacing: DS.Spacing.s) {
+            Image(systemName: "camera.slash.fill")
+                .font(.system(size: 34))
+                .foregroundStyle(DS.Colors.textSecondary)
+            Text(message)
+                .multilineTextAlignment(.center)
+                .foregroundStyle(DS.Colors.textPrimary)
+        }
+        .padding(DS.Spacing.l)
+    }
+
+    private func reviewUI(image: UIImage) -> some View {
+        VStack(spacing: DS.Spacing.m) {
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFit()
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+
+            HStack(spacing: DS.Spacing.m) {
+                Button("Retake") {
+                    capturedImage = nil
+                    cameraService.start()
+                }
+                .buttonStyle(.bordered)
+
+                Button("Use Photo") {
+                    onCaptured(image)
+                    isPresented = false
+                }
+                .buttonStyle(PrimaryButtonStyle())
+            }
+        }
+        .padding(DS.Spacing.l)
+    }
+}
+
+struct CameraPreviewView: UIViewRepresentable {
+    let session: AVCaptureSession
+
+    func makeUIView(context: Context) -> PreviewView {
+        let view = PreviewView()
+        view.videoPreviewLayer.session = session
+        view.videoPreviewLayer.videoGravity = .resizeAspectFill
+        if let connection = view.videoPreviewLayer.connection,
+           connection.isVideoMirroringSupported {
+            connection.isVideoMirrored = true
+        }
+        return view
+    }
+
+    func updateUIView(_ uiView: PreviewView, context: Context) {
+        uiView.videoPreviewLayer.session = session
+    }
+}
+
+final class PreviewView: UIView {
+    override class var layerClass: AnyClass {
+        AVCaptureVideoPreviewLayer.self
+    }
+
+    var videoPreviewLayer: AVCaptureVideoPreviewLayer {
+        guard let layer = layer as? AVCaptureVideoPreviewLayer else {
+            fatalError("Expected AVCaptureVideoPreviewLayer")
+        }
+        return layer
+    }
+}
+
+final class CameraService: NSObject, ObservableObject {
+    let session = AVCaptureSession()
+    private let sessionQueue = DispatchQueue(label: "camera.session.queue")
+    private let output = AVCapturePhotoOutput()
+
+    @Published var isRunning = false
+    @Published var lastError: String?
+    @Published var authorizationStatus: AVAuthorizationStatus = AVCaptureDevice.authorizationStatus(for: .video)
+    @Published var unavailableMessage: String?
+
+    private var isConfigured = false
+    private var pendingCaptures: [Int64: (Data?) -> Void] = [:]
+    private var setupInProgress = false
+    private var runtimeObserverTokens: [NSObjectProtocol] = []
+    private var lastStartRequest: Date?
+    private var lastStopRequest: Date?
+    private var lastRecoveryAttempt: Date?
+
+    deinit {
+        for token in runtimeObserverTokens {
+            NotificationCenter.default.removeObserver(token)
+        }
+    }
+
+    func prepareIfNeeded() async {
+        guard !setupInProgress else { return }
+        setupInProgress = true
+
+        #if targetEnvironment(simulator)
+        unavailableMessage = "Camera not available on Simulator."
+        CameraDebugLogger.log("simulatorDetected; camera setup skipped")
+        setupInProgress = false
         return
-#endif
+        #endif
 
-        guard UIImagePickerController.isSourceTypeAvailable(.camera) else {
-            CameraLogger.log("sourceType camera unavailable")
-            cameraUnavailableMessage = "Camera not available on this device."
-            return
-        }
+        authorizationStatus = AVCaptureDevice.authorizationStatus(for: .video)
+        CameraDebugLogger.log("authorizationStatus=\(CameraDebugLogger.authorizationDescription(authorizationStatus))")
 
-        let selectedDevice = CameraDeviceSelector.selectCamera(preferred: .front)
-        guard selectedDevice != nil else {
-            CameraLogger.log("selectCamera returned nil")
-            cameraUnavailableMessage = "Camera not available on this device."
-            return
-        }
-
-        let status = AVCaptureDevice.authorizationStatus(for: .video)
-        CameraLogger.log("authorizationStatus=\(CameraLogger.authorizationDescription(status))")
-
-        switch status {
-        case .authorized:
-            showPicker = true
-            CameraLogger.log("camera presentation allowed (authorized)")
+        switch authorizationStatus {
         case .notDetermined:
             let granted = await AVCaptureDevice.requestAccess(for: .video)
-            CameraLogger.log("requestAccess result=\(granted)")
-            permissionDenied = !granted
-            showPicker = granted
+            authorizationStatus = AVCaptureDevice.authorizationStatus(for: .video)
+            CameraDebugLogger.log("requestAccess result=\(granted) statusNow=\(CameraDebugLogger.authorizationDescription(authorizationStatus))")
+            guard granted else {
+                setupInProgress = false
+                return
+            }
+            configureSession()
+        case .authorized:
+            configureSession()
         case .denied, .restricted:
-            permissionDenied = true
-            CameraLogger.log("camera presentation denied by permission state")
+            CameraDebugLogger.log("prepare blocked by authorization state")
         @unknown default:
-            permissionDenied = true
-            CameraLogger.log("camera presentation denied due to unknown authorization state")
+            CameraDebugLogger.log("prepare blocked by unknown authorization state")
+        }
+
+        setupInProgress = false
+    }
+
+    func start() {
+        let now = Date()
+        if let lastStartRequest, now.timeIntervalSince(lastStartRequest) < 0.2 {
+            CameraDebugLogger.log("start skipped due to debounce")
+            return
+        }
+        self.lastStartRequest = now
+
+        sessionQueue.async { [weak self] in
+            guard let self else { return }
+            guard self.isConfigured else {
+                CameraDebugLogger.log("start skipped; session not configured")
+                return
+            }
+            guard !self.session.isRunning else {
+                CameraDebugLogger.log("start skipped; already running")
+                return
+            }
+            CameraDebugLogger.log("session.startRunning")
+            self.session.startRunning()
+            DispatchQueue.main.async {
+                self.isRunning = self.session.isRunning
+            }
+        }
+    }
+
+    func stop() {
+        let now = Date()
+        if let lastStopRequest, now.timeIntervalSince(lastStopRequest) < 0.2 {
+            CameraDebugLogger.log("stop skipped due to debounce")
+            return
+        }
+        lastStopRequest = now
+
+        sessionQueue.async { [weak self] in
+            guard let self else { return }
+            guard self.session.isRunning else {
+                CameraDebugLogger.log("stop skipped; already stopped")
+                return
+            }
+            CameraDebugLogger.log("session.stopRunning")
+            self.session.stopRunning()
+            DispatchQueue.main.async {
+                self.isRunning = self.session.isRunning
+            }
+        }
+    }
+
+    func capturePhoto(_ completion: @escaping (Data?) -> Void) {
+        sessionQueue.async { [weak self] in
+            guard let self else { return }
+            guard self.isConfigured else {
+                CameraDebugLogger.log("capture blocked; session not configured")
+                DispatchQueue.main.async { completion(nil) }
+                return
+            }
+
+            let settings = AVCapturePhotoSettings()
+            settings.flashMode = .off
+            settings.photoQualityPrioritization = .quality
+            self.pendingCaptures[settings.uniqueID] = completion
+            CameraDebugLogger.log("capturePhoto requested uniqueID=\(settings.uniqueID)")
+            self.output.capturePhoto(with: settings, delegate: self)
+        }
+    }
+
+    private func configureSession() {
+        sessionQueue.async { [weak self] in
+            guard let self else { return }
+            CameraDebugLogger.log("session configuration begin")
+            self.session.beginConfiguration()
+            self.session.sessionPreset = .photo
+
+            self.session.inputs.forEach { self.session.removeInput($0) }
+            self.session.outputs.forEach { self.session.removeOutput($0) }
+
+            let selectedDevice = CameraDeviceSelector.selectCamera(preferred: .front)
+            guard let selectedDevice else {
+                self.session.commitConfiguration()
+                CameraDebugLogger.log("session configuration failed; no camera device")
+                DispatchQueue.main.async {
+                    self.unavailableMessage = "Camera not available on this device."
+                    self.lastError = "Camera unavailable"
+                    self.isConfigured = false
+                }
+                return
+            }
+
+            do {
+                let input = try AVCaptureDeviceInput(device: selectedDevice)
+                guard self.session.canAddInput(input) else {
+                    self.session.commitConfiguration()
+                    CameraDebugLogger.log("session cannot add selected input")
+                    DispatchQueue.main.async {
+                        self.lastError = "Could not access camera input"
+                        self.isConfigured = false
+                    }
+                    return
+                }
+                self.session.addInput(input)
+                CameraDebugLogger.log("session added input device=\(selectedDevice.localizedName)")
+            } catch {
+                self.session.commitConfiguration()
+                CameraDebugLogger.log("session failed to create input error=\(error.localizedDescription)")
+                DispatchQueue.main.async {
+                    self.lastError = "Could not access camera"
+                    self.isConfigured = false
+                }
+                return
+            }
+
+            guard self.session.canAddOutput(self.output) else {
+                self.session.commitConfiguration()
+                CameraDebugLogger.log("session cannot add AVCapturePhotoOutput")
+                DispatchQueue.main.async {
+                    self.lastError = "Could not configure photo output"
+                    self.isConfigured = false
+                }
+                return
+            }
+            self.session.addOutput(self.output)
+            self.output.isHighResolutionCaptureEnabled = true
+            CameraDebugLogger.log("session added AVCapturePhotoOutput")
+
+            self.session.commitConfiguration()
+            self.installRuntimeObserversIfNeeded()
+            CameraDebugLogger.log("session configuration commit complete")
+
+            DispatchQueue.main.async {
+                self.unavailableMessage = nil
+                self.lastError = nil
+                self.isConfigured = true
+            }
+        }
+    }
+
+    private func installRuntimeObserversIfNeeded() {
+        guard runtimeObserverTokens.isEmpty else { return }
+        let center = NotificationCenter.default
+
+        let runtimeErrorToken = center.addObserver(
+            forName: .AVCaptureSessionRuntimeError,
+            object: session,
+            queue: nil
+        ) { [weak self] notification in
+            self?.handleRuntimeError(notification)
+        }
+
+        let interruptedToken = center.addObserver(
+            forName: .AVCaptureSessionWasInterrupted,
+            object: session,
+            queue: nil
+        ) { notification in
+            CameraDebugLogger.log("runtime interrupted userInfo=\(notification.userInfo ?? [:])")
+        }
+
+        let interruptionEndedToken = center.addObserver(
+            forName: .AVCaptureSessionInterruptionEnded,
+            object: session,
+            queue: nil
+        ) { notification in
+            CameraDebugLogger.log("runtime interruption ended userInfo=\(notification.userInfo ?? [:])")
+        }
+
+        runtimeObserverTokens = [runtimeErrorToken, interruptedToken, interruptionEndedToken]
+    }
+
+    private func handleRuntimeError(_ notification: Notification) {
+        let nsError = notification.userInfo?[AVCaptureSessionErrorKey] as? NSError
+        let domain = nsError?.domain ?? "unknown"
+        let code = nsError?.code ?? -1
+        CameraDebugLogger.log("runtime error domain=\(domain) code=\(code) userInfo=\(notification.userInfo ?? [:])")
+
+        DispatchQueue.main.async {
+            self.lastError = "Camera runtime error (\(code)). Retrying…"
+        }
+
+        sessionQueue.async { [weak self] in
+            guard let self else { return }
+            let now = Date()
+            if let lastRecoveryAttempt, now.timeIntervalSince(lastRecoveryAttempt) < 3 {
+                CameraDebugLogger.log("runtime recovery throttled")
+                return
+            }
+
+            self.lastRecoveryAttempt = now
+            CameraDebugLogger.log("runtime recovery started")
+            self.session.stopRunning()
+            self.isConfigured = false
+            self.configureSession()
+            self.start()
         }
     }
 }
 
-private struct CameraPicker: UIViewControllerRepresentable {
-    @Binding var image: UIImage?
-
-    func makeUIViewController(context: Context) -> UIImagePickerController {
-        let picker = UIImagePickerController()
-        picker.delegate = context.coordinator
-        picker.sourceType = .camera
-        picker.cameraCaptureMode = .photo
-
-        let preferredDevice = CameraDeviceSelector.preferredPickerDevice
-        picker.cameraDevice = preferredDevice
-        CameraLogger.log("picker configured sourceType=camera mode=photo cameraDevice=\(CameraLogger.pickerDeviceDescription(preferredDevice))")
-
-        picker.allowsEditing = false
-        return picker
-    }
-
-    func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) { }
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(image: $image)
-    }
-
-    final class Coordinator: NSObject, UINavigationControllerDelegate, UIImagePickerControllerDelegate {
-        @Binding var image: UIImage?
-
-        init(image: Binding<UIImage?>) {
-            _image = image
+extension CameraService: AVCapturePhotoCaptureDelegate {
+    nonisolated func photoOutput(
+        _ output: AVCapturePhotoOutput,
+        didFinishProcessingPhoto photo: AVCapturePhoto,
+        error: Error?
+    ) {
+        if let error {
+            CameraDebugLogger.log("didFinishProcessingPhoto error=\(error.localizedDescription)")
         }
 
-        func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
-            if let captured = info[.originalImage] as? UIImage {
-                CameraLogger.log("didFinishPickingMedia originalImage found")
-                image = captured
-            } else {
-                CameraLogger.log("didFinishPickingMedia missing originalImage")
+        let data = photo.fileDataRepresentation()
+        let uniqueID = photo.resolvedSettings.uniqueID
+
+        self.sessionQueue.async { [weak self] in
+            guard let self else { return }
+            let completion = self.pendingCaptures.removeValue(forKey: uniqueID)
+            DispatchQueue.main.async {
+                completion?(data)
             }
-            picker.dismiss(animated: true)
-        }
-
-        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
-            CameraLogger.log("picker cancelled")
-            picker.dismiss(animated: true)
         }
     }
 }
@@ -179,22 +441,7 @@ private struct CameraPicker: UIViewControllerRepresentable {
 private enum CameraDeviceSelector {
     private static let discoveryTypes: [AVCaptureDevice.DeviceType] = [
         .builtInWideAngleCamera,
-        .builtInDualCamera,
-        .builtInDualWideCamera,
-        .builtInTripleCamera,
     ]
-
-    static var preferredPickerDevice: UIImagePickerController.CameraDevice {
-        if UIImagePickerController.isCameraDeviceAvailable(.front) {
-            return .front
-        }
-
-        if UIImagePickerController.isCameraDeviceAvailable(.rear) {
-            return .rear
-        }
-
-        return .rear
-    }
 
     static func selectCamera(preferred: AVCaptureDevice.Position) -> AVCaptureDevice? {
         let discoverySession = AVCaptureDevice.DiscoverySession(
@@ -203,45 +450,25 @@ private enum CameraDeviceSelector {
             position: .unspecified
         )
 
-        CameraLogger.logDiscoveredDevices(discoverySession.devices)
+        CameraDebugLogger.logDiscoveredDevices(discoverySession.devices)
 
         if preferred == .front,
-           let frontWideAngle = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .front) {
-            CameraLogger.logSelectedDevice(frontWideAngle, reason: "default(.builtInWideAngleCamera, position: .front)")
-            return frontWideAngle
+           let front = discoverySession.devices.first(where: { $0.position == .front && $0.deviceType == .builtInWideAngleCamera }) {
+            CameraDebugLogger.logSelectedDevice(front, reason: "preferred front wide-angle")
+            return front
         }
 
-        if let anyPreferred = firstDevice(in: discoverySession.devices, position: preferred) {
-            CameraLogger.logSelectedDevice(anyPreferred, reason: "discovery fallback for preferred position")
-            return anyPreferred
+        if let back = discoverySession.devices.first(where: { $0.position == .back && $0.deviceType == .builtInWideAngleCamera }) {
+            CameraDebugLogger.logSelectedDevice(back, reason: "fallback back wide-angle")
+            return back
         }
 
-        if let backWideAngle = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back) {
-            CameraLogger.logSelectedDevice(backWideAngle, reason: "fallback back wide angle")
-            return backWideAngle
-        }
-
-        if let anyBack = firstDevice(in: discoverySession.devices, position: .back) {
-            CameraLogger.logSelectedDevice(anyBack, reason: "discovery fallback for back position")
-            return anyBack
-        }
-
-        CameraLogger.log("no camera device available")
+        CameraDebugLogger.log("no wide-angle camera discovered")
         return nil
-    }
-
-    private static func firstDevice(in devices: [AVCaptureDevice], position: AVCaptureDevice.Position) -> AVCaptureDevice? {
-        for type in discoveryTypes {
-            if let matched = devices.first(where: { $0.position == position && $0.deviceType == type }) {
-                return matched
-            }
-        }
-
-        return devices.first(where: { $0.position == position })
     }
 }
 
-private enum CameraLogger {
+private enum CameraDebugLogger {
     static func log(_ message: String) {
         #if DEBUG
         print("[Camera] \(message)")
@@ -249,6 +476,10 @@ private enum CameraLogger {
     }
 
     static func logDiscoveredDevices(_ devices: [AVCaptureDevice]) {
+        if devices.isEmpty {
+            log("discovered=[]")
+            return
+        }
         let descriptions = devices.map { device in
             "name=\(device.localizedName) type=\(device.deviceType.rawValue) position=\(positionDescription(device.position)) id=\(device.uniqueID)"
         }
@@ -265,14 +496,6 @@ private enum CameraLogger {
         case .notDetermined: return "notDetermined"
         case .denied: return "denied"
         case .restricted: return "restricted"
-        @unknown default: return "unknown"
-        }
-    }
-
-    static func pickerDeviceDescription(_ device: UIImagePickerController.CameraDevice) -> String {
-        switch device {
-        case .front: return "front"
-        case .rear: return "rear"
         @unknown default: return "unknown"
         }
     }
