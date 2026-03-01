@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		0B3067FC2F4C2625003A33F7 /* FirebaseFunctions in Frameworks */ = {isa = PBXBuildFile; productRef = 0B3067FB2F4C2625003A33F7 /* FirebaseFunctions */; };
+		0B3067FE2F4C2625003A33F7 /* FirebaseStorage in Frameworks */ = {isa = PBXBuildFile; productRef = 0B3067FF2F4C2625003A33F7 /* FirebaseStorage */; };
 		0B6BDCF12F49726000996928 /* FirestoreStoreRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B6BDCF02F49720B00996928 /* FirestoreStoreRepository.swift */; };
 		0B885E2D2F41905D0011D606 /* FirebaseAuth in Frameworks */ = {isa = PBXBuildFile; productRef = 0B885E2C2F41905D0011D606 /* FirebaseAuth */; };
 		0B885E2F2F41905D0011D606 /* FirebaseCore in Frameworks */ = {isa = PBXBuildFile; productRef = 0B885E2E2F41905D0011D606 /* FirebaseCore */; };
@@ -63,6 +64,8 @@
 		BEEFABCD123400000000008A /* ManagerCheckInsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD123400000000008C /* ManagerCheckInsViewModel.swift */; };
 		BEEFABCD123400000000008B /* ManagerCheckInsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD123400000000008D /* ManagerCheckInsView.swift */; };
 		BEEFABCD12340000000000A1 /* TimesheetComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD12340000000000A0 /* TimesheetComponents.swift */; };
+		BEEFABCD12340000000000A4 /* CameraCaptureSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD12340000000000A3 /* CameraCaptureSheet.swift */; };
+		BEEFABCD12340000000000A6 /* ImageUploadService.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD12340000000000A5 /* ImageUploadService.swift */; };
 		BEEFABCD1234000000000093 /* BiometricAuthService.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000090 /* BiometricAuthService.swift */; };
 		BEEFABCD1234000000000094 /* AppLockViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000091 /* AppLockViewModel.swift */; };
 		BEEFABCD1234000000000095 /* AppLockOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000092 /* AppLockOverlayView.swift */; };
@@ -126,6 +129,8 @@
 		BEEFABCD123400000000008C /* ManagerCheckInsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManagerCheckInsViewModel.swift; sourceTree = "<group>"; };
 		BEEFABCD123400000000008D /* ManagerCheckInsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManagerCheckInsView.swift; sourceTree = "<group>"; };
 		BEEFABCD12340000000000A0 /* TimesheetComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimesheetComponents.swift; sourceTree = "<group>"; };
+		BEEFABCD12340000000000A3 /* CameraCaptureSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraCaptureSheet.swift; sourceTree = "<group>"; };
+		BEEFABCD12340000000000A5 /* ImageUploadService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageUploadService.swift; sourceTree = "<group>"; };
 		BEEFABCD1234000000000090 /* BiometricAuthService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BiometricAuthService.swift; sourceTree = "<group>"; };
 		BEEFABCD1234000000000091 /* AppLockViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLockViewModel.swift; sourceTree = "<group>"; };
 		BEEFABCD1234000000000092 /* AppLockOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLockOverlayView.swift; sourceTree = "<group>"; };
@@ -140,6 +145,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				BEEFABCD123400000000006F /* GoogleSignIn in Frameworks */,
+				0B3067FE2F4C2625003A33F7 /* FirebaseStorage in Frameworks */,
 				0B885E312F41905D0011D606 /* FirebaseFirestore in Frameworks */,
 				0B3067FC2F4C2625003A33F7 /* FirebaseFunctions in Frameworks */,
 				0B885E2F2F41905D0011D606 /* FirebaseCore in Frameworks */,
@@ -266,6 +272,7 @@
 				BEEFABCD1234000000000010 /* CSVExportService.swift */,
 				BEEFABCD1234000000000011 /* CheckInService.swift */,
 				BEEFABCD1234000000000012 /* DistanceCalculator.swift */,
+				BEEFABCD12340000000000A5 /* ImageUploadService.swift */,
 				BEEFABCD1234000000000013 /* LocationService.swift */,
 				BEEFABCD1234000000000014 /* OfflineCheckInQueue.swift */,
 			);
@@ -319,6 +326,7 @@
 			isa = PBXGroup;
 			children = (
 				BEEFABCD12340000000000A0 /* TimesheetComponents.swift */,
+				BEEFABCD12340000000000A3 /* CameraCaptureSheet.swift */,
 			);
 			path = Shared;
 			sourceTree = "<group>";
@@ -365,6 +373,7 @@
 				0B885E2E2F41905D0011D606 /* FirebaseCore */,
 				0B885E302F41905D0011D606 /* FirebaseFirestore */,
 				0B3067FB2F4C2625003A33F7 /* FirebaseFunctions */,
+				0B3067FF2F4C2625003A33F7 /* FirebaseStorage */,
 			);
 			productName = StoreCheck;
 			productReference = BEEFABCD1234000000000028 /* StoreCheck.app */;
@@ -450,6 +459,7 @@
 				BEEFABCD1234000000000038 /* CSVExportService.swift in Sources */,
 				BEEFABCD1234000000000039 /* CheckInService.swift in Sources */,
 				BEEFABCD123400000000003A /* DistanceCalculator.swift in Sources */,
+				BEEFABCD12340000000000A6 /* ImageUploadService.swift in Sources */,
 				BEEFABCD123400000000003B /* LocationService.swift in Sources */,
 				BEEFABCD123400000000003C /* OfflineCheckInQueue.swift in Sources */,
 				BEEFABCD123400000000003D /* EmployeeDashboardViewModel.swift in Sources */,
@@ -470,6 +480,7 @@
 				BEEFABCD1234000000000049 /* ManagerDashboardView.swift in Sources */,
 				BEEFABCD123400000000008B /* ManagerCheckInsView.swift in Sources */,
 				BEEFABCD12340000000000A1 /* TimesheetComponents.swift in Sources */,
+				BEEFABCD12340000000000A4 /* CameraCaptureSheet.swift in Sources */,
 				BEEFABCD123400000000004A /* ManagerTabView.swift in Sources */,
 				BEEFABCD123400000000004B /* RootView.swift in Sources */,
 				BEEFABCD1234000000000088 /* ManagerAccessRequiredView.swift in Sources */,
@@ -616,6 +627,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 0B885E2B2F41905D0011D606 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
 			productName = FirebaseFunctions;
+		};
+		0B3067FF2F4C2625003A33F7 /* FirebaseStorage */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 0B885E2B2F41905D0011D606 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseStorage;
 		};
 		0B885E2C2F41905D0011D606 /* FirebaseAuth */ = {
 			isa = XCSwiftPackageProductDependency;

@@ -25,6 +25,14 @@ struct CheckIn: Codable, Identifiable, Hashable {
     var employeeName: String
     var employeeEmail: String?
     var storeName: String
+    var checkInPhotoURL: String?
+    var checkOutPhotoURL: String?
+    var checkInPhotoPath: String?
+    var checkOutPhotoPath: String?
+    var checkInPhotoCapturedAt: Date?
+    var checkOutPhotoCapturedAt: Date?
+    var photoRequired: Bool
+    var photoVersion: Int
 
     var computedDurationSeconds: Int? {
         guard let checkOutTime else { return nil }
@@ -32,5 +40,13 @@ struct CheckIn: Codable, Identifiable, Hashable {
             return durationSeconds
         }
         return max(Int(checkOutTime.timeIntervalSince(checkInTime)), 0)
+    }
+
+    var hasCheckInPhoto: Bool {
+        checkInPhotoPath?.isEmpty == false || checkInPhotoURL?.isEmpty == false
+    }
+
+    var hasCheckOutPhoto: Bool {
+        checkOutPhotoPath?.isEmpty == false || checkOutPhotoURL?.isEmpty == false
     }
 }

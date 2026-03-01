@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 
 @MainActor
 final class EmployeeDashboardViewModel: ObservableObject {
@@ -11,25 +12,30 @@ final class EmployeeDashboardViewModel: ObservableObject {
     @Published var joinStatusMessage: String?
     @Published var todaysCheckIns: [CheckIn] = []
     @Published var lastLocationRefreshAt: Date?
+    @Published var isShowingCamera = false
+    @Published var pendingPhotoPurpose: CheckInPhotoKind?
 
     private let authService: AuthService
     private let storeRepository: StoreRepositoryProtocol
     private let checkInService: CheckInServiceProtocol
     private let checkInRepository: CheckInRepositoryProtocol
     private let locationService: LocationServiceProtocol
+    private let imageUploadService: ImageUploadServiceProtocol
 
     init(
         authService: AuthService,
         storeRepository: StoreRepositoryProtocol,
         checkInService: CheckInServiceProtocol,
         checkInRepository: CheckInRepositoryProtocol,
-        locationService: LocationServiceProtocol
+        locationService: LocationServiceProtocol,
+        imageUploadService: ImageUploadServiceProtocol
     ) {
         self.authService = authService
         self.storeRepository = storeRepository
         self.checkInService = checkInService
         self.checkInRepository = checkInRepository
         self.locationService = locationService
+        self.imageUploadService = imageUploadService
     }
 
     var blockedReason: String? {
@@ -74,10 +80,47 @@ final class EmployeeDashboardViewModel: ObservableObject {
         }
     }
 
-    func checkIn() async {
+    func beginCheckInPhotoCapture() {
+        pendingPhotoPurpose = .checkIn
+        isShowingCamera = true
+    }
+
+    func beginCheckOutPhotoCapture() {
+        pendingPhotoPurpose = .checkOut
+        isShowingCamera = true
+    }
+
+    func processCapturedPhoto(_ image: UIImage) async {
+        guard let purpose = pendingPhotoPurpose else { return }
+        switch purpose {
+        case .checkIn:
+            await checkIn(with: image)
+        case .checkOut:
+            await checkOut(with: image)
+        }
+        pendingPhotoPurpose = nil
+    }
+
+    private func checkIn(with image: UIImage) async {
         guard let user = authService.currentUser, let store = selectedStore else { return }
+        let checkinId = UUID().uuidString
+        let capturedAt = Date()
         do {
-            _ = try await checkInService.submitCheckIn(user: user, store: store)
+            let upload = try await imageUploadService.uploadCheckInPhoto(
+                image: image,
+                storeId: store.id,
+                employeeId: user.id,
+                checkinId: checkinId,
+                kind: .checkIn
+            )
+            _ = try await checkInService.submitCheckIn(
+                user: user,
+                store: store,
+                checkinId: checkinId,
+                checkInPhotoPath: upload.path,
+                checkInPhotoURL: upload.downloadURL,
+                checkInPhotoCapturedAt: capturedAt
+            )
             checkInSuccessBanner = true
             try await loadTodaySessions()
         } catch {
@@ -85,14 +128,22 @@ final class EmployeeDashboardViewModel: ObservableObject {
         }
     }
 
-    func checkOut() async {
+    private func checkOut(with image: UIImage) async {
         guard let activeSession, let store = selectedStore else { return }
+        guard let user = authService.currentUser else { return }
         guard let location = locationService.currentLocation else {
             errorMessage = "Location unavailable."
             return
         }
 
         do {
+            let upload = try await imageUploadService.uploadCheckInPhoto(
+                image: image,
+                storeId: store.id,
+                employeeId: user.id,
+                checkinId: activeSession.id,
+                kind: .checkOut
+            )
             let distance = locationService.distance(from: location.coordinate, to: store.coordinate)
             try await checkInRepository.checkout(
                 checkinId: activeSession.id,
@@ -101,7 +152,10 @@ final class EmployeeDashboardViewModel: ObservableObject {
                 checkoutLat: location.coordinate.latitude,
                 checkoutLng: location.coordinate.longitude,
                 distanceMeters: distance,
-                accuracyMeters: location.horizontalAccuracy
+                accuracyMeters: location.horizontalAccuracy,
+                checkOutPhotoPath: upload.path,
+                checkOutPhotoURL: upload.downloadURL,
+                checkOutPhotoCapturedAt: Date()
             )
             try await loadTodaySessions()
         } catch {

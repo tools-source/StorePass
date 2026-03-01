@@ -17,7 +17,18 @@ protocol CheckInRepositoryProtocol {
     ) -> CheckInListenerToken
 
     func createCheckIn(_ checkIn: CheckIn) async throws
-    func checkout(checkinId: String, storeId: String, managerId: String?, checkoutLat: Double, checkoutLng: Double, distanceMeters: Double, accuracyMeters: Double) async throws
+    func checkout(
+        checkinId: String,
+        storeId: String,
+        managerId: String?,
+        checkoutLat: Double,
+        checkoutLng: Double,
+        distanceMeters: Double,
+        accuracyMeters: Double,
+        checkOutPhotoPath: String,
+        checkOutPhotoURL: String,
+        checkOutPhotoCapturedAt: Date
+    ) async throws
     func updateCheckIn(_ checkIn: CheckIn) async throws
     func updateCheckInTimes(checkIn: CheckIn, newCheckInTime: Date, newCheckOutTime: Date?) async throws
     func deleteCheckIn(checkinId: String, employeeId: String, storeId: String, managerId: String?) async throws
@@ -145,7 +156,10 @@ final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
         checkoutLat: Double,
         checkoutLng: Double,
         distanceMeters: Double,
-        accuracyMeters: Double
+        accuracyMeters: Double,
+        checkOutPhotoPath: String,
+        checkOutPhotoURL: String,
+        checkOutPhotoCapturedAt: Date
     ) async throws {
         guard let uid = Auth.auth().currentUser?.uid else {
             throw NSError(domain: "StorePass", code: 4001, userInfo: [NSLocalizedDescriptionKey: "You must be signed in."])
@@ -214,7 +228,10 @@ final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
                 "checkOutLng": checkoutLng,
                 "checkOutDistanceMeters": distanceMeters,
                 "checkOutAccuracyMeters": accuracyMeters,
-                "durationSeconds": durationSeconds
+                "durationSeconds": durationSeconds,
+                "checkOutPhotoPath": checkOutPhotoPath,
+                "checkOutPhotoURL": checkOutPhotoURL,
+                "checkOutPhotoCapturedAt": Timestamp(date: checkOutPhotoCapturedAt)
             ]
 
             print("[CheckOut][WRITE] path=checkins/\(checkinId) keys=\(payload.keys.sorted())")
@@ -541,7 +558,15 @@ final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
             "employeeName": checkIn.employeeName,
             "employeeEmail": checkIn.employeeEmail as Any,
             "storeName": resolvedStoreName,
-            "managerId": storeData?["managerId"] as Any
+            "managerId": storeData?["managerId"] as Any,
+            "checkInPhotoURL": checkIn.checkInPhotoURL as Any,
+            "checkOutPhotoURL": checkIn.checkOutPhotoURL as Any,
+            "checkInPhotoPath": checkIn.checkInPhotoPath as Any,
+            "checkOutPhotoPath": checkIn.checkOutPhotoPath as Any,
+            "checkInPhotoCapturedAt": checkIn.checkInPhotoCapturedAt.map { Timestamp(date: $0) } as Any,
+            "checkOutPhotoCapturedAt": checkIn.checkOutPhotoCapturedAt.map { Timestamp(date: $0) } as Any,
+            "photoRequired": checkIn.photoRequired,
+            "photoVersion": checkIn.photoVersion
         ]
 
         if includeCheckoutFields {
@@ -677,7 +702,15 @@ final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
             rejectReason: data["rejectReason"] as? String,
             employeeName: data["employeeName"] as? String ?? "Employee",
             employeeEmail: data["employeeEmail"] as? String,
-            storeName: data["storeName"] as? String ?? "Store"
+            storeName: data["storeName"] as? String ?? "Store",
+            checkInPhotoURL: data["checkInPhotoURL"] as? String,
+            checkOutPhotoURL: data["checkOutPhotoURL"] as? String,
+            checkInPhotoPath: data["checkInPhotoPath"] as? String,
+            checkOutPhotoPath: data["checkOutPhotoPath"] as? String,
+            checkInPhotoCapturedAt: decodeDate(data["checkInPhotoCapturedAt"]),
+            checkOutPhotoCapturedAt: decodeDate(data["checkOutPhotoCapturedAt"]),
+            photoRequired: data["photoRequired"] as? Bool ?? true,
+            photoVersion: data["photoVersion"] as? Int ?? 1
         )
     }
 

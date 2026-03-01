@@ -230,6 +230,8 @@ service cloud.firestore {
       allow create: if signedIn()
         && request.resource.data.employeeId == myUid()
         && (request.resource.data.storeId is string)
+        && request.resource.data.photoRequired == true
+        && request.resource.data.photoVersion == 1
         && (
           employeeAssignedToStore(request.resource.data.storeId)
           || isStoreMember(request.resource.data.storeId)
@@ -263,6 +265,8 @@ service cloud.firestore {
       allow create: if isSelf(employeeUid)
         && request.resource.data.employeeId == myUid()
         && (request.resource.data.storeId is string)
+        && request.resource.data.photoRequired == true
+        && request.resource.data.photoVersion == 1
         && (isStoreMember(request.resource.data.storeId) || employeeAssignedToStore(request.resource.data.storeId));
 
       // ✅ CHANGE (minimal): allow manager time edits on employee mirror too
@@ -316,6 +320,8 @@ service cloud.firestore {
       allow create, update: if signedIn()
         && request.resource.data.employeeId == myUid()
         && (request.resource.data.storeId is string)
+        && request.resource.data.photoRequired == true
+        && request.resource.data.photoVersion == 1
         && request.resource.data.storeId == storeId
         && storeManagerMatches(managerUid, storeId)
         && (isStoreMember(storeId) || employeeAssignedToStore(storeId));
