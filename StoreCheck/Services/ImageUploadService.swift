@@ -47,7 +47,7 @@ final class ImageUploadService: ImageUploadServiceProtocol {
             throw NSError(domain: "StorePass", code: 5201, userInfo: [NSLocalizedDescriptionKey: "Could not process photo."])
         }
 
-        let path = "checkinPhotos/\(storeId)/\(employeeId)/\(checkinId)/\(kind.filename)"
+        let path = CheckInPhotoStoragePath.makePath(storeId: storeId, employeeId: employeeId, checkinId: checkinId, kind: kind)
         let reference = storage.reference(withPath: path)
         let metadata = StorageMetadata()
         metadata.contentType = "image/jpeg"

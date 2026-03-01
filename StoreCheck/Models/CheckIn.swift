@@ -47,6 +47,7 @@ struct CheckIn: Codable, Identifiable, Hashable {
     }
 
     var hasCheckOutPhoto: Bool {
-        checkOutPhotoPath?.isEmpty == false || checkOutPhotoURL?.isEmpty == false
+        CheckInPhotoStoragePath.shouldAttemptCheckoutDownload(for: self)
+            || (checkOutTime != nil && checkOutPhotoURL?.isEmpty == false)
     }
 }

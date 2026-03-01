@@ -1,3 +1,4 @@
+import FirebaseStorage
 import Foundation
 import UIKit
 
@@ -124,7 +125,7 @@ final class EmployeeDashboardViewModel: ObservableObject {
             checkInSuccessBanner = true
             try await loadTodaySessions()
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = userFacingPhotoFlowError(error, fallback: "Couldn’t upload photo. Please try again.")
         }
     }
 
@@ -159,7 +160,7 @@ final class EmployeeDashboardViewModel: ObservableObject {
             )
             try await loadTodaySessions()
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = userFacingPhotoFlowError(error, fallback: "Couldn’t upload photo. Please try again.")
         }
     }
 
@@ -196,6 +197,21 @@ final class EmployeeDashboardViewModel: ObservableObject {
             errorMessage = error.localizedDescription
             print("[Stores] Join-by-code error: \(error.localizedDescription)")
         }
+    }
+
+    private func userFacingPhotoFlowError(_ error: Error, fallback: String) -> String? {
+        let nsError = error as NSError
+
+        if nsError.domain == StorageErrorDomain,
+           nsError.code == StorageErrorCode.objectNotFound.rawValue {
+            return nil
+        }
+
+        if nsError.domain == StorageErrorDomain {
+            return fallback
+        }
+
+        return error.localizedDescription
     }
 
     func leaveStore(storeId: String) async {
