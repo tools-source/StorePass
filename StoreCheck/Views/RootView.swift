@@ -36,11 +36,15 @@ private struct RootContentView: View {
                     LoginView()
                 }
             case .authenticated(let user):
-                switch user.role {
-                case .manager:
-                    ManagerHomeView(container: appContainer)
-                case .employee:
-                    EmployeeTabView(container: appContainer)
+                if let requestedRole = authViewModel.requestedRole, requestedRole != user.role {
+                    ManagerAccessRequiredView()
+                } else {
+                    switch user.role {
+                    case .manager:
+                        ManagerHomeView(container: appContainer)
+                    case .employee:
+                        EmployeeTabView(container: appContainer)
+                    }
                 }
             }
         }

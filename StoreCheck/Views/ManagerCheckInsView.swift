@@ -18,166 +18,92 @@ struct ManagerCheckInsView: View {
     var body: some View {
         NavigationStack {
             List {
-                Section { contentSection }
+                ForEach(viewModel.visibleCheckIns) { item in
+                    NavigationLink {
+                        ManagerCheckInDetailView(item: item)
+                    } label: {
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack {
+                                Text(item.employeeName).font(.headline).lineLimit(1)
+                                Spacer()
+                                StatBadge(style: item.verifyInInside == true ? .inside : .outside, text: item.verifyInInside == true ? "Inside ✓" : "Outside ✕")
+                            }
+                            Text("\(viewModel.formattedTime(item.checkInTime)) → \(item.checkOutTime.map(viewModel.formattedTime) ?? "Open") • \(viewModel.formattedDuration(item))")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                            Text("\(item.status.rawValue.capitalized) • d2 \(Int(item.verifyInDistance2Meters ?? 0))m • ±\(Int(item.verifyInAccuracy2Meters ?? 0))m • drift \(Int(item.verifyInDriftMeters ?? 0))m")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .listRowBackground(DS.Colors.card)
+                    .listRowSeparator(.hidden)
+                }
             }
             .safeAreaInset(edge: .top) { filterBar }
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
             .background(DS.Colors.background)
             .navigationTitle("Check-ins")
-            .toolbar { toolbarContent }
+            .toolbar {
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    Button { viewModel.copyVisibleList() } label: { Image(systemName: "doc.on.doc") }
+                    if let exportURL = viewModel.exportURL() {
+                        ShareLink(item: exportURL) { Image(systemName: "square.and.arrow.up") }
+                    }
+                    Button("Clear", role: .destructive) { showClearAllConfirm = true }
+                }
+            }
             .task { await viewModel.load() }
             .refreshable { await viewModel.load() }
             .onChange(of: viewModel.selectedStoreId) { _, _ in Task { await viewModel.load() } }
+            .sheet(isPresented: $showFilterSheet) { filterSheet }
             .alert("Clear store check-ins?", isPresented: $showClearAllConfirm) {
                 Button("Cancel", role: .cancel) { }
                 Button("Clear", role: .destructive) { Task { await viewModel.clearAllForSelectedStore() } }
-            } message: {
-                Text("This will delete all check-ins for \(viewModel.selectedStoreName). Continue?")
             }
-            .sheet(isPresented: $showFilterSheet) { filterSheet }
-        }
-    }
-
-    private var toolbarContent: some ToolbarContent {
-        ToolbarItemGroup(placement: .topBarTrailing) {
-            Button { viewModel.copyVisibleList() } label: { Image(systemName: "doc.on.doc") }
-            if let exportURL = viewModel.exportURL() {
-                ShareLink(item: exportURL) { Image(systemName: "square.and.arrow.up") }
-            }
-            Button("Clear All", role: .destructive) { showClearAllConfirm = true }
         }
     }
 
     private var filterBar: some View {
-        HStack(spacing: 10) {
-            Text(viewModel.selectedStoreName)
-                .lineLimit(1)
-                .font(.caption.weight(.semibold))
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(DS.Colors.card, in: Capsule())
-            Text("\(viewModel.selectedEmployeeName) • \(dateRangeText)")
-                .lineLimit(1)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Spacer()
-            Button { seedDraftFilters(); showFilterSheet = true } label: {
-                Label("Filters", systemImage: "line.3.horizontal.decrease.circle")
-                    .labelStyle(.iconOnly)
-                    .font(.title3)
-            }
-        }
-        .padding(.horizontal, 16)
-        .padding(.top, 8)
-        .padding(.bottom, 8)
-        .background(DS.Colors.background)
-    }
-
-    private var contentSection: some View {
-        Group {
-            if viewModel.isLoading {
-                ProgressView("Loading check-ins…")
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.vertical, 40)
-            } else if let error = viewModel.errorMessage {
-                Text(error).foregroundStyle(.red)
-            } else if viewModel.daySections.isEmpty {
-                Text("No check-ins for the selected filters.")
-                    .foregroundStyle(.secondary)
-            } else {
-                ForEach(viewModel.daySections) { section in
-                    Section {
-                        tableHeader
-                        ForEach(section.items) { checkInRow($0) }
-                    } header: {
-                        Text("\(viewModel.formattedDay(section.day)) • Total: \(viewModel.formattedDuration(seconds: section.dailyTotalSeconds))")
-                            .textCase(nil)
-                    }
-                }
-            }
-        }
-    }
-
-    private var tableHeader: some View {
         HStack(spacing: 8) {
-            Text("Employee").lineLimit(1).minimumScaleFactor(0.9).frame(maxWidth: .infinity, alignment: .leading)
-            Text("Start").frame(width: 70, alignment: .leading)
-            Text("End").frame(width: 70, alignment: .leading)
-            Text("Time").frame(width: 70, alignment: .trailing)
-            Text("Verify").frame(width: 76, alignment: .trailing)
+            Text(viewModel.selectedStoreName).font(.caption.weight(.semibold)).lineLimit(1)
+            Text(viewModel.selectedEmployeeName).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            Spacer()
+            Button { seedDraftFilters(); showFilterSheet = true } label: { Image(systemName: "line.3.horizontal.decrease.circle") }
         }
-        .font(.caption.weight(.semibold))
-        .foregroundStyle(.secondary)
-    }
-
-    private func checkInRow(_ item: CheckIn) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 8) {
-                Text(item.employeeName).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
-                Text(viewModel.formattedTime(item.checkInTime)).font(.system(.caption, design: .monospaced)).frame(width: 70, alignment: .leading)
-                Text(item.checkOutTime.map(viewModel.formattedTime) ?? "—").font(.system(.caption, design: .monospaced)).frame(width: 70, alignment: .leading)
-                Text(viewModel.formattedDuration(item)).font(.system(.caption, design: .monospaced).weight(.semibold)).frame(width: 70, alignment: .trailing)
-                verificationBadge(for: item)
-            }
-            verificationDetails(for: item)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-        }
-        .padding(.vertical, 4)
-    }
-
-    private func verificationBadge(for item: CheckIn) -> some View {
-        let approved = item.verifyInInside == true
-        return Text(approved ? "Inside ✓" : "Outside ✕")
-            .font(.caption2.weight(.semibold))
-            .foregroundStyle(approved ? .green : .red)
-            .frame(width: 76, alignment: .trailing)
-    }
-
-    private func verificationDetails(for item: CheckIn) -> some View {
-        let distance2 = Int(item.verifyInDistance2Meters ?? 0)
-        let accuracy2 = Int(item.verifyInAccuracy2Meters ?? 0)
-        let drift = Int(item.verifyInDriftMeters ?? 0)
-        let read1 = item.verifyInRead1At.map(viewModel.formattedTime) ?? "—"
-        let read2 = item.verifyInRead2At.map(viewModel.formattedTime) ?? "—"
-        return Text("d2 \(distance2)m • ±\(accuracy2)m • drift \(drift)m • r1 \(read1) • r2 \(read2)")
+        .padding(.horizontal, DS.Spacing.m)
+        .padding(.vertical, DS.Spacing.s)
+        .background(DS.Colors.background)
     }
 
     private var filterSheet: some View {
         NavigationStack {
             Form {
                 Picker("Store", selection: Binding(get: { draftStoreId ?? "" }, set: { draftStoreId = $0.isEmpty ? nil : $0 })) {
-                    ForEach(viewModel.stores) { store in Text(store.name).tag(store.id) }
+                    ForEach(viewModel.stores) { Text($0.name).tag($0.id) }
                 }
                 Picker("Employee", selection: $draftEmployeeId) {
-                    ForEach(viewModel.employeeOptions) { option in Text(option.label).tag(option.id) }
+                    ForEach(viewModel.employeeOptions) { Text($0.label).tag($0.id) }
                 }
                 DatePicker("From", selection: $draftFromDate, displayedComponents: .date)
                 DatePicker("To", selection: $draftToDate, displayedComponents: .date)
                 Toggle("Open sessions only", isOn: $draftOpenOnly)
-
-                Section("Quick presets") {
-                    ForEach(ManagerCheckInsViewModel.DatePreset.allCases) { preset in
+                Section("Presets") {
+                    ForEach([ManagerCheckInsViewModel.DatePreset.today, .yesterday, .last7, .thisMonth], id: \.id) { preset in
                         Button(preset.rawValue) { applyDraftPreset(preset) }
                     }
                 }
             }
             .navigationTitle("Filters")
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Clear") {
-                        viewModel.clearFilters()
-                        seedDraftFilters()
-                    }
-                }
+                ToolbarItem(placement: .cancellationAction) { Button("Clear") { viewModel.clearFilters(); seedDraftFilters() } }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Apply") {
                         viewModel.selectedStoreId = draftStoreId
                         viewModel.selectedEmployeeId = draftEmployeeId
                         viewModel.fromDate = Calendar.current.startOfDay(for: draftFromDate)
-                        let toStart = Calendar.current.startOfDay(for: draftToDate)
-                        viewModel.toDate = Calendar.current.date(byAdding: .day, value: 1, to: toStart) ?? toStart
+                        viewModel.toDate = Calendar.current.date(byAdding: .day, value: 1, to: Calendar.current.startOfDay(for: draftToDate)) ?? draftToDate
                         viewModel.showOpenSessionsOnly = draftOpenOnly
                         showFilterSheet = false
                         Task { await viewModel.load() }
@@ -185,11 +111,6 @@ struct ManagerCheckInsView: View {
                 }
             }
         }
-        .presentationDetents([.medium, .large])
-    }
-
-    private var dateRangeText: String {
-        "\(viewModel.formattedDay(viewModel.fromDate)) → \(viewModel.formattedDay(viewModel.toDate.addingTimeInterval(-1)))"
     }
 
     private func seedDraftFilters() {
@@ -204,5 +125,35 @@ struct ManagerCheckInsView: View {
         viewModel.applyPreset(preset)
         draftFromDate = viewModel.fromDate
         draftToDate = viewModel.toDate.addingTimeInterval(-1)
+    }
+}
+
+private struct ManagerCheckInDetailView: View {
+    let item: CheckIn
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: DS.Spacing.m) {
+                CardView {
+                    VStack(alignment: .leading, spacing: DS.Spacing.s) {
+                        Text(item.employeeName).font(.headline)
+                        Text("\(item.checkInTime.formatted(date: .abbreviated, time: .shortened)) → \(item.checkOutTime?.formatted(date: .omitted, time: .shortened) ?? "Open")")
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                CardView {
+                    VStack(alignment: .leading, spacing: DS.Spacing.s) {
+                        Text("Verification")
+                            .font(.headline)
+                        Text("d2 \(Int(item.verifyInDistance2Meters ?? 0))m • ±\(Int(item.verifyInAccuracy2Meters ?? 0))m • drift \(Int(item.verifyInDriftMeters ?? 0))m")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            .padding(DS.Spacing.m)
+        }
+        .navigationTitle("Check-in")
     }
 }
