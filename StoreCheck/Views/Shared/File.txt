@@ -1,1 +1,0 @@
-Invalid redeclaration of 'PhotoVerifyLogger'

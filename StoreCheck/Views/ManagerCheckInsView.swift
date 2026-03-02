@@ -3,395 +3,206 @@ import SwiftUI
 struct ManagerCheckInsView: View {
     @StateObject private var viewModel: ManagerCheckInsViewModel
     @State private var showClearAllConfirm = false
-    @State private var editingCheckIn: CheckIn?
-    @State private var editStatus: CheckInStatus = .approved
-    @State private var editReason = ""
-    @State private var editingTimesCheckIn: CheckIn?
-    @State private var editCheckInTime = Date()
-    @State private var editCheckOutTime = Date()
-    @State private var editHasNoCheckout = false
-    @State private var editTimesValidationError: String?
+    @State private var showFilterSheet = false
 
-    init(
-        storeRepository: StoreRepositoryProtocol,
-        checkInRepository: CheckInRepositoryProtocol,
-        authRepository: AuthRepositoryProtocol,
-        csvExporter: CSVExportServiceProtocol
-    ) {
-        _viewModel = StateObject(wrappedValue: ManagerCheckInsViewModel(
-            storeRepository: storeRepository,
-            checkInRepository: checkInRepository,
-            authRepository: authRepository,
-            csvExporter: csvExporter
-        ))
+    @State private var draftStoreId: String?
+    @State private var draftEmployeeId: String = ManagerCheckInsViewModel.allEmployeesId
+    @State private var draftFromDate = Date()
+    @State private var draftToDate = Date()
+    @State private var draftOpenOnly = false
+
+    init(storeRepository: StoreRepositoryProtocol, checkInRepository: CheckInRepositoryProtocol, authRepository: AuthRepositoryProtocol, csvExporter: CSVExportServiceProtocol) {
+        _viewModel = StateObject(wrappedValue: ManagerCheckInsViewModel(storeRepository: storeRepository, checkInRepository: checkInRepository, authRepository: authRepository, csvExporter: csvExporter))
     }
 
     var body: some View {
         NavigationStack {
             List {
-                filterCard
-                    .listRowInsets(EdgeInsets(top: 12, leading: 16, bottom: 12, trailing: 16))
-                    .listRowSeparator(.hidden)
-                    .listRowBackground(Color.clear)
-
-                contentSection
+                Section { contentSection }
             }
+            .safeAreaInset(edge: .top) { filterBar }
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
             .background(DS.Colors.background)
             .navigationTitle("Check-ins")
-            .toolbar {
-                ToolbarItemGroup(placement: .topBarTrailing) {
-                    Button {
-                        viewModel.copyVisibleList()
-                    } label: {
-                        Image(systemName: "doc.on.doc")
-                    }
-
-                    if let exportURL = viewModel.exportURL() {
-                        ShareLink(item: exportURL) {
-                            Image(systemName: "square.and.arrow.up")
-                        }
-                    }
-
-                    Button("Clear All", role: .destructive) {
-                        showClearAllConfirm = true
-                    }
-                }
-            }
+            .toolbar { toolbarContent }
             .task { await viewModel.load() }
             .refreshable { await viewModel.load() }
-            .onChange(of: viewModel.selectedStoreId) { _, _ in
-                Task { await viewModel.load() }
-            }
+            .onChange(of: viewModel.selectedStoreId) { _, _ in Task { await viewModel.load() } }
             .alert("Clear store check-ins?", isPresented: $showClearAllConfirm) {
                 Button("Cancel", role: .cancel) { }
-                Button("Clear", role: .destructive) {
-                    Task { await viewModel.clearAllForSelectedStore() }
-                }
+                Button("Clear", role: .destructive) { Task { await viewModel.clearAllForSelectedStore() } }
             } message: {
-                let name = viewModel.stores.first(where: { $0.id == viewModel.selectedStoreId })?.name ?? "this store"
-                Text("This will delete all check-ins for \(name). Continue?")
+                Text("This will delete all check-ins for \(viewModel.selectedStoreName). Continue?")
             }
-            .sheet(item: $editingCheckIn) { checkIn in
-                NavigationStack {
-                    Form {
-                        Picker("Status", selection: $editStatus) {
-                            ForEach(CheckInStatus.allCases, id: \.self) { status in
-                                Text(status.rawValue.capitalized).tag(status)
-                            }
-                        }
-                        TextField("Reason", text: $editReason)
-                    }
-                    .navigationTitle("Edit Check-in")
-                    .toolbar {
-                        ToolbarItem(placement: .cancellationAction) {
-                            Button("Cancel") { editingCheckIn = nil }
-                        }
-                        ToolbarItem(placement: .confirmationAction) {
-                            Button("Save") {
-                                Task {
-                                    await viewModel.update(checkIn, status: editStatus, reason: editReason.isEmpty ? nil : editReason)
-                                    editingCheckIn = nil
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            .sheet(item: $editingTimesCheckIn) { checkIn in
-                NavigationStack {
-                    Form {
-                        DatePicker("Check-in Time", selection: $editCheckInTime, displayedComponents: [.date, .hourAndMinute])
-
-                        Toggle("No checkout yet", isOn: $editHasNoCheckout)
-                            .tint(DS.Colors.primary)
-
-                        if !editHasNoCheckout {
-                            DatePicker("Check-out Time", selection: $editCheckOutTime, displayedComponents: [.date, .hourAndMinute])
-                        }
-
-                        if let editTimesValidationError {
-                            Text(editTimesValidationError)
-                                .font(.caption)
-                                .foregroundStyle(.red)
-                        }
-                    }
-                    .navigationTitle("Edit Times")
-                    .toolbar {
-                        ToolbarItem(placement: .cancellationAction) {
-                            Button("Cancel") { editingTimesCheckIn = nil }
-                        }
-                        ToolbarItem(placement: .confirmationAction) {
-                            Button("Save") {
-                                let validationMessage = validateEditTimes(
-                                    checkInTime: editCheckInTime,
-                                    checkOutTime: editHasNoCheckout ? nil : editCheckOutTime
-                                )
-                                editTimesValidationError = validationMessage
-                                guard validationMessage == nil else { return }
-
-                                Task {
-                                    let saveSucceeded = await viewModel.updateTimes(
-                                        for: checkIn,
-                                        checkInTime: editCheckInTime,
-                                        checkOutTime: editHasNoCheckout ? nil : editCheckOutTime
-                                    )
-                                    if saveSucceeded {
-                                        editingTimesCheckIn = nil
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    .onChange(of: editCheckInTime) { _, newValue in
-                        editTimesValidationError = validateEditTimes(
-                            checkInTime: newValue,
-                            checkOutTime: editHasNoCheckout ? nil : editCheckOutTime
-                        )
-                    }
-                    .onChange(of: editCheckOutTime) { _, newValue in
-                        editTimesValidationError = validateEditTimes(
-                            checkInTime: editCheckInTime,
-                            checkOutTime: editHasNoCheckout ? nil : newValue
-                        )
-                    }
-                    .onChange(of: editHasNoCheckout) { _, newValue in
-                        editTimesValidationError = validateEditTimes(
-                            checkInTime: editCheckInTime,
-                            checkOutTime: newValue ? nil : editCheckOutTime
-                        )
-                    }
-                }
-            }
+            .sheet(isPresented: $showFilterSheet) { filterSheet }
         }
     }
 
-    private var filterCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            LabeledMenu(title: "Store", selectionTitle: viewModel.selectedStoreName) {
-                if viewModel.stores.isEmpty {
-                    Button("No stores available") { }
-                        .disabled(true)
-                } else {
-                    ForEach(viewModel.stores) { store in
-                        Button {
-                            viewModel.selectedStoreId = store.id
-                        } label: {
-                            if viewModel.selectedStoreId == store.id {
-                                Label(store.name, systemImage: "checkmark")
-                            } else {
-                                Text(store.name)
-                            }
-                        }
-                    }
-                }
+    private var toolbarContent: some ToolbarContent {
+        ToolbarItemGroup(placement: .topBarTrailing) {
+            Button { viewModel.copyVisibleList() } label: { Image(systemName: "doc.on.doc") }
+            if let exportURL = viewModel.exportURL() {
+                ShareLink(item: exportURL) { Image(systemName: "square.and.arrow.up") }
             }
-
-            LabeledMenu(title: "Employee", selectionTitle: viewModel.selectedEmployeeName) {
-                ForEach(viewModel.employeeOptions) { employee in
-                    Button {
-                        viewModel.selectedEmployeeId = employee.id
-                    } label: {
-                        if viewModel.selectedEmployeeId == employee.id {
-                            Label(employee.label, systemImage: "checkmark")
-                        } else {
-                            Text(employee.label)
-                        }
-                    }
-                }
-            }
-
-            Toggle("Open sessions only", isOn: $viewModel.showOpenSessionsOnly)
-                .tint(DS.Colors.primary)
-                .font(.subheadline.weight(.semibold))
+            Button("Clear All", role: .destructive) { showClearAllConfirm = true }
         }
-        .padding(14)
-        .background(DS.Colors.card)
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 
-    @ViewBuilder
-    private var contentSection: some View {
-        if viewModel.isLoading {
-            ProgressView().frame(maxWidth: .infinity)
-                .listRowBackground(DS.Colors.card)
-        } else if let errorMessage = viewModel.errorMessage {
-            Text(errorMessage)
-                .foregroundStyle(.red)
-                .listRowBackground(DS.Colors.card)
-        } else if viewModel.daySections.isEmpty {
-            Text("No check-ins yet for this store.")
+    private var filterBar: some View {
+        HStack(spacing: 10) {
+            Text(viewModel.selectedStoreName)
+                .lineLimit(1)
+                .font(.caption.weight(.semibold))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(DS.Colors.card, in: Capsule())
+            Text("\(viewModel.selectedEmployeeName) • \(dateRangeText)")
+                .lineLimit(1)
+                .font(.caption)
                 .foregroundStyle(.secondary)
-                .listRowBackground(DS.Colors.card)
-        } else {
-            ForEach(viewModel.daySections) { section in
-                Section {
-                    tableHeader
-                    ForEach(section.items) { item in
-                        checkInRow(item)
+            Spacer()
+            Button { seedDraftFilters(); showFilterSheet = true } label: {
+                Label("Filters", systemImage: "line.3.horizontal.decrease.circle")
+                    .labelStyle(.iconOnly)
+                    .font(.title3)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 8)
+        .padding(.bottom, 8)
+        .background(DS.Colors.background)
+    }
+
+    private var contentSection: some View {
+        Group {
+            if viewModel.isLoading {
+                ProgressView("Loading check-ins…")
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.vertical, 40)
+            } else if let error = viewModel.errorMessage {
+                Text(error).foregroundStyle(.red)
+            } else if viewModel.daySections.isEmpty {
+                Text("No check-ins for the selected filters.")
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(viewModel.daySections) { section in
+                    Section {
+                        tableHeader
+                        ForEach(section.items) { checkInRow($0) }
+                    } header: {
+                        Text("\(viewModel.formattedDay(section.day)) • Total: \(viewModel.formattedDuration(seconds: section.dailyTotalSeconds))")
+                            .textCase(nil)
                     }
-                } header: {
-                    HStack {
-                        Text(viewModel.formattedDay(section.day))
-                        Spacer()
-                        Text("Daily total: \(viewModel.formattedDuration(seconds: section.dailyTotalSeconds))")
-                    }
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(DS.Colors.textPrimary)
-                    .textCase(nil)
                 }
-                .listRowBackground(DS.Colors.card)
             }
         }
     }
 
     private var tableHeader: some View {
         HStack(spacing: 8) {
-            Text("Employee")
-                .frame(maxWidth: .infinity, alignment: .leading)
-            Text("Start")
-                .frame(width: 95, alignment: .leading)
-            Text("End")
-                .frame(width: 95, alignment: .leading)
-            Text("Time")
-                .frame(width: 72, alignment: .trailing)
-            Text("Verify")
-                .frame(width: 78, alignment: .trailing)
+            Text("Employee").lineLimit(1).minimumScaleFactor(0.9).frame(maxWidth: .infinity, alignment: .leading)
+            Text("Start").frame(width: 70, alignment: .leading)
+            Text("End").frame(width: 70, alignment: .leading)
+            Text("Time").frame(width: 70, alignment: .trailing)
+            Text("Verify").frame(width: 76, alignment: .trailing)
         }
         .font(.caption.weight(.semibold))
         .foregroundStyle(.secondary)
-        .padding(.top, 4)
     }
 
     private func checkInRow(_ item: CheckIn) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
-                Text(item.employeeName)
-                    .lineLimit(1)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                Text(viewModel.formattedTime(item.checkInTime))
-                    .font(.system(.caption, design: .monospaced))
-                    .frame(width: 95, alignment: .leading)
-                Text(item.checkOutTime.map(viewModel.formattedTime) ?? "—")
-                    .font(.system(.caption, design: .monospaced))
-                    .frame(width: 95, alignment: .leading)
-                Text(viewModel.formattedDuration(item))
-                    .font(.system(.caption, design: .monospaced).weight(.semibold))
-                    .frame(width: 72, alignment: .trailing)
+                Text(item.employeeName).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
+                Text(viewModel.formattedTime(item.checkInTime)).font(.system(.caption, design: .monospaced)).frame(width: 70, alignment: .leading)
+                Text(item.checkOutTime.map(viewModel.formattedTime) ?? "—").font(.system(.caption, design: .monospaced)).frame(width: 70, alignment: .leading)
+                Text(viewModel.formattedDuration(item)).font(.system(.caption, design: .monospaced).weight(.semibold)).frame(width: 70, alignment: .trailing)
                 verificationBadge(for: item)
             }
-            .font(.subheadline)
-
-            Text("\(item.status.rawValue.capitalized) • \(Int(item.distanceMeters))m • ±\(Int(item.accuracyMeters))m")
+            verificationDetails(for: item)
                 .font(.caption2)
                 .foregroundStyle(.secondary)
-
-            verificationDetails(for: item)
         }
         .padding(.vertical, 4)
-        .swipeActions(edge: .leading) {
-            Button("Edit") {
-                editingCheckIn = item
-                editStatus = item.status
-                editReason = item.rejectReason ?? ""
-            }
-            .tint(.blue)
-
-            Button("Edit Times") {
-                editingTimesCheckIn = item
-                editCheckInTime = item.checkInTime
-                if let checkOutTime = item.checkOutTime {
-                    editCheckOutTime = checkOutTime
-                    editHasNoCheckout = false
-                } else {
-                    editCheckOutTime = item.checkInTime
-                    editHasNoCheckout = true
-                }
-                editTimesValidationError = validateEditTimes(
-                    checkInTime: editCheckInTime,
-                    checkOutTime: editHasNoCheckout ? nil : editCheckOutTime
-                )
-            }
-            .tint(.indigo)
-        }
-        .swipeActions(edge: .trailing) {
-            Button("Delete", role: .destructive) {
-                Task { await viewModel.delete(item) }
-            }
-        }
     }
 
     private func verificationBadge(for item: CheckIn) -> some View {
-        let approved = item.verifyStatus == "approved"
+        let approved = item.verifyInInside == true
         return Text(approved ? "Inside ✓" : "Outside ✕")
             .font(.caption2.weight(.semibold))
             .foregroundStyle(approved ? .green : .red)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 3)
-            .background(DS.Colors.background, in: Capsule())
+            .frame(width: 76, alignment: .trailing)
     }
 
-    @ViewBuilder
     private func verificationDetails(for item: CheckIn) -> some View {
-        if let distance2 = item.verifyDistance2Meters,
-           let accuracy2 = item.verifyRead2Accuracy,
-           let drift = item.verifyDriftMeters,
-           let read1At = item.verifyRead1At,
-           let read2At = item.verifyRead2At {
-            Text("Verify: d2 \(Int(distance2))m • ±\(Int(accuracy2))m • drift \(Int(drift))m • r1 \(viewModel.formattedTime(read1At)) • r2 \(viewModel.formattedTime(read2At))")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-        }
+        let distance2 = Int(item.verifyInDistance2Meters ?? 0)
+        let accuracy2 = Int(item.verifyInAccuracy2Meters ?? 0)
+        let drift = Int(item.verifyInDriftMeters ?? 0)
+        let read1 = item.verifyInRead1At.map(viewModel.formattedTime) ?? "—"
+        let read2 = item.verifyInRead2At.map(viewModel.formattedTime) ?? "—"
+        return Text("d2 \(distance2)m • ±\(accuracy2)m • drift \(drift)m • r1 \(read1) • r2 \(read2)")
     }
 
-    private func validateEditTimes(checkInTime: Date, checkOutTime: Date?) -> String? {
-        let maxAllowed = Date().addingTimeInterval(5 * 60)
-        if checkInTime > maxAllowed {
-            return "Check-in time can’t be more than 5 minutes in the future."
-        }
-        if let checkOutTime {
-            if checkOutTime > maxAllowed {
-                return "Check-out time can’t be more than 5 minutes in the future."
-            }
-            if checkInTime > checkOutTime {
-                return "Check-in time must be before check-out time."
-            }
-        }
-        return nil
-    }
-
-}
-
-private struct LabeledMenu<Content: View>: View {
-    let title: String
-    let selectionTitle: String
-    @ViewBuilder var content: Content
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            Menu {
-                content
-            } label: {
-                HStack {
-                    Text(selectionTitle)
-                        .lineLimit(1)
-                        .font(.subheadline.weight(.semibold))
-                    Spacer()
-                    Image(systemName: "chevron.up.chevron.down")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+    private var filterSheet: some View {
+        NavigationStack {
+            Form {
+                Picker("Store", selection: Binding(get: { draftStoreId ?? "" }, set: { draftStoreId = $0.isEmpty ? nil : $0 })) {
+                    ForEach(viewModel.stores) { store in Text(store.name).tag(store.id) }
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
-                .background(DS.Colors.background.opacity(0.8))
-                .clipShape(Capsule())
+                Picker("Employee", selection: $draftEmployeeId) {
+                    ForEach(viewModel.employeeOptions) { option in Text(option.label).tag(option.id) }
+                }
+                DatePicker("From", selection: $draftFromDate, displayedComponents: .date)
+                DatePicker("To", selection: $draftToDate, displayedComponents: .date)
+                Toggle("Open sessions only", isOn: $draftOpenOnly)
+
+                Section("Quick presets") {
+                    ForEach(ManagerCheckInsViewModel.DatePreset.allCases) { preset in
+                        Button(preset.rawValue) { applyDraftPreset(preset) }
+                    }
+                }
             }
-            .accessibilityLabel("\(title) filter")
+            .navigationTitle("Filters")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Clear") {
+                        viewModel.clearFilters()
+                        seedDraftFilters()
+                    }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Apply") {
+                        viewModel.selectedStoreId = draftStoreId
+                        viewModel.selectedEmployeeId = draftEmployeeId
+                        viewModel.fromDate = Calendar.current.startOfDay(for: draftFromDate)
+                        let toStart = Calendar.current.startOfDay(for: draftToDate)
+                        viewModel.toDate = Calendar.current.date(byAdding: .day, value: 1, to: toStart) ?? toStart
+                        viewModel.showOpenSessionsOnly = draftOpenOnly
+                        showFilterSheet = false
+                        Task { await viewModel.load() }
+                    }
+                }
+            }
         }
+        .presentationDetents([.medium, .large])
+    }
+
+    private var dateRangeText: String {
+        "\(viewModel.formattedDay(viewModel.fromDate)) → \(viewModel.formattedDay(viewModel.toDate.addingTimeInterval(-1)))"
+    }
+
+    private func seedDraftFilters() {
+        draftStoreId = viewModel.selectedStoreId
+        draftEmployeeId = viewModel.selectedEmployeeId
+        draftFromDate = viewModel.fromDate
+        draftToDate = viewModel.toDate.addingTimeInterval(-1)
+        draftOpenOnly = viewModel.showOpenSessionsOnly
+    }
+
+    private func applyDraftPreset(_ preset: ManagerCheckInsViewModel.DatePreset) {
+        viewModel.applyPreset(preset)
+        draftFromDate = viewModel.fromDate
+        draftToDate = viewModel.toDate.addingTimeInterval(-1)
     }
 }

@@ -3,7 +3,8 @@ import Foundation
 
 struct Verify2ReadEvidence: Codable, Hashable {
     let method: String
-    let status: String
+    let version: Int
+    let inside: Bool
     let reason: String?
     let read1Lat: Double
     let read1Lng: Double
@@ -43,34 +44,24 @@ struct CheckIn: Codable, Identifiable, Hashable {
     var employeeName: String
     var employeeEmail: String?
     var storeName: String
+    var verifyVersion: Int?
     var verifyMethod: String?
-    var verifyStatus: String?
-    var verifyReason: String?
-    var verifyRead1Lat: Double?
-    var verifyRead1Lng: Double?
-    var verifyRead1Accuracy: Double?
-    var verifyRead1At: Date?
-    var verifyRead2Lat: Double?
-    var verifyRead2Lng: Double?
-    var verifyRead2Accuracy: Double?
-    var verifyRead2At: Date?
-    var verifyDistance1Meters: Double?
-    var verifyDistance2Meters: Double?
-    var verifyDriftMeters: Double?
-    var checkoutVerifyMethod: String?
-    var checkoutVerifyStatus: String?
-    var checkoutVerifyReason: String?
-    var checkoutVerifyRead1Lat: Double?
-    var checkoutVerifyRead1Lng: Double?
-    var checkoutVerifyRead1Accuracy: Double?
-    var checkoutVerifyRead1At: Date?
-    var checkoutVerifyRead2Lat: Double?
-    var checkoutVerifyRead2Lng: Double?
-    var checkoutVerifyRead2Accuracy: Double?
-    var checkoutVerifyRead2At: Date?
-    var checkoutVerifyDistance1Meters: Double?
-    var checkoutVerifyDistance2Meters: Double?
-    var checkoutVerifyDriftMeters: Double?
+    var verifyInInside: Bool?
+    var verifyInDistance1Meters: Double?
+    var verifyInDistance2Meters: Double?
+    var verifyInDriftMeters: Double?
+    var verifyInRead1At: Date?
+    var verifyInRead2At: Date?
+    var verifyInAccuracy1Meters: Double?
+    var verifyInAccuracy2Meters: Double?
+    var verifyOutInside: Bool?
+    var verifyOutDistance1Meters: Double?
+    var verifyOutDistance2Meters: Double?
+    var verifyOutDriftMeters: Double?
+    var verifyOutRead1At: Date?
+    var verifyOutRead2At: Date?
+    var verifyOutAccuracy1Meters: Double?
+    var verifyOutAccuracy2Meters: Double?
 
     var computedDurationSeconds: Int? {
         guard let checkOutTime else { return nil }
@@ -81,10 +72,10 @@ struct CheckIn: Codable, Identifiable, Hashable {
     }
 
     var isCheckInVerifiedInside: Bool {
-        verifyStatus == "approved"
+        verifyInInside == true
     }
 
     var isCheckOutVerifiedInside: Bool {
-        checkoutVerifyStatus == "approved"
+        verifyOutInside == true
     }
 }

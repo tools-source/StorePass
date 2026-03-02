@@ -36,7 +36,7 @@ protocol CheckInRepositoryProtocol {
     func clearAllCheckIns(storeId: String, managerId: String, limit: Int) async throws
     func fetchCheckIns(employeeId: String?, limit: Int) async throws -> [CheckIn]
     func fetchEmployeeCheckIns(employeeId: String, limit: Int) async throws -> [CheckIn]
-    func fetchManagerStoreCheckIns(managerId: String, storeId: String, limit: Int) async throws -> [CheckIn]
+    func fetchManagerStoreCheckIns(managerId: String, storeId: String, fromDate: Date, toDate: Date, employeeId: String?, limit: Int) async throws -> [CheckIn]
     func fetchTodaysCheckIns(filter: CheckInFilter) async throws -> [CheckIn]
 }
 
@@ -227,20 +227,16 @@ final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
                 "checkOutDistanceMeters": distanceMeters,
                 "checkOutAccuracyMeters": accuracyMeters,
                 "durationSeconds": durationSeconds,
-                "checkoutVerifyMethod": verification.method,
-                "checkoutVerifyStatus": verification.status,
-                "checkoutVerifyReason": verification.reason as Any,
-                "checkoutVerifyRead1Lat": verification.read1Lat,
-                "checkoutVerifyRead1Lng": verification.read1Lng,
-                "checkoutVerifyRead1Accuracy": verification.read1Accuracy,
-                "checkoutVerifyRead1At": Timestamp(date: verification.read1At),
-                "checkoutVerifyRead2Lat": verification.read2Lat,
-                "checkoutVerifyRead2Lng": verification.read2Lng,
-                "checkoutVerifyRead2Accuracy": verification.read2Accuracy,
-                "checkoutVerifyRead2At": Timestamp(date: verification.read2At),
-                "checkoutVerifyDistance1Meters": verification.distance1Meters,
-                "checkoutVerifyDistance2Meters": verification.distance2Meters,
-                "checkoutVerifyDriftMeters": verification.driftMeters
+                "verifyMethod": verification.method,
+                "verifyVersion": verification.version,
+                "verifyOutInside": verification.inside,
+                "verifyOutDistance1Meters": verification.distance1Meters,
+                "verifyOutDistance2Meters": verification.distance2Meters,
+                "verifyOutDriftMeters": verification.driftMeters,
+                "verifyOutRead1At": Timestamp(date: verification.read1At),
+                "verifyOutRead2At": Timestamp(date: verification.read2At),
+                "verifyOutAccuracy1Meters": verification.read1Accuracy,
+                "verifyOutAccuracy2Meters": verification.read2Accuracy
             ]
 
             print("[CheckOut][WRITE] path=checkins/\(checkinId) keys=\(payload.keys.sorted())")
@@ -494,21 +490,28 @@ final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
         }
     }
 
-    func fetchManagerStoreCheckIns(managerId: String, storeId: String, limit: Int = 100) async throws -> [CheckIn] {
+    func fetchManagerStoreCheckIns(managerId: String, storeId: String, fromDate: Date, toDate: Date, employeeId: String?, limit: Int = 100) async throws -> [CheckIn] {
         let path = "managerCheckins/\(managerId)/stores/\(storeId)/checkins"
         print("[CheckIn][QUERY] path=\(path) uid=\(managerId) storeId=\(storeId) orderBy=checkInTime DESC limit=\(limit)")
         print("[CheckIn][QUERY] indexHint=none")
 
         do {
-            let snapshot = try await db.collection("managerCheckins")
+            var query: Query = db.collection("managerCheckins")
                 .document(managerId)
                 .collection("stores")
                 .document(storeId)
                 .collection("checkins")
+                .whereField("checkInTime", isGreaterThanOrEqualTo: Timestamp(date: fromDate))
+                .whereField("checkInTime", isLessThan: Timestamp(date: toDate))
+
+            if let employeeId, !employeeId.isEmpty {
+                query = query.whereField("employeeId", isEqualTo: employeeId)
+            }
+
+            let snapshot = try await query
                 .order(by: "checkInTime", descending: true)
                 .limit(to: limit)
                 .getDocuments()
-
             let decoded = snapshot.documents.compactMap(decodeCheckIn)
             print("[CheckIn][QUERY] managerMirror managerUid=\(managerId) storeId=\(storeId) count=\(decoded.count)")
             return decoded
@@ -585,33 +588,23 @@ final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
             "storeName": resolvedStoreName,
             "managerId": storeData?["managerId"] as Any,
             "verifyMethod": checkIn.verifyMethod as Any,
-            "verifyStatus": checkIn.verifyStatus as Any,
-            "verifyReason": checkIn.verifyReason as Any,
-            "verifyRead1Lat": checkIn.verifyRead1Lat as Any,
-            "verifyRead1Lng": checkIn.verifyRead1Lng as Any,
-            "verifyRead1Accuracy": checkIn.verifyRead1Accuracy as Any,
-            "verifyRead1At": checkIn.verifyRead1At.map { Timestamp(date: $0) } as Any,
-            "verifyRead2Lat": checkIn.verifyRead2Lat as Any,
-            "verifyRead2Lng": checkIn.verifyRead2Lng as Any,
-            "verifyRead2Accuracy": checkIn.verifyRead2Accuracy as Any,
-            "verifyRead2At": checkIn.verifyRead2At.map { Timestamp(date: $0) } as Any,
-            "verifyDistance1Meters": checkIn.verifyDistance1Meters as Any,
-            "verifyDistance2Meters": checkIn.verifyDistance2Meters as Any,
-            "verifyDriftMeters": checkIn.verifyDriftMeters as Any,
-            "checkoutVerifyMethod": checkIn.checkoutVerifyMethod as Any,
-            "checkoutVerifyStatus": checkIn.checkoutVerifyStatus as Any,
-            "checkoutVerifyReason": checkIn.checkoutVerifyReason as Any,
-            "checkoutVerifyRead1Lat": checkIn.checkoutVerifyRead1Lat as Any,
-            "checkoutVerifyRead1Lng": checkIn.checkoutVerifyRead1Lng as Any,
-            "checkoutVerifyRead1Accuracy": checkIn.checkoutVerifyRead1Accuracy as Any,
-            "checkoutVerifyRead1At": checkIn.checkoutVerifyRead1At.map { Timestamp(date: $0) } as Any,
-            "checkoutVerifyRead2Lat": checkIn.checkoutVerifyRead2Lat as Any,
-            "checkoutVerifyRead2Lng": checkIn.checkoutVerifyRead2Lng as Any,
-            "checkoutVerifyRead2Accuracy": checkIn.checkoutVerifyRead2Accuracy as Any,
-            "checkoutVerifyRead2At": checkIn.checkoutVerifyRead2At.map { Timestamp(date: $0) } as Any,
-            "checkoutVerifyDistance1Meters": checkIn.checkoutVerifyDistance1Meters as Any,
-            "checkoutVerifyDistance2Meters": checkIn.checkoutVerifyDistance2Meters as Any,
-            "checkoutVerifyDriftMeters": checkIn.checkoutVerifyDriftMeters as Any
+            "verifyVersion": checkIn.verifyVersion as Any,
+            "verifyInInside": checkIn.verifyInInside as Any,
+            "verifyInDistance1Meters": checkIn.verifyInDistance1Meters as Any,
+            "verifyInDistance2Meters": checkIn.verifyInDistance2Meters as Any,
+            "verifyInDriftMeters": checkIn.verifyInDriftMeters as Any,
+            "verifyInRead1At": checkIn.verifyInRead1At.map { Timestamp(date: $0) } as Any,
+            "verifyInRead2At": checkIn.verifyInRead2At.map { Timestamp(date: $0) } as Any,
+            "verifyInAccuracy1Meters": checkIn.verifyInAccuracy1Meters as Any,
+            "verifyInAccuracy2Meters": checkIn.verifyInAccuracy2Meters as Any,
+            "verifyOutInside": checkIn.verifyOutInside as Any,
+            "verifyOutDistance1Meters": checkIn.verifyOutDistance1Meters as Any,
+            "verifyOutDistance2Meters": checkIn.verifyOutDistance2Meters as Any,
+            "verifyOutDriftMeters": checkIn.verifyOutDriftMeters as Any,
+            "verifyOutRead1At": checkIn.verifyOutRead1At.map { Timestamp(date: $0) } as Any,
+            "verifyOutRead2At": checkIn.verifyOutRead2At.map { Timestamp(date: $0) } as Any,
+            "verifyOutAccuracy1Meters": checkIn.verifyOutAccuracy1Meters as Any,
+            "verifyOutAccuracy2Meters": checkIn.verifyOutAccuracy2Meters as Any
         ]
 
         if includeCheckoutFields {
@@ -728,6 +721,9 @@ final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
             return nil
         }
 
+        let legacyVerifyInInside = (data["verifyStatus"] as? String) == "approved"
+        let legacyVerifyOutInside = (data["checkoutVerifyStatus"] as? String) == "approved"
+
         return CheckIn(
             id: document.documentID,
             employeeId: employeeId,
@@ -748,34 +744,24 @@ final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
             employeeName: data["employeeName"] as? String ?? "Employee",
             employeeEmail: data["employeeEmail"] as? String,
             storeName: data["storeName"] as? String ?? "Store",
+            verifyVersion: data["verifyVersion"] as? Int,
             verifyMethod: data["verifyMethod"] as? String,
-            verifyStatus: data["verifyStatus"] as? String,
-            verifyReason: data["verifyReason"] as? String,
-            verifyRead1Lat: data["verifyRead1Lat"] as? Double,
-            verifyRead1Lng: data["verifyRead1Lng"] as? Double,
-            verifyRead1Accuracy: data["verifyRead1Accuracy"] as? Double,
-            verifyRead1At: decodeDate(data["verifyRead1At"]),
-            verifyRead2Lat: data["verifyRead2Lat"] as? Double,
-            verifyRead2Lng: data["verifyRead2Lng"] as? Double,
-            verifyRead2Accuracy: data["verifyRead2Accuracy"] as? Double,
-            verifyRead2At: decodeDate(data["verifyRead2At"]),
-            verifyDistance1Meters: data["verifyDistance1Meters"] as? Double,
-            verifyDistance2Meters: data["verifyDistance2Meters"] as? Double,
-            verifyDriftMeters: data["verifyDriftMeters"] as? Double,
-            checkoutVerifyMethod: data["checkoutVerifyMethod"] as? String,
-            checkoutVerifyStatus: data["checkoutVerifyStatus"] as? String,
-            checkoutVerifyReason: data["checkoutVerifyReason"] as? String,
-            checkoutVerifyRead1Lat: data["checkoutVerifyRead1Lat"] as? Double,
-            checkoutVerifyRead1Lng: data["checkoutVerifyRead1Lng"] as? Double,
-            checkoutVerifyRead1Accuracy: data["checkoutVerifyRead1Accuracy"] as? Double,
-            checkoutVerifyRead1At: decodeDate(data["checkoutVerifyRead1At"]),
-            checkoutVerifyRead2Lat: data["checkoutVerifyRead2Lat"] as? Double,
-            checkoutVerifyRead2Lng: data["checkoutVerifyRead2Lng"] as? Double,
-            checkoutVerifyRead2Accuracy: data["checkoutVerifyRead2Accuracy"] as? Double,
-            checkoutVerifyRead2At: decodeDate(data["checkoutVerifyRead2At"]),
-            checkoutVerifyDistance1Meters: data["checkoutVerifyDistance1Meters"] as? Double,
-            checkoutVerifyDistance2Meters: data["checkoutVerifyDistance2Meters"] as? Double,
-            checkoutVerifyDriftMeters: data["checkoutVerifyDriftMeters"] as? Double
+            verifyInInside: (data["verifyInInside"] as? Bool) ?? ((data["verifyStatus"] as? String) != nil ? legacyVerifyInInside : nil),
+            verifyInDistance1Meters: (data["verifyInDistance1Meters"] as? Double) ?? (data["verifyDistance1Meters"] as? Double),
+            verifyInDistance2Meters: (data["verifyInDistance2Meters"] as? Double) ?? (data["verifyDistance2Meters"] as? Double),
+            verifyInDriftMeters: (data["verifyInDriftMeters"] as? Double) ?? (data["verifyDriftMeters"] as? Double),
+            verifyInRead1At: decodeDate(data["verifyInRead1At"]) ?? decodeDate(data["verifyRead1At"]),
+            verifyInRead2At: decodeDate(data["verifyInRead2At"]) ?? decodeDate(data["verifyRead2At"]),
+            verifyInAccuracy1Meters: (data["verifyInAccuracy1Meters"] as? Double) ?? (data["verifyRead1Accuracy"] as? Double),
+            verifyInAccuracy2Meters: (data["verifyInAccuracy2Meters"] as? Double) ?? (data["verifyRead2Accuracy"] as? Double),
+            verifyOutInside: (data["verifyOutInside"] as? Bool) ?? ((data["checkoutVerifyStatus"] as? String) != nil ? legacyVerifyOutInside : nil),
+            verifyOutDistance1Meters: (data["verifyOutDistance1Meters"] as? Double) ?? (data["checkoutVerifyDistance1Meters"] as? Double),
+            verifyOutDistance2Meters: (data["verifyOutDistance2Meters"] as? Double) ?? (data["checkoutVerifyDistance2Meters"] as? Double),
+            verifyOutDriftMeters: (data["verifyOutDriftMeters"] as? Double) ?? (data["checkoutVerifyDriftMeters"] as? Double),
+            verifyOutRead1At: decodeDate(data["verifyOutRead1At"]) ?? decodeDate(data["checkoutVerifyRead1At"]),
+            verifyOutRead2At: decodeDate(data["verifyOutRead2At"]) ?? decodeDate(data["checkoutVerifyRead2At"]),
+            verifyOutAccuracy1Meters: (data["verifyOutAccuracy1Meters"] as? Double) ?? (data["checkoutVerifyRead1Accuracy"] as? Double),
+            verifyOutAccuracy2Meters: (data["verifyOutAccuracy2Meters"] as? Double) ?? (data["checkoutVerifyRead2Accuracy"] as? Double)
         )
     }
 
