@@ -13,59 +13,67 @@ struct ManagerDashboardView: View {
     }
 
     var body: some View {
-        ManagerCheckinsView(
-            viewModel: vm,
-            csvExporter: csvExporter,
-            isActiveTab: isActiveTab,
-            isManager: authViewModel.currentUser?.role == .manager
-        )
-    }
-}
-
-private struct ManagerCheckinsView: View {
-    @ObservedObject var viewModel: ManagerDashboardViewModel
-    let csvExporter: CSVExportServiceProtocol
-    let isActiveTab: Bool
-    let isManager: Bool
-
-    var body: some View {
         NavigationStack {
-            List(viewModel.checkIns) { item in
-                VStack(alignment: .leading) {
-                    Text("\(item.employeeName) • \(item.storeName)").font(.headline)
-                    Text(item.checkInTime.formatted(date: .omitted, time: .shortened))
-                    Text(item.status.rawValue.capitalized)
-                        .foregroundStyle(item.status == .approved ? .green : .red)
+            ScrollView {
+                VStack(spacing: DS.Spacing.m) {
+                    kpis
+                    CardView {
+                        VStack(alignment: .leading, spacing: DS.Spacing.s) {
+                            Text("Live activity").font(.headline)
+                            ForEach(vm.checkIns.prefix(15)) { item in
+                                HStack {
+                                    VStack(alignment: .leading) {
+                                        Text(item.employeeName).font(.subheadline.weight(.semibold))
+                                        Text(item.checkInTime.formatted(date: .omitted, time: .shortened))
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    Spacer()
+                                    StatBadge(style: item.verifyInInside == true ? .inside : .outside)
+                                    StatBadge(style: item.checkOutTime == nil ? .open : .closed)
+                                }
+                                .padding(.vertical, 2)
+                            }
+                        }
+                    }
                 }
-                .listRowBackground(DS.Colors.card)
+                .padding(DS.Spacing.m)
             }
-            .scrollContentBackground(.hidden)
-            .background(DS.Colors.background)
-            .navigationTitle("Today Check-ins")
+            .navigationTitle("Dashboard")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    if let url = csvExporter.generateCSV(from: viewModel.checkIns, filePrefix: "checkins_manager") {
-                        ShareLink(item: url) { Label("Export", systemImage: "square.and.arrow.up") }
+                    if let url = csvExporter.generateCSV(from: vm.checkIns, filePrefix: "manager_dashboard") {
+                        ShareLink(item: url)
                     }
                 }
             }
-            .onAppear {
-                viewModel.updateListenerState(isDashboardVisible: isActiveTab, isManager: isManager, source: "ManagerDashboardView.onAppear")
-            }
-            .onDisappear {
-                viewModel.updateListenerState(isDashboardVisible: false, isManager: isManager, source: "ManagerDashboardView.onDisappear")
-            }
+            .onAppear { vm.updateListenerState(isDashboardVisible: isActiveTab, isManager: authViewModel.currentUser?.role == .manager, source: "dashboard") }
             .onChange(of: isActiveTab) { _, active in
-                viewModel.updateListenerState(isDashboardVisible: active, isManager: isManager, source: "ManagerDashboardView.onChange(isActiveTab)")
+                vm.updateListenerState(isDashboardVisible: active, isManager: authViewModel.currentUser?.role == .manager, source: "dashboard_tab")
             }
-            .onChange(of: isManager) { _, roleIsManager in
-                viewModel.updateListenerState(isDashboardVisible: isActiveTab, isManager: roleIsManager, source: "ManagerDashboardView.onChange(isManager)")
+        }
+    }
+
+    private var kpis: some View {
+        let open = vm.checkIns.filter { $0.checkOutTime == nil }.count
+        let exceptions = vm.checkIns.filter { $0.status == .rejected || $0.verifyInInside == false }.count
+        let totalHours = vm.checkIns.compactMap(\.computedDurationSeconds).reduce(0,+) / 3600
+
+        return LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: DS.Spacing.s) {
+            kpi("Checked in", "\(open)")
+            kpi("Check-ins", "\(vm.checkIns.count)")
+            kpi("Hours", "\(totalHours)h")
+            kpi("Exceptions", "\(exceptions)")
+        }
+    }
+
+    private func kpi(_ title: String, _ value: String) -> some View {
+        CardView {
+            VStack(alignment: .leading) {
+                Text(title).font(.caption).foregroundStyle(.secondary)
+                Text(value).font(.title3.bold())
             }
-            .alert("Check-ins", isPresented: Binding(get: { viewModel.checkinError != nil }, set: { _ in viewModel.checkinError = nil })) {
-                Button("OK", role: .cancel) { viewModel.checkinError = nil }
-            } message: {
-                Text(viewModel.checkinError ?? "")
-            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 }
