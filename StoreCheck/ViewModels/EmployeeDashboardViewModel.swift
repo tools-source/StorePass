@@ -12,7 +12,8 @@ final class EmployeeDashboardViewModel: ObservableObject {
     @Published var joinStatusMessage: String?
     @Published var todaysCheckIns: [CheckIn] = []
     @Published var lastLocationRefreshAt: Date?
-    @Published var isVerificationInProgress = false
+    @Published var isCheckInInProgress = false
+    @Published var isCheckOutInProgress = false
 
     private let authService: AuthService
     private let storeRepository: StoreRepositoryProtocol
@@ -21,11 +22,8 @@ final class EmployeeDashboardViewModel: ObservableObject {
     private let locationService: LocationServiceProtocol
 
     // Tuning constants for geo-fence verification.
-    private let verifyReadDelaySeconds: UInt64 = 7
-    private let verifyAccuracyThresholdMeters: Double = 50
-    private let verifyStrictDriftThresholdMeters: Double = 150
-    private let verifyHighConfidenceAccuracyMeters: Double = 25
-    private let verifyRelaxedDriftThresholdMeters: Double = 250
+    private let verifyReadDelayNanoseconds: UInt64 = 2_000_000_000
+    private let verifyAccuracyThresholdMeters: Double = 65
 
     init(
         authService: AuthService,
@@ -45,7 +43,6 @@ final class EmployeeDashboardViewModel: ObservableObject {
         case permissionDenied
         case lowAccuracy
         case outsideStore
-        case unstableLocation
         case locationUnavailable
 
         var errorDescription: String? {
@@ -54,7 +51,7 @@ final class EmployeeDashboardViewModel: ObservableObject {
                 return "Location permission is required before checking in."
             case .lowAccuracy:
                 return "Location accuracy is too low. Move closer to a window and retry."
-            case .outsideStore, .unstableLocation, .locationUnavailable:
+            case .outsideStore, .locationUnavailable:
                 return "We couldn’t confirm you’re inside the store. Try again near the entrance."
             }
         }
@@ -115,7 +112,7 @@ final class EmployeeDashboardViewModel: ObservableObject {
     }
 
     private func runCheckInFlow() async {
-        guard !isVerificationInProgress else { return }
+        guard !isCheckInInProgress else { return }
         guard let user = authService.currentUser else {
             errorMessage = "Sign in required."
             return
@@ -130,12 +127,12 @@ final class EmployeeDashboardViewModel: ObservableObject {
             return
         }
 
-        isVerificationInProgress = true
-        defer { isVerificationInProgress = false }
+        isCheckInInProgress = true
+        defer { isCheckInInProgress = false }
 
         do {
             let verify = try await runTwoReadVerification(for: store)
-            let approved = verify.status == "approved"
+            let approved = verify.inside
             let checkIn = CheckIn(
                 id: UUID().uuidString,
                 employeeId: user.id,
@@ -156,38 +153,28 @@ final class EmployeeDashboardViewModel: ObservableObject {
                 employeeName: user.name,
                 employeeEmail: user.email,
                 storeName: store.name,
+                verifyVersion: verify.version,
                 verifyMethod: verify.method,
-                verifyStatus: verify.status,
-                verifyReason: verify.reason,
-                verifyRead1Lat: verify.read1Lat,
-                verifyRead1Lng: verify.read1Lng,
-                verifyRead1Accuracy: verify.read1Accuracy,
-                verifyRead1At: verify.read1At,
-                verifyRead2Lat: verify.read2Lat,
-                verifyRead2Lng: verify.read2Lng,
-                verifyRead2Accuracy: verify.read2Accuracy,
-                verifyRead2At: verify.read2At,
-                verifyDistance1Meters: verify.distance1Meters,
-                verifyDistance2Meters: verify.distance2Meters,
-                verifyDriftMeters: verify.driftMeters,
-                checkoutVerifyMethod: nil,
-                checkoutVerifyStatus: nil,
-                checkoutVerifyReason: nil,
-                checkoutVerifyRead1Lat: nil,
-                checkoutVerifyRead1Lng: nil,
-                checkoutVerifyRead1Accuracy: nil,
-                checkoutVerifyRead1At: nil,
-                checkoutVerifyRead2Lat: nil,
-                checkoutVerifyRead2Lng: nil,
-                checkoutVerifyRead2Accuracy: nil,
-                checkoutVerifyRead2At: nil,
-                checkoutVerifyDistance1Meters: nil,
-                checkoutVerifyDistance2Meters: nil,
-                checkoutVerifyDriftMeters: nil
+                verifyInInside: verify.inside,
+                verifyInDistance1Meters: verify.distance1Meters,
+                verifyInDistance2Meters: verify.distance2Meters,
+                verifyInDriftMeters: verify.driftMeters,
+                verifyInRead1At: verify.read1At,
+                verifyInRead2At: verify.read2At,
+                verifyInAccuracy1Meters: verify.read1Accuracy,
+                verifyInAccuracy2Meters: verify.read2Accuracy,
+                verifyOutInside: nil,
+                verifyOutDistance1Meters: nil,
+                verifyOutDistance2Meters: nil,
+                verifyOutDriftMeters: nil,
+                verifyOutRead1At: nil,
+                verifyOutRead2At: nil,
+                verifyOutAccuracy1Meters: nil,
+                verifyOutAccuracy2Meters: nil
             )
 
+            try await checkInRepository.createCheckIn(checkIn)
             if approved {
-                try await checkInRepository.createCheckIn(checkIn)
                 checkInSuccessBanner = true
             } else {
                 errorMessage = verify.reason ?? Verify2ReadError.outsideStore.localizedDescription
@@ -200,16 +187,16 @@ final class EmployeeDashboardViewModel: ObservableObject {
     }
 
     private func runCheckOutFlow() async {
-        guard !isVerificationInProgress else { return }
+        guard !isCheckOutInProgress else { return }
         guard let activeSession, let store = selectedStore else { return }
         refreshLocation()
 
-        isVerificationInProgress = true
-        defer { isVerificationInProgress = false }
+        isCheckOutInProgress = true
+        defer { isCheckOutInProgress = false }
 
         do {
             let verify = try await runTwoReadVerification(for: store)
-            guard verify.status == "approved" else {
+            guard verify.inside else {
                 errorMessage = verify.reason ?? Verify2ReadError.outsideStore.localizedDescription
                 return
             }
@@ -240,7 +227,7 @@ final class EmployeeDashboardViewModel: ObservableObject {
         let read1 = try await locationService.requestSingleAccurateLocation(timeoutSeconds: 8)
         print("[Verify2Read] step=read1 lat=\(read1.coordinate.latitude) lng=\(read1.coordinate.longitude) accuracy=\(read1.horizontalAccuracy)")
 
-        try await Task.sleep(nanoseconds: verifyReadDelaySeconds * 1_000_000_000)
+        try await Task.sleep(nanoseconds: verifyReadDelayNanoseconds)
 
         let read2 = try await locationService.requestSingleAccurateLocation(timeoutSeconds: 8)
         print("[Verify2Read] step=read2 lat=\(read2.coordinate.latitude) lng=\(read2.coordinate.longitude) accuracy=\(read2.horizontalAccuracy)")
@@ -253,32 +240,32 @@ final class EmployeeDashboardViewModel: ObservableObject {
         let accuracy2 = read2.horizontalAccuracy
         let isInsideFence = distance2 <= Double(store.radiusMeters)
         let isAccurate = accuracy2 > 0 && accuracy2 <= verifyAccuracyThresholdMeters
-
-        let driftLimit: Double
-        if accuracy2 <= verifyHighConfidenceAccuracyMeters {
-            driftLimit = verifyRelaxedDriftThresholdMeters
-        } else {
-            driftLimit = verifyStrictDriftThresholdMeters
-        }
-        let isDriftAcceptable = drift <= driftLimit
-
-        print("[Verify2Read] step=computed distance1=\(distance1) distance2=\(distance2) drift=\(drift) accuracy1=\(read1.horizontalAccuracy) accuracy2=\(accuracy2) radius=\(store.radiusMeters)")
-
+        let reason: String?
         if !isAccurate {
-            print("[Verify2Read] step=rejected reason=low_accuracy")
-            throw Verify2ReadError.lowAccuracy
-        }
-        if !isInsideFence {
-            print("[Verify2Read] step=rejected reason=outside_fence")
-            return Verify2ReadEvidence(method: "geo_2read_v1", status: "rejected", reason: Verify2ReadError.outsideStore.localizedDescription, read1Lat: read1.coordinate.latitude, read1Lng: read1.coordinate.longitude, read1Accuracy: read1.horizontalAccuracy, read1At: read1.timestamp, read2Lat: read2.coordinate.latitude, read2Lng: read2.coordinate.longitude, read2Accuracy: read2.horizontalAccuracy, read2At: read2.timestamp, distance1Meters: distance1, distance2Meters: distance2, driftMeters: drift)
-        }
-        if !isDriftAcceptable {
-            print("[Verify2Read] step=rejected reason=unstable_location driftLimit=\(driftLimit)")
-            return Verify2ReadEvidence(method: "geo_2read_v1", status: "rejected", reason: Verify2ReadError.unstableLocation.localizedDescription, read1Lat: read1.coordinate.latitude, read1Lng: read1.coordinate.longitude, read1Accuracy: read1.horizontalAccuracy, read1At: read1.timestamp, read2Lat: read2.coordinate.latitude, read2Lng: read2.coordinate.longitude, read2Accuracy: read2.horizontalAccuracy, read2At: read2.timestamp, distance1Meters: distance1, distance2Meters: distance2, driftMeters: drift)
+            reason = "Low accuracy"
+        } else if !isInsideFence {
+            reason = "Out of range"
+        } else {
+            reason = nil
         }
 
-        print("[Verify2Read] step=accepted distance2=\(distance2) drift=\(drift) accuracy2=\(accuracy2)")
-        return Verify2ReadEvidence(method: "geo_2read_v1", status: "approved", reason: nil, read1Lat: read1.coordinate.latitude, read1Lng: read1.coordinate.longitude, read1Accuracy: read1.horizontalAccuracy, read1At: read1.timestamp, read2Lat: read2.coordinate.latitude, read2Lng: read2.coordinate.longitude, read2Accuracy: read2.horizontalAccuracy, read2At: read2.timestamp, distance1Meters: distance1, distance2Meters: distance2, driftMeters: drift)
+        return Verify2ReadEvidence(
+            method: "gps_v2",
+            version: 2,
+            inside: reason == nil,
+            reason: reason,
+            read1Lat: read1.coordinate.latitude,
+            read1Lng: read1.coordinate.longitude,
+            read1Accuracy: read1.horizontalAccuracy,
+            read1At: read1.timestamp,
+            read2Lat: read2.coordinate.latitude,
+            read2Lng: read2.coordinate.longitude,
+            read2Accuracy: read2.horizontalAccuracy,
+            read2At: read2.timestamp,
+            distance1Meters: distance1,
+            distance2Meters: distance2,
+            driftMeters: drift
+        )
     }
 
     private func loadTodaySessions() async throws {

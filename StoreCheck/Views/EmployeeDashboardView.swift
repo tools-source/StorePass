@@ -52,11 +52,11 @@ struct EmployeeHomeView: View {
                         }
                         .buttonStyle(PrimaryButtonStyle())
                         .disabled(
-                            viewModel.isVerificationInProgress
+                            (viewModel.isCheckInInProgress || viewModel.isCheckOutInProgress)
                                 || (viewModel.activeSession == nil && viewModel.blockedReason != nil)
                         )
 
-                        if viewModel.isVerificationInProgress {
+                        if (viewModel.isCheckInInProgress || viewModel.isCheckOutInProgress) {
                             HStack(spacing: 8) {
                                 ProgressView()
                                 Text("Confirming live location…")
