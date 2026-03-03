@@ -225,11 +225,23 @@ private extension LocationCheckState {
 
     var statusText: String {
         switch self {
-        case .inRange(let d): return "Inside • \(Int(d))m"
-        case .outOfRange(let d): return "Outside • \(Int(d))m"
-        case .permissionDenied: return "Permission denied"
-        case .lowAccuracy(let accuracy): return "Low accuracy ±\(Int(accuracy))m"
-        case .unknown: return "Checking…"
+        case .inRange(let d):
+            return "Inside • \(Int(d))m"
+
+        case .outOfRange(let d):
+            return "Outside • \(Int(d))m"
+
+        case .permissionDenied:
+            return "Permission denied"
+
+        case .lowAccuracy(let accuracy):
+            return "Low accuracy ±\(Int(accuracy))m"
+
+        case .unknown:
+            return "Checking…"
+
+        @unknown default:
+            return "Checking…"
         }
     }
 }
