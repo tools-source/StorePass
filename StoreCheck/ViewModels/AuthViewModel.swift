@@ -127,6 +127,56 @@ final class AuthViewModel: ObservableObject {
         }
     }
 
+
+    func signUpEmployee(name: String, email: String, password: String) async {
+        AppLog.info("AuthViewModel.signUpEmployee started")
+        isLoading = true
+        isRoleResolutionLoading = true
+        errorMessage = nil
+        signInNoticeMessage = nil
+        defer {
+            isLoading = false
+            isRoleResolutionLoading = false
+        }
+
+        do {
+            let result = try await authService.signUpEmployee(name: name, email: email, password: password)
+            lastRequestedRoleRaw = UserRole.employee.rawValue
+            requestedRole = .employee
+            try await resolveProfileAndRoute(identity: result.identity, requestedRole: .employee)
+        } catch {
+            logAuthError(error, context: "signUpEmployee")
+            errorMessage = userFacingMessage(for: error)
+        }
+    }
+
+    func signInEmployee(email: String, password: String) async {
+        AppLog.info("AuthViewModel.signInEmployee started")
+        isLoading = true
+        isRoleResolutionLoading = true
+        errorMessage = nil
+        signInNoticeMessage = nil
+        defer {
+            isLoading = false
+            isRoleResolutionLoading = false
+        }
+
+        do {
+            let result = try await authService.signInEmployee(email: email, password: password)
+            lastRequestedRoleRaw = UserRole.employee.rawValue
+            requestedRole = .employee
+
+            if let profile = try await roleProfileRepository.fetchUserProfile(uid: result.identity.userId),
+               profile.role != .employee {
+                throw CloudKitClientError.invalidData("This account is not configured as an employee.")
+            }
+
+            try await resolveProfileAndRoute(identity: result.identity, requestedRole: .employee)
+        } catch {
+            logAuthError(error, context: "signInEmployee")
+            errorMessage = userFacingMessage(for: error)
+        }
+    }
     func signOut() async {
         AppLog.info("AuthViewModel.signOut started")
         isLoading = true

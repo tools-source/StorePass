@@ -127,41 +127,45 @@ final class CloudKitStoreRepository: StoreRepositoryProtocol {
         let currentUserId = try service.requireCurrentUserId()
         let storeRecord = try await fetchManagerCanonicalStoreRecord(storeId: id, expectedManagerId: currentUserId)
 
-        let now = Date()
-        storeRecord[CKSchema.StoreField.isActive] = NSNumber(value: false)
-        storeRecord[CKSchema.StoreField.updatedAt] = now as CKRecordValue
-        storeRecord[CKSchema.StoreField.deletedAt] = now as CKRecordValue
-
-        _ = try await service.save(record: storeRecord, in: service.privateDB)
-        await mirrorStoreRecordBestEffort(storeRecord, context: "deleteStore")
-        await syncManagerOwnedStoreIdsBestEffort(managerId: currentUserId, storeId: id, isAdding: false, context: "deleteStore")
-
+        var recordIDsToDelete: [CKRecord.ID] = [storeRecord.recordID]
         var employeeIds = Set<String>()
+
         do {
             let memberships = try await service.queryRecords(
                 recordType: CKSchema.RecordType.storeMember,
                 predicate: NSPredicate(format: "%K == %@", CKSchema.StoreMemberField.storeId, id)
             )
-
-            var recordsToSave: [CKRecord] = []
             for membership in memberships {
-                membership[CKSchema.StoreMemberField.status] = CKSchema.MemberStatus.removed as CKRecordValue
-                membership[CKSchema.StoreMemberField.updatedAt] = now as CKRecordValue
                 if let employeeId = membership.string(CKSchema.StoreMemberField.employeeUserId) {
                     employeeIds.insert(employeeId)
                 }
-                recordsToSave.append(membership)
             }
-
-            if !recordsToSave.isEmpty {
-                _ = try await service.modify(recordsToSave: recordsToSave)
-            }
+            recordIDsToDelete.append(contentsOf: memberships.map(\.recordID))
         } catch {
             guard isRecoverableManagerStoreError(error) else {
                 throw error
             }
-            AppLog.warning("Public membership cleanup skipped during deleteStore: \(AppLog.sanitize(error.localizedDescription))")
+            AppLog.warning("Membership lookup skipped during deleteStore: \(AppLog.sanitize(error.localizedDescription))")
         }
+
+        let checkIns = try await service.queryRecords(
+            recordType: CKSchema.RecordType.checkInSession,
+            predicate: NSPredicate(format: "%K == %@", CKSchema.CheckInField.storeId, id)
+        )
+        recordIDsToDelete.append(contentsOf: checkIns.map(\.recordID))
+
+        let uniqueRecordIDs = Array(Set(recordIDsToDelete.map(\.recordName))).map { CKRecord.ID(recordName: $0) }
+        if !uniqueRecordIDs.isEmpty {
+            _ = try await service.modify(recordsToSave: [], recordIDsToDelete: uniqueRecordIDs, atomic: false)
+        }
+
+        do {
+            try await service.deleteRecord(with: storeRecord.recordID, in: service.privateDB)
+        } catch {
+            AppLog.warning("Private store delete skipped for store=\(id): \(AppLog.sanitize(error.localizedDescription))")
+        }
+
+        await syncManagerOwnedStoreIdsBestEffort(managerId: currentUserId, storeId: id, isAdding: false, context: "deleteStore")
 
         for employeeId in employeeIds {
             await recomputeAssignedStoresBestEffort(for: employeeId, context: "deleteStore")

@@ -37,7 +37,7 @@ struct AccountSettingsView: View {
                     Task { await deleteAccount() }
                 }
             } message: {
-                Text("This disables your account, removes active memberships, and signs you out.")
+                Text("This permanently deletes your account data, memberships, and check-ins, then signs you out.")
             }
             .alert("Settings", isPresented: Binding(get: { authViewModel.errorMessage != nil }, set: { _ in authViewModel.errorMessage = nil })) {
                 Button("OK", role: .cancel) {}

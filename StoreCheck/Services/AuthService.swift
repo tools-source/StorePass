@@ -18,6 +18,10 @@ struct ManualEmployeeSignInResult {
     let identity: AuthIdentity
 }
 
+struct EmployeeEmailSignInResult {
+    let identity: AuthIdentity
+}
+
 @MainActor
 protocol AuthServiceProtocol: AnyObject {
     var currentUser: AppUser? { get }
@@ -28,6 +32,8 @@ protocol AuthServiceProtocol: AnyObject {
     func signInWithApple() async throws -> AppleSignInResult
     func signInWithApple(authorizationResult: Result<ASAuthorization, Error>) throws -> AppleSignInResult
     func signInManuallyAsEmployee(name: String, email: String) async throws -> ManualEmployeeSignInResult
+    func signUpEmployee(name: String, email: String, password: String) async throws -> EmployeeEmailSignInResult
+    func signInEmployee(email: String, password: String) async throws -> EmployeeEmailSignInResult
     func authUser() -> AuthIdentity?
     func signOut() async throws
     func deleteAuthAccount() async throws
@@ -41,6 +47,7 @@ final class AuthService: ObservableObject, AuthServiceProtocol {
     private enum SessionProvider {
         static let apple = "apple"
         static let manualEmployee = "manual.employee"
+        static let emailEmployee = "employee.email"
     }
 
     private let sessionUserIdKey = "auth.session.userId"
@@ -63,7 +70,7 @@ final class AuthService: ObservableObject, AuthServiceProtocol {
             return
         }
 
-        if session.provider == SessionProvider.manualEmployee {
+        if session.provider == SessionProvider.manualEmployee || session.provider == SessionProvider.emailEmployee {
             currentIdentity = AuthIdentity(
                 userId: session.userId,
                 fullName: session.name,
@@ -151,6 +158,53 @@ final class AuthService: ObservableObject, AuthServiceProtocol {
         return ManualEmployeeSignInResult(identity: identity)
     }
 
+
+    func signUpEmployee(name: String, email: String, password: String) async throws -> EmployeeEmailSignInResult {
+        let normalizedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedName.isEmpty else {
+            throw CloudKitClientError.invalidData("Enter your name to create an employee account.")
+        }
+
+        let normalizedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard isValidEmail(normalizedEmail) else {
+            throw CloudKitClientError.invalidData("Enter a valid employee email address.")
+        }
+
+        try EmployeeCredentialStore.register(email: normalizedEmail, password: password)
+
+        let identity = AuthIdentity(
+            userId: employeeEmailUserId(for: normalizedEmail),
+            fullName: normalizedName,
+            email: normalizedEmail,
+            provider: SessionProvider.emailEmployee
+        )
+
+        persist(identity: identity)
+        currentIdentity = identity
+        AppLog.info("Employee email sign-up completed for user=\(AppLog.redactIdentifier(identity.userId))")
+        return EmployeeEmailSignInResult(identity: identity)
+    }
+
+    func signInEmployee(email: String, password: String) async throws -> EmployeeEmailSignInResult {
+        let normalizedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard isValidEmail(normalizedEmail) else {
+            throw CloudKitClientError.invalidData("Enter a valid employee email address.")
+        }
+
+        try EmployeeCredentialStore.authenticate(email: normalizedEmail, password: password)
+
+        let identity = AuthIdentity(
+            userId: employeeEmailUserId(for: normalizedEmail),
+            fullName: nil,
+            email: normalizedEmail,
+            provider: SessionProvider.emailEmployee
+        )
+
+        persist(identity: identity)
+        currentIdentity = identity
+        AppLog.info("Employee email sign-in completed for user=\(AppLog.redactIdentifier(identity.userId))")
+        return EmployeeEmailSignInResult(identity: identity)
+    }
     private func finalizeAppleSignIn(with credential: ASAuthorizationAppleIDCredential) -> AppleSignInResult {
         let nameFromCredential: String? = {
             guard let fullName = credential.fullName else { return nil }
@@ -188,6 +242,10 @@ final class AuthService: ObservableObject, AuthServiceProtocol {
     }
 
     func deleteAuthAccount() async throws {
+        if let identity = currentIdentity,
+           identity.provider == SessionProvider.emailEmployee {
+            EmployeeCredentialStore.deleteCredential(email: identity.email)
+        }
         // Apple account deletion is controlled by Apple ID settings. We clear app session after local data deletion.
         clearSession()
     }
@@ -277,6 +335,12 @@ final class AuthService: ObservableObject, AuthServiceProtocol {
         let digest = SHA256.hash(data: Data(email.utf8))
         let hash = digest.map { String(format: "%02x", $0) }.joined()
         return "manual_employee_\(hash)"
+    }
+
+    private func employeeEmailUserId(for email: String) -> String {
+        let digest = SHA256.hash(data: Data(email.utf8))
+        let hash = digest.map { String(format: "%02x", $0) }.joined()
+        return "employee_email_\(hash)"
     }
 
     private func isValidEmail(_ email: String) -> Bool {
