@@ -24,60 +24,63 @@ private struct RootContentView: View {
     }
 
     var body: some View {
-        Group {
-            switch bootState {
-            case .launching:
-                loadingView
-            case .needsLogin:
-                if authViewModel.isRoleResolutionLoading {
-                    loadingView
-                }
-                else {
+        ZStack {
+            AppBackground()
+
+            Group {
+                switch bootState {
+                case .launching:
+                    LaunchingView()
+                        .transition(.opacity)
+
+                case .needsLogin:
                     LoginView()
-                }
-            case .authenticated(let user):
-                if let requestedRole = authViewModel.requestedRole, requestedRole != user.role {
-                    ManagerAccessRequiredView()
-                } else {
-                    switch user.role {
-                    case .manager:
-                        ManagerHomeView(container: appContainer)
-                    case .employee:
-                        EmployeeTabView(container: appContainer)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+
+                case .authenticated(let user):
+                    if authViewModel.showManagerAccessRequired {
+                        ManagerAccessRequiredView()
+                            .transition(.opacity)
+                    } else {
+                        switch user.role {
+                        case .manager:
+                            ManagerHomeView(container: appContainer)
+                                .transition(.opacity)
+                        case .employee:
+                            EmployeeTabView(container: appContainer)
+                                .transition(.opacity)
+                        }
                     }
                 }
             }
+            .frame(maxWidth: DS.Metrics.maxReadableWidth)
         }
-        .background(DS.Colors.background.ignoresSafeArea())
         .environmentObject(authViewModel)
         .task { await boot() }
+        .animation(.easeInOut(duration: 0.22), value: stateToken)
         .onChange(of: authViewModel.authState) { _, newState in
             if case .signedOut = newState {
                 bootState = .needsLogin
             }
         }
-        .onChange(of: authViewModel.currentUser) { _, newUser in
-            guard let newUser else {
+        .onChange(of: authViewModel.currentUser) { _, user in
+            guard let user else {
                 bootState = .needsLogin
                 return
             }
-
-            bootState = .authenticated(user: newUser)
-        }
-        .sheet(isPresented: $authViewModel.shouldShowAppleNamePrompt) {
-            AppleNamePromptSheet(
-                name: $authViewModel.pendingNameUpdate,
-                onSave: { Task { await authViewModel.saveAppleDisplayName() } }
-            )
-            .presentationDetents([.medium])
-            .interactiveDismissDisabled()
+            bootState = .authenticated(user: user)
         }
     }
 
-    @ViewBuilder
-    private var loadingView: some View {
-        ProgressView("Loading account")
-            .tint(DS.Colors.primary)
+    private var stateToken: Int {
+        switch bootState {
+        case .launching:
+            return 0
+        case .needsLogin:
+            return 1
+        case .authenticated:
+            return 2
+        }
     }
 
     private func boot() async {
@@ -85,45 +88,45 @@ private struct RootContentView: View {
 
         await authViewModel.restoreSession(forceSignOutOnLaunch: DebugOptions.forceSignOutOnLaunch)
 
-        guard let user = authViewModel.currentUser else {
+        if let user = authViewModel.currentUser {
+            bootState = .authenticated(user: user)
+        } else {
             bootState = .needsLogin
-            return
         }
-
-        bootState = .authenticated(user: user)
     }
 }
 
-private struct AppleNamePromptSheet: View {
-    @Binding var name: String
-    let onSave: () -> Void
-
+private struct LaunchingView: View {
     var body: some View {
-        NavigationStack {
-            VStack(spacing: 14) {
-                Text("Confirm your name")
-                    .font(.headline)
-                Text("Apple may hide your profile details later. Confirm your display name now.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+        VStack(spacing: DS.Spacing.l) {
+            Spacer(minLength: 0)
+
+            CardView {
+                VStack(spacing: DS.Spacing.m) {
+                    Image(systemName: "building.2.crop.circle.fill")
+                        .font(.system(size: 54, weight: .bold))
+                        .foregroundStyle(DS.Colors.primary)
+
+                    VStack(spacing: DS.Spacing.xs) {
+                        Text("StorePass")
+                            .font(DS.Typography.hero)
+                            .foregroundStyle(DS.Colors.textPrimary)
+
+                        Text("Secure attendance for managers and teams")
+                            .font(DS.Typography.body)
+                            .foregroundStyle(DS.Colors.textSecondary)
+                    }
                     .multilineTextAlignment(.center)
 
-                TextField("Full name", text: $name)
-                    .textInputAutocapitalization(.words)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 10)
-                    .background(DS.Colors.card, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-
-                Button("Save") {
-                    onSave()
+                    ProgressView("Preparing your workspace")
+                        .tint(DS.Colors.primary)
+                        .font(DS.Typography.caption)
                 }
-                .buttonStyle(PrimaryButtonStyle())
-                .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-
-                Spacer()
+                .frame(maxWidth: .infinity)
             }
-            .padding()
-            .navigationTitle("Profile")
+
+            Spacer(minLength: 0)
         }
+        .padding(DS.Spacing.l)
     }
 }

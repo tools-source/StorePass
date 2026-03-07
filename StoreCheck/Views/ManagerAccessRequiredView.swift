@@ -4,26 +4,43 @@ struct ManagerAccessRequiredView: View {
     @EnvironmentObject private var authViewModel: AuthViewModel
 
     var body: some View {
-        VStack(spacing: DS.Spacing.m) {
-            Image(systemName: "person.crop.circle.badge.exclamationmark")
-                .font(.system(size: 46))
-                .foregroundStyle(.yellow)
-            Text("Role mismatch")
-                .font(.title3.bold())
-            Text(authViewModel.managerAccessMessage)
-                .multilineTextAlignment(.center)
-                .foregroundStyle(.secondary)
+        ZStack {
+            AppBackground()
 
-            Button("Sign out") { Task { await authViewModel.signOut() } }
-                .buttonStyle(DestructiveButtonStyle())
-            Button("Back to Sign in") {
-                authViewModel.signInNoticeMessage = nil
-                Task { await authViewModel.signOut() }
+            VStack {
+                CardView {
+                    VStack(spacing: DS.Spacing.m) {
+                        Image(systemName: "person.crop.circle.badge.exclamationmark")
+                            .font(.system(size: 48, weight: .semibold))
+                            .foregroundStyle(DS.Colors.warning)
+
+                        Text("Manager Access Required")
+                            .font(DS.Typography.title)
+                            .foregroundStyle(DS.Colors.textPrimary)
+
+                        Text(authViewModel.managerAccessMessage)
+                            .font(DS.Typography.body)
+                            .foregroundStyle(DS.Colors.textSecondary)
+                            .multilineTextAlignment(.center)
+
+                        VStack(spacing: DS.Spacing.s) {
+                            Button("Sign out") {
+                                Task { await authViewModel.signOut() }
+                            }
+                            .buttonStyle(DestructiveButtonStyle())
+
+                            Button("Back to Sign in") {
+                                authViewModel.signInNoticeMessage = nil
+                                Task { await authViewModel.signOut() }
+                            }
+                            .buttonStyle(SecondaryButtonStyle())
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .frame(maxWidth: DS.Metrics.maxReadableWidth)
+                .padding(DS.Spacing.l)
             }
-            .buttonStyle(SecondaryButtonStyle())
         }
-        .padding(DS.Spacing.l)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(DS.Colors.background.ignoresSafeArea())
     }
 }

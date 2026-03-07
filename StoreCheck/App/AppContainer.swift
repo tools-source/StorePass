@@ -2,56 +2,39 @@ import Foundation
 
 @MainActor
 final class AppContainer: ObservableObject {
-    private let authRepositoryFactory: () -> AuthRepositoryProtocol
-    private let userRepositoryFactory: () -> UserRepositoryProtocol
-    private let roleProfileRepositoryFactory: () -> RoleProfileRepositoryProtocol
-    private let employeeManagementRepositoryFactory: () -> EmployeeManagementRepositoryProtocol
-    private let storeRepositoryFactory: () -> StoreRepositoryProtocol
-    private let checkInRepositoryFactory: () -> CheckInRepositoryProtocol
-    private let locationServiceFactory: () -> LocationService
-    private let csvExporterFactory: () -> CSVExportServiceProtocol
-    private let offlineQueueFactory: () -> OfflineCheckInQueueProtocol
+    let authService: AuthService
+    let cloudKitService: CloudKitService
 
-    lazy var authRepository: AuthRepositoryProtocol = authRepositoryFactory()
-    lazy var userRepository: UserRepositoryProtocol = userRepositoryFactory()
-    lazy var roleProfileRepository: RoleProfileRepositoryProtocol = roleProfileRepositoryFactory()
-    lazy var employeeManagementRepository: EmployeeManagementRepositoryProtocol = employeeManagementRepositoryFactory()
-    lazy var storeRepository: StoreRepositoryProtocol = storeRepositoryFactory()
-    lazy var checkInRepository: CheckInRepositoryProtocol = checkInRepositoryFactory()
-    lazy var locationService: LocationService = locationServiceFactory()
-    lazy var csvExporter: CSVExportServiceProtocol = csvExporterFactory()
-    lazy var offlineQueue: OfflineCheckInQueueProtocol = offlineQueueFactory()
+    let authRepository: AuthRepositoryProtocol
+    let userRepository: UserRepositoryProtocol
+    let roleProfileRepository: RoleProfileRepositoryProtocol
+    let employeeManagementRepository: EmployeeManagementRepositoryProtocol
+    let storeRepository: StoreRepositoryProtocol
+    let checkInRepository: CheckInRepositoryProtocol
 
-    lazy var authService: AuthService = AuthService()
+    let locationService: LocationService
+    let csvExporter: CSVExportServiceProtocol
+    let offlineQueue: OfflineCheckInQueueProtocol
+    let checkInService: CheckInServiceProtocol
 
-    lazy var checkInService: CheckInServiceProtocol = CheckInService(
-        userRepository: userRepository,
-        storeRepository: storeRepository,
-        checkInRepository: checkInRepository,
-        locationService: locationService,
-        offlineQueue: offlineQueue
-    )
+    init() {
+        let authService = AuthService()
+        let cloudKitService = CloudKitService(authService: authService)
+        let userRepository = CloudKitUserRepository(service: cloudKitService)
 
+        self.authService = authService
+        self.cloudKitService = cloudKitService
+        self.authRepository = CloudKitAuthRepository(authService: authService)
+        self.userRepository = userRepository
+        self.roleProfileRepository = CloudKitRoleProfileRepository(service: cloudKitService)
+        self.employeeManagementRepository = CloudKitEmployeeManagementRepository(service: cloudKitService)
+        self.storeRepository = CloudKitStoreRepository(service: cloudKitService)
+        self.checkInRepository = CloudKitCheckInRepository(service: cloudKitService)
 
-    init(
-        authRepositoryFactory: @escaping () -> AuthRepositoryProtocol = { FirebaseAuthRepository() },
-        userRepositoryFactory: @escaping () -> UserRepositoryProtocol = { FirestoreUserRepository() },
-        roleProfileRepositoryFactory: @escaping () -> RoleProfileRepositoryProtocol = { FirestoreRoleProfileRepository() },
-        employeeManagementRepositoryFactory: @escaping () -> EmployeeManagementRepositoryProtocol = { FirestoreEmployeeManagementRepository() },
-        storeRepositoryFactory: @escaping () -> StoreRepositoryProtocol = { FirestoreStoreRepository() },
-        checkInRepositoryFactory: @escaping () -> CheckInRepositoryProtocol = { FirestoreCheckInRepository() },
-        locationServiceFactory: @escaping () -> LocationService = { LocationService() },
-        csvExporterFactory: @escaping () -> CSVExportServiceProtocol = { CSVExportService() },
-        offlineQueueFactory: @escaping () -> OfflineCheckInQueueProtocol = { OfflineCheckInQueue() }
-    ) {
-        self.authRepositoryFactory = authRepositoryFactory
-        self.userRepositoryFactory = userRepositoryFactory
-        self.roleProfileRepositoryFactory = roleProfileRepositoryFactory
-        self.employeeManagementRepositoryFactory = employeeManagementRepositoryFactory
-        self.storeRepositoryFactory = storeRepositoryFactory
-        self.checkInRepositoryFactory = checkInRepositoryFactory
-        self.locationServiceFactory = locationServiceFactory
-        self.csvExporterFactory = csvExporterFactory
-        self.offlineQueueFactory = offlineQueueFactory
+        let locationService = LocationService()
+        self.locationService = locationService
+        self.csvExporter = CSVExportService()
+        self.offlineQueue = OfflineCheckInQueue()
+        self.checkInService = CheckInService(locationService: locationService)
     }
 }

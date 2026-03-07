@@ -13,96 +13,175 @@ struct EmployeeHistoryView: View {
 
     var body: some View {
         NavigationStack {
-            Group {
-                if vm.visibleCheckIns.isEmpty {
-                    EmptyStateView(icon: "clock.badge.xmark", title: "No History Yet", message: "Your check-in sessions will appear here.")
-                        .padding(.horizontal, DS.Spacing.m)
-                } else {
-                    List(vm.visibleCheckIns) { item in
-                        NavigationLink {
-                            EmployeeCheckInDetailView(checkIn: item)
-                        } label: {
-                            VStack(alignment: .leading, spacing: DS.Spacing.xs) {
-                                HStack {
-                                    Text(item.storeName).font(.headline)
-                                    Spacer()
-                                    StatBadge(style: item.verifyInInside == true ? .inside : .outside)
-                                    StatBadge(style: item.status == .approved ? .approved : .rejected)
-                                }
-                                Text("\(item.checkInTime.formatted(date: .abbreviated, time: .shortened)) → \(item.checkOutTime?.formatted(date: .omitted, time: .shortened) ?? "Open")")
-                                    .font(.subheadline)
-                                    .foregroundStyle(.secondary)
-                                Text("Duration: \(vm.formattedDuration(seconds: item.computedDurationSeconds ?? 0))")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                            .padding(.vertical, 4)
+            ZStack {
+                AppBackground()
+
+                ScrollView(showsIndicators: false) {
+                    VStack(spacing: DS.Spacing.m) {
+                        ScreenHeader(
+                            title: "History",
+                            subtitle: "Review sessions and timesheet totals",
+                            icon: "clock.arrow.trianglehead.counterclockwise.rotate.90"
+                        )
+
+                        summaryCard
+
+                        if let error = vm.errorMessage {
+                            BannerView(text: error, isError: true)
                         }
-                        .listRowBackground(DS.Colors.card)
-                        .listRowSeparator(.hidden)
+
+                        if vm.visibleCheckIns.isEmpty {
+                            EmptyStateView(
+                                icon: "clock.badge.xmark",
+                                title: "No sessions for this filter",
+                                message: "Try another date or store to view completed shifts."
+                            )
+                        } else {
+                            VStack(spacing: DS.Spacing.s) {
+                                ForEach(vm.visibleCheckIns) { item in
+                                    NavigationLink {
+                                        EmployeeCheckInDetailView(checkIn: item)
+                                    } label: {
+                                        historyRow(item)
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                        }
                     }
-                    .listStyle(.plain)
-                    .scrollContentBackground(.hidden)
+                    .frame(maxWidth: DS.Metrics.maxReadableWidth)
+                    .padding(.horizontal, DS.Spacing.m)
+                    .padding(.vertical, DS.Spacing.m)
                 }
             }
-            .background(DS.Colors.background)
             .navigationTitle("History")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button { vm.copyAllVisible() } label: { Image(systemName: "doc.on.doc") }
+                    if let exportURL = vm.exportURL() {
+                        ShareLink(item: exportURL)
+                    }
                 }
             }
             .task { await vm.load() }
             .refreshable { await vm.load() }
         }
     }
+
+    private var summaryCard: some View {
+        CardView {
+            VStack(alignment: .leading, spacing: DS.Spacing.s) {
+                ScreenHeader(title: "Timesheet Summary", subtitle: "Filter and totals", icon: "calendar")
+
+                DatePicker("Date", selection: $vm.selectedDate, displayedComponents: .date)
+                    .datePickerStyle(.compact)
+
+                if vm.hasMultipleStores {
+                    Picker("Store", selection: Binding(
+                        get: { vm.selectedStoreId ?? "" },
+                        set: { vm.selectedStoreId = $0.isEmpty ? nil : $0 }
+                    )) {
+                        ForEach(vm.storeOptions) { option in
+                            Text(option.name).tag(option.id)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                }
+
+                HStack(spacing: DS.Spacing.s) {
+                    MetricChip(label: "Sessions", value: "\(vm.visibleCheckIns.count)", icon: "list.number")
+                    MetricChip(label: "Total", value: vm.formattedDuration(seconds: vm.dailyTotalSeconds), icon: "hourglass")
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private func historyRow(_ item: CheckIn) -> some View {
+        CardView {
+            VStack(alignment: .leading, spacing: DS.Spacing.xs) {
+                HStack(alignment: .top, spacing: DS.Spacing.s) {
+                    VStack(alignment: .leading, spacing: DS.Spacing.xxs) {
+                        Text(item.storeName)
+                            .font(DS.Typography.headline)
+                            .foregroundStyle(DS.Colors.textPrimary)
+
+                        Text("\(item.checkInTime.formatted(date: .abbreviated, time: .shortened)) → \(item.checkOutTime?.formatted(date: .omitted, time: .shortened) ?? "Open")")
+                            .font(DS.Typography.caption)
+                            .foregroundStyle(DS.Colors.textSecondary)
+                    }
+
+                    Spacer(minLength: 0)
+
+                    StatBadge(style: item.status == .approved ? .approved : .rejected)
+                }
+
+                Divider()
+
+                KeyValueRow(title: "Duration", value: vm.formattedDuration(seconds: item.computedDurationSeconds ?? 0))
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
 }
 
 private struct EmployeeCheckInDetailView: View {
     let checkIn: CheckIn
-    @State private var showAdvanced = false
 
     var body: some View {
         ScrollView {
             VStack(spacing: DS.Spacing.m) {
                 CardView {
                     VStack(alignment: .leading, spacing: DS.Spacing.s) {
-                        Text(checkIn.storeName).font(.headline)
-                        Text("\(checkIn.clientLat, format: .number.precision(.fractionLength(5))), \(checkIn.clientLng, format: .number.precision(.fractionLength(5)))")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
+                        ScreenHeader(title: checkIn.storeName, subtitle: "Session details", icon: "building.2")
+                        KeyValueRow(title: "Check-In", value: checkIn.checkInTime.formatted(date: .abbreviated, time: .shortened))
+                        KeyValueRow(title: "Check-Out", value: checkIn.checkOutTime?.formatted(date: .abbreviated, time: .shortened) ?? "Open")
+                        KeyValueRow(title: "Duration", value: DurationFormatter.clockString(from: checkIn.computedDurationSeconds ?? 0))
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
                 CardView {
                     VStack(alignment: .leading, spacing: DS.Spacing.s) {
-                        Text("Verification").font(.headline)
+                        ScreenHeader(title: "Verification", subtitle: "Geo-fence evidence", icon: "checkmark.shield")
                         detail("Distance", "\(Int(checkIn.verifyInDistance2Meters ?? 0))m")
                         detail("Accuracy", "±\(Int(checkIn.verifyInAccuracy2Meters ?? 0))m")
                         detail("Drift", "\(Int(checkIn.verifyInDriftMeters ?? 0))m")
+                        detail("Coordinates", String(format: "%.5f, %.5f", checkIn.clientLat, checkIn.clientLng))
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
-                DisclosureGroup("Advanced", isExpanded: $showAdvanced) {
-                    Text("Check-in ID: \(checkIn.id)")
-                        .font(.caption.monospaced())
-                        .textSelection(.enabled)
+                CardView {
+                    VStack(alignment: .leading, spacing: DS.Spacing.s) {
+                        Text("Session ID")
+                            .font(DS.Typography.caption)
+                            .foregroundStyle(DS.Colors.textSecondary)
+                        Text(checkIn.id)
+                            .font(DS.Typography.mono)
+                            .foregroundStyle(DS.Colors.textPrimary)
+                            .textSelection(.enabled)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .padding(.horizontal, DS.Spacing.s)
             }
-            .padding(DS.Spacing.m)
+            .frame(maxWidth: DS.Metrics.maxReadableWidth)
+            .padding(.horizontal, DS.Spacing.m)
+            .padding(.vertical, DS.Spacing.m)
         }
-        .navigationTitle("Session Details")
-        .background(DS.Colors.background)
+        .background(AppBackground())
+        .navigationTitle("Session Detail")
     }
 
-    private func detail(_ key: String, _ value: String) -> some View {
-        HStack {
-            Text(key).foregroundStyle(.secondary)
+    private func detail(_ title: String, _ value: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: DS.Spacing.s) {
+            Text(title)
+                .font(DS.Typography.caption)
+                .foregroundStyle(DS.Colors.textSecondary)
             Spacer()
-            Text(value).fontWeight(.medium)
+            Text(value)
+                .font(DS.Typography.caption.weight(.semibold))
+                .foregroundStyle(DS.Colors.textPrimary)
+                .multilineTextAlignment(.trailing)
         }
-        .font(.subheadline)
     }
 }

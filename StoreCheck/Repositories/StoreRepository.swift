@@ -12,6 +12,7 @@ struct JoinStoreResult {
     let assignedStoreIds: [String]
 }
 
+@MainActor
 protocol StoreRepositoryProtocol {
     func fetchStores(ids: [String]?) async throws -> [Store]
     func fetchManagerStores(managerId: String) async throws -> [Store]

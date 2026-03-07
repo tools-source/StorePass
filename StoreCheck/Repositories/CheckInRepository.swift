@@ -1,5 +1,4 @@
-import FirebaseAuth
-import FirebaseFirestore
+import CloudKit
 import Foundation
 
 struct CheckInFilter {
@@ -8,6 +7,7 @@ struct CheckInFilter {
     var date: Date = Date()
 }
 
+@MainActor
 protocol CheckInRepositoryProtocol {
     @discardableResult
     func listenToTodaysCheckIns(
@@ -16,7 +16,7 @@ protocol CheckInRepositoryProtocol {
         onError: @escaping (Error) -> Void
     ) -> CheckInListenerToken
 
-    func createCheckIn(_ checkIn: CheckIn) async throws
+    func createCheckIn(_ checkIn: CheckIn, checkInPhotoData: Data) async throws
 
     func checkout(
         checkinId: String,
@@ -26,8 +26,10 @@ protocol CheckInRepositoryProtocol {
         checkoutLng: Double,
         distanceMeters: Double,
         accuracyMeters: Double,
-        verification: Verify2ReadEvidence
+        verification: Verify2ReadEvidence,
+        checkOutPhotoData: Data
     ) async throws
+
     func updateCheckIn(_ checkIn: CheckIn) async throws
     func updateCheckInTimes(checkIn: CheckIn, newCheckInTime: Date, newCheckOutTime: Date?) async throws
     func deleteCheckIn(checkinId: String, employeeId: String, storeId: String, managerId: String?) async throws
@@ -44,23 +46,74 @@ protocol CheckInListenerToken {
     func cancel()
 }
 
-private final class FirestoreCheckInListenerToken: CheckInListenerToken {
-    private var registration: ListenerRegistration?
-
-    init(registration: ListenerRegistration) {
-        self.registration = registration
-    }
-
-    func cancel() {
-        registration?.remove()
-        registration = nil
+extension CKSchema {
+    enum CheckInField {
+        static let sessionId = "sessionId"
+        static let storeRef = "storeRef"
+        static let storeId = "storeId"
+        static let employeeUserRef = "employeeUserRef"
+        static let employeeUserId = "employeeUserId"
+        static let managerUserId = "managerUserId"
+        static let checkInAt = "checkInAt"
+        static let checkOutAt = "checkOutAt"
+        static let durationSeconds = "durationSeconds"
+        static let checkInPhotoAsset = "checkInPhotoAsset"
+        static let checkOutPhotoAsset = "checkOutPhotoAsset"
+        static let checkInLocationLat = "checkInLocationLat"
+        static let checkInLocationLng = "checkInLocationLng"
+        static let checkInDistanceMeters = "checkInDistanceMeters"
+        static let checkInAccuracyMeters = "checkInAccuracyMeters"
+        static let checkOutLocationLat = "checkOutLocationLat"
+        static let checkOutLocationLng = "checkOutLocationLng"
+        static let checkOutDistanceMeters = "checkOutDistanceMeters"
+        static let checkOutAccuracyMeters = "checkOutAccuracyMeters"
+        static let status = "status"
+        static let rejectReason = "rejectReason"
+        static let employeeName = "employeeName"
+        static let employeeEmail = "employeeEmail"
+        static let storeName = "storeName"
+        static let verifyVersion = "verifyVersion"
+        static let verifyMethod = "verifyMethod"
+        static let verifyInInside = "verifyInInside"
+        static let verifyInDistance1Meters = "verifyInDistance1Meters"
+        static let verifyInDistance2Meters = "verifyInDistance2Meters"
+        static let verifyInDriftMeters = "verifyInDriftMeters"
+        static let verifyInRead1At = "verifyInRead1At"
+        static let verifyInRead2At = "verifyInRead2At"
+        static let verifyInAccuracy1Meters = "verifyInAccuracy1Meters"
+        static let verifyInAccuracy2Meters = "verifyInAccuracy2Meters"
+        static let verifyOutInside = "verifyOutInside"
+        static let verifyOutDistance1Meters = "verifyOutDistance1Meters"
+        static let verifyOutDistance2Meters = "verifyOutDistance2Meters"
+        static let verifyOutDriftMeters = "verifyOutDriftMeters"
+        static let verifyOutRead1At = "verifyOutRead1At"
+        static let verifyOutRead2At = "verifyOutRead2At"
+        static let verifyOutAccuracy1Meters = "verifyOutAccuracy1Meters"
+        static let verifyOutAccuracy2Meters = "verifyOutAccuracy2Meters"
+        static let createdAt = "createdAt"
+        static let updatedAt = "updatedAt"
     }
 }
 
-final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
-    private var db: Firestore {
-        FirebaseBootstrap.assertConfigured(context: "FirestoreCheckInRepository.db")
-        return Firestore.firestore()
+private final class PollingCheckInListenerToken: CheckInListenerToken {
+    private var task: Task<Void, Never>?
+
+    init(task: Task<Void, Never>) {
+        self.task = task
+    }
+
+    func cancel() {
+        task?.cancel()
+        task = nil
+    }
+}
+
+@MainActor
+final class CloudKitCheckInRepository: CheckInRepositoryProtocol {
+    private let service: CloudKitService
+
+    init(service: CloudKitService) {
+        self.service = service
     }
 
     @discardableResult
@@ -69,85 +122,97 @@ final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
         onUpdate: @escaping ([CheckIn]) -> Void,
         onError: @escaping (Error) -> Void
     ) -> CheckInListenerToken {
-        let query = todaysCheckinsQuery(for: filter)
-        let registration = query.addSnapshotListener { [weak self] snapshot, error in
-            if let error {
-                onError(self?.mapFirestoreError(error) ?? error)
-                return
-            }
+        let pollingTask = Task {
+            var previousSignature: String?
 
-            guard let snapshot else {
-                onError(NSError(domain: "StorePass", code: 5005, userInfo: [NSLocalizedDescriptionKey: "No check-in data was returned."]))
-                return
-            }
+            while !Task.isCancelled {
+                do {
+                    let sessions = try await fetchTodaysCheckIns(filter: filter)
+                    let signature = Self.signature(for: sessions)
+                    if signature != previousSignature {
+                        previousSignature = signature
+                        onUpdate(sessions)
+                    }
+                } catch {
+                    onError(error)
+                }
 
-            onUpdate(snapshot.documents.compactMap { self?.decodeCheckIn(document: $0) })
+                try? await Task.sleep(nanoseconds: 8_000_000_000)
+            }
         }
 
-        return FirestoreCheckInListenerToken(registration: registration)
+        return PollingCheckInListenerToken(task: pollingTask)
     }
 
-    func createCheckIn(_ checkIn: CheckIn) async throws {
-        guard let uid = Auth.auth().currentUser?.uid else {
-            throw NSError(domain: "StorePass", code: 4001, userInfo: [NSLocalizedDescriptionKey: "You must be signed in."])
-        }
+    func createCheckIn(_ checkIn: CheckIn, checkInPhotoData: Data) async throws {
+        try await service.ensureCloudKitAvailable()
 
-        guard checkIn.employeeId == uid else {
-            throw NSError(domain: "StorePass", code: 4008, userInfo: [NSLocalizedDescriptionKey: "Check-in employeeId must match the signed-in user."])
+        let currentUserId = try service.requireCurrentUserId()
+        guard checkIn.employeeId == currentUserId else {
+            throw CloudKitClientError.unauthorized
         }
 
         guard !checkIn.storeId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw NSError(domain: "StorePass", code: 4009, userInfo: [NSLocalizedDescriptionKey: "A valid storeId is required for check-in."])
+            throw CloudKitClientError.invalidData("Store information is missing.")
         }
 
-        let storeSnapshot: DocumentSnapshot
-        do {
-            storeSnapshot = try await db.collection("stores").document(checkIn.storeId).getDocument()
-        } catch {
-            logFirestoreError(prefix: "[CheckIn][READ] storeForMirror", error: error)
-            throw mapFirestoreError(error)
+        guard !checkInPhotoData.isEmpty else {
+            throw CloudKitClientError.invalidData("A photo is required to check in.")
         }
 
-        guard let storeData = storeSnapshot.data(),
-              let managerId = storeData["managerId"] as? String,
-              !managerId.isEmpty else {
-            throw NSError(domain: "StorePass", code: 4010, userInfo: [NSLocalizedDescriptionKey: "Store manager could not be resolved for this check-in."])
+        try await ensureActiveMembership(employeeId: currentUserId, storeId: checkIn.storeId)
+
+        let activeSessions = try await fetchActiveSessions(employeeId: currentUserId, storeId: checkIn.storeId)
+        guard activeSessions.isEmpty else {
+            throw CloudKitClientError.invalidData("You already have an active check-in for this store.")
         }
 
-        let payload = encode(checkIn: checkIn, storeData: storeData, includeCheckoutFields: false)
-        let rootPath = "checkins/\(checkIn.id)"
-        let employeeMirrorPath = "employeeCheckins/\(checkIn.employeeId)/checkins/\(checkIn.id)"
-        let managerMirrorPath = "managerCheckins/\(managerId)/stores/\(checkIn.storeId)/checkins/\(checkIn.id)"
-
-        print("[CheckIn][WRITE] managerId=\(managerId) rootPath=\(rootPath)")
-        print("[CheckIn][WRITE] employeeMirrorPath=\(employeeMirrorPath)")
-        print("[CheckIn][WRITE] managerMirrorPath=\(managerMirrorPath)")
-        print("[CheckIn][WRITE] payloadKeys=\(payload.keys.sorted())")
-        print("[CheckIn][WRITE] payload employeeId=\(String(describing: payload["employeeId"])) storeId=\(String(describing: payload["storeId"]))")
-        print("[CheckIn][WRITE] payload checkInTime=\(String(describing: payload["checkInTime"])) createdAt=\(String(describing: payload["createdAt"]))")
-        print("[CheckIn][WRITE] payload lat=\(String(describing: payload["latitude"])) lng=\(String(describing: payload["longitude"]))")
-        print("[CheckIn][WRITE] create semantics: setData without merge on root /checkins/{id}")
-
-        let preflight = await runRulesPreflight(uid: uid, storeId: checkIn.storeId)
-
-        do {
-            print("[CheckIn][WRITE] rootWriteAttempt path=\(rootPath) uid=\(uid) storeId=\(checkIn.storeId)")
-            try await db.collection("checkins").document(checkIn.id).setData(payload)
-            print("[CheckIn][WRITE] rootWriteSuccess path=\(rootPath)")
-
-            let batch = db.batch()
-            batch.setData(payload, forDocument: db.collection("employeeCheckins").document(checkIn.employeeId).collection("checkins").document(checkIn.id))
-            batch.setData(payload, forDocument: db.collection("managerCheckins").document(managerId).collection("stores").document(checkIn.storeId).collection("checkins").document(checkIn.id))
-            try await batch.commit()
-            print("[CheckIn][WRITE] mirrorBatchSuccess employeeMirrorPath=\(employeeMirrorPath) managerMirrorPath=\(managerMirrorPath)")
-        } catch {
-            logPreflightSummary(preflight: preflight, uid: uid, storeId: checkIn.storeId, prefix: "[RulesPreflight][RootWriteFailure]")
-            logFirestoreError(prefix: "[CheckIn] createCheckIn", error: error)
-            FirestorePermissionLogger.log(operation: "setData", path: "checkins/\(checkIn.id)", error: error, uid: uid)
-            throw mapFirestoreError(error)
+        let storeRecordID = CloudKitService.storeRecordID(storeId: checkIn.storeId)
+        guard let storeRecord = try await service.fetchRecord(with: storeRecordID),
+              let managerUserId = storeRecord.string(CKSchema.StoreField.managerUserId),
+              storeRecord.bool(CKSchema.StoreField.isActive, default: true) else {
+            throw CloudKitClientError.missingRecord("Store is unavailable.")
         }
+
+        let checkInRecordID = CloudKitService.checkInRecordID(checkInId: checkIn.id)
+        let record = CKRecord(recordType: CKSchema.RecordType.checkInSession, recordID: checkInRecordID)
+
+        record[CKSchema.CheckInField.sessionId] = checkIn.id as CKRecordValue
+        record[CKSchema.CheckInField.storeId] = checkIn.storeId as CKRecordValue
+        record[CKSchema.CheckInField.storeRef] = CKRecord.Reference(recordID: storeRecordID, action: .none)
+        record[CKSchema.CheckInField.employeeUserId] = checkIn.employeeId as CKRecordValue
+        record[CKSchema.CheckInField.employeeUserRef] = CKRecord.Reference(recordID: CloudKitService.userRecordID(userId: checkIn.employeeId), action: .none)
+        record[CKSchema.CheckInField.managerUserId] = managerUserId as CKRecordValue
+
+        record[CKSchema.CheckInField.checkInAt] = checkIn.checkInTime as CKRecordValue
+        record[CKSchema.CheckInField.checkInLocationLat] = NSNumber(value: checkIn.clientLat)
+        record[CKSchema.CheckInField.checkInLocationLng] = NSNumber(value: checkIn.clientLng)
+        record[CKSchema.CheckInField.checkInDistanceMeters] = NSNumber(value: checkIn.distanceMeters)
+        record[CKSchema.CheckInField.checkInAccuracyMeters] = NSNumber(value: checkIn.accuracyMeters)
+
+        record[CKSchema.CheckInField.status] = checkIn.status.rawValue as CKRecordValue
+        if let rejectReason = checkIn.rejectReason, !rejectReason.isEmpty {
+            record[CKSchema.CheckInField.rejectReason] = rejectReason as CKRecordValue
+        }
+
+        record[CKSchema.CheckInField.employeeName] = checkIn.employeeName as CKRecordValue
+        if let employeeEmail = checkIn.employeeEmail, !employeeEmail.isEmpty {
+            record[CKSchema.CheckInField.employeeEmail] = employeeEmail as CKRecordValue
+        }
+        record[CKSchema.CheckInField.storeName] = checkIn.storeName as CKRecordValue
+
+        encodeVerificationIn(record: record, from: checkIn)
+
+        let now = Date()
+        record[CKSchema.CheckInField.createdAt] = now as CKRecordValue
+        record[CKSchema.CheckInField.updatedAt] = now as CKRecordValue
+
+        let assetURL = try makeTemporaryAssetFile(data: checkInPhotoData, prefix: "checkin_\(checkIn.id)")
+        defer { try? FileManager.default.removeItem(at: assetURL) }
+        record[CKSchema.CheckInField.checkInPhotoAsset] = CKAsset(fileURL: assetURL)
+
+        _ = try await service.save(record: record)
     }
-
 
     func checkout(
         checkinId: String,
@@ -157,693 +222,440 @@ final class FirestoreCheckInRepository: CheckInRepositoryProtocol {
         checkoutLng: Double,
         distanceMeters: Double,
         accuracyMeters: Double,
-        verification: Verify2ReadEvidence
+        verification: Verify2ReadEvidence,
+        checkOutPhotoData: Data
     ) async throws {
-        guard let uid = Auth.auth().currentUser?.uid else {
-            throw NSError(domain: "StorePass", code: 4001, userInfo: [NSLocalizedDescriptionKey: "You must be signed in."])
+        try await service.ensureCloudKitAvailable()
+
+        let currentUserId = try service.requireCurrentUserId()
+        guard !checkOutPhotoData.isEmpty else {
+            throw CloudKitClientError.invalidData("A photo is required to check out.")
         }
 
-        let rootRef = db.collection("checkins").document(checkinId)
-        let employeeMirrorRef = db.collection("employeeCheckins")
-            .document(uid)
-            .collection("checkins")
-            .document(checkinId)
+        try await ensureActiveMembership(employeeId: currentUserId, storeId: storeId)
 
-        let resolvedManagerId = try await resolveManagerId(storeId: storeId, preferredManagerId: managerId)
-        let managerMirrorRef = db.collection("managerCheckins")
-            .document(resolvedManagerId)
-            .collection("stores")
-            .document(storeId)
-            .collection("checkins")
-            .document(checkinId)
-
-        _ = try await db.runTransaction { transaction, errorPointer in
-            func fail(_ error: NSError) -> Any? {
-                self.logFirestoreError(prefix: "[CheckOut] transaction failed", error: error) // ✅ self.
-                errorPointer?.pointee = error
-                return nil
-            }
-
-            let rootSnap: DocumentSnapshot
-            do {
-                rootSnap = try transaction.getDocument(rootRef)
-            } catch {
-                return fail(error as NSError)
-            }
-
-            guard let data = rootSnap.data(),
-                  let employeeId = data["employeeId"] as? String,
-                  employeeId == uid else {
-                return fail(NSError(
-                    domain: "StorePass",
-                    code: 4011,
-                    userInfo: [NSLocalizedDescriptionKey: "This check-in cannot be checked out by the current user."]
-                ))
-            }
-
-            if data["checkOutTime"] != nil {
-                return fail(NSError(
-                    domain: "StorePass",
-                    code: 4012,
-                    userInfo: [NSLocalizedDescriptionKey: "Check-out is already completed."]
-                ))
-            }
-
-            guard let checkInDate = self.decodeDate(data["checkInTime"]) else { // ✅ self.
-                return fail(NSError(
-                    domain: "StorePass",
-                    code: 4013,
-                    userInfo: [NSLocalizedDescriptionKey: "Invalid check-in time for checkout."]
-                ))
-            }
-
-            let checkoutDate = Date()
-            let durationSeconds = max(Int(checkoutDate.timeIntervalSince(checkInDate)), 0)
-
-            let payload: [String: Any] = [
-                "checkOutTime": Timestamp(date: checkoutDate),
-                "checkOutLat": checkoutLat,
-                "checkOutLng": checkoutLng,
-                "checkOutDistanceMeters": distanceMeters,
-                "checkOutAccuracyMeters": accuracyMeters,
-                "durationSeconds": durationSeconds,
-                "verifyMethod": verification.method,
-                "verifyVersion": verification.version,
-                "verifyOutInside": verification.inside,
-                "verifyOutDistance1Meters": verification.distance1Meters,
-                "verifyOutDistance2Meters": verification.distance2Meters,
-                "verifyOutDriftMeters": verification.driftMeters,
-                "verifyOutRead1At": Timestamp(date: verification.read1At),
-                "verifyOutRead2At": Timestamp(date: verification.read2At),
-                "verifyOutAccuracy1Meters": verification.read1Accuracy,
-                "verifyOutAccuracy2Meters": verification.read2Accuracy
-            ]
-
-            print("[CheckOut][WRITE] path=checkins/\(checkinId) keys=\(payload.keys.sorted())")
-            print("[CheckOut][WRITE] path=employeeCheckins/\(uid)/checkins/\(checkinId) keys=\(payload.keys.sorted())")
-            print("[CheckOut][WRITE] path=managerCheckins/\(resolvedManagerId)/stores/\(storeId)/checkins/\(checkinId) keys=\(payload.keys.sorted())")
-
-            transaction.updateData(payload, forDocument: rootRef)
-            transaction.updateData(payload, forDocument: employeeMirrorRef)
-            transaction.updateData(payload, forDocument: managerMirrorRef)
-
-            return nil
+        let checkInRecordID = CloudKitService.checkInRecordID(checkInId: checkinId)
+        guard let record = try await service.fetchRecord(with: checkInRecordID) else {
+            throw CloudKitClientError.missingRecord("Check-in session not found.")
         }
+
+        guard record.string(CKSchema.CheckInField.employeeUserId) == currentUserId else {
+            throw CloudKitClientError.unauthorized
+        }
+
+        guard record.date(CKSchema.CheckInField.checkOutAt) == nil else {
+            throw CloudKitClientError.invalidData("This session is already checked out.")
+        }
+
+        if let managerId, let recordManagerId = record.string(CKSchema.CheckInField.managerUserId), !recordManagerId.isEmpty, managerId != recordManagerId {
+            throw CloudKitClientError.invalidData("Session manager mismatch.")
+        }
+
+        let checkInAt = record.date(CKSchema.CheckInField.checkInAt) ?? Date()
+        let checkoutTime = Date()
+        let durationSeconds = max(Int(checkoutTime.timeIntervalSince(checkInAt)), 0)
+
+        record[CKSchema.CheckInField.checkOutAt] = checkoutTime as CKRecordValue
+        record[CKSchema.CheckInField.checkOutLocationLat] = NSNumber(value: checkoutLat)
+        record[CKSchema.CheckInField.checkOutLocationLng] = NSNumber(value: checkoutLng)
+        record[CKSchema.CheckInField.checkOutDistanceMeters] = NSNumber(value: distanceMeters)
+        record[CKSchema.CheckInField.checkOutAccuracyMeters] = NSNumber(value: accuracyMeters)
+        record[CKSchema.CheckInField.durationSeconds] = NSNumber(value: durationSeconds)
+
+        record[CKSchema.CheckInField.verifyMethod] = verification.method as CKRecordValue
+        record[CKSchema.CheckInField.verifyVersion] = NSNumber(value: verification.version)
+        record[CKSchema.CheckInField.verifyOutInside] = NSNumber(value: verification.inside)
+        record[CKSchema.CheckInField.verifyOutDistance1Meters] = NSNumber(value: verification.distance1Meters)
+        record[CKSchema.CheckInField.verifyOutDistance2Meters] = NSNumber(value: verification.distance2Meters)
+        record[CKSchema.CheckInField.verifyOutDriftMeters] = NSNumber(value: verification.driftMeters)
+        record[CKSchema.CheckInField.verifyOutRead1At] = verification.read1At as CKRecordValue
+        record[CKSchema.CheckInField.verifyOutRead2At] = verification.read2At as CKRecordValue
+        record[CKSchema.CheckInField.verifyOutAccuracy1Meters] = NSNumber(value: verification.read1Accuracy)
+        record[CKSchema.CheckInField.verifyOutAccuracy2Meters] = NSNumber(value: verification.read2Accuracy)
+        record[CKSchema.CheckInField.updatedAt] = Date() as CKRecordValue
+
+        let assetURL = try makeTemporaryAssetFile(data: checkOutPhotoData, prefix: "checkout_\(checkinId)")
+        defer { try? FileManager.default.removeItem(at: assetURL) }
+        record[CKSchema.CheckInField.checkOutPhotoAsset] = CKAsset(fileURL: assetURL)
+
+        _ = try await service.save(record: record)
     }
-    
 
     func updateCheckIn(_ checkIn: CheckIn) async throws {
-        let managerId = try await resolveManagerId(storeId: checkIn.storeId, preferredManagerId: nil)
-        let payload: [String: Any] = [
-            "status": checkIn.status.rawValue,
-            "rejectReason": checkIn.rejectReason as Any
-        ]
-        let batch = db.batch()
-        batch.updateData(payload, forDocument: db.collection("checkins").document(checkIn.id))
-        batch.updateData(payload, forDocument: db.collection("employeeCheckins").document(checkIn.employeeId).collection("checkins").document(checkIn.id))
-        batch.updateData(payload, forDocument: db.collection("managerCheckins").document(managerId).collection("stores").document(checkIn.storeId).collection("checkins").document(checkIn.id))
-        try await batch.commit()
+        try await service.ensureCloudKitAvailable()
+
+        let currentUserId = try service.requireCurrentUserId()
+        let recordID = CloudKitService.checkInRecordID(checkInId: checkIn.id)
+        guard let record = try await service.fetchRecord(with: recordID) else {
+            throw CloudKitClientError.missingRecord("Check-in session not found.")
+        }
+
+        let managerId = record.string(CKSchema.CheckInField.managerUserId)
+        guard managerId == currentUserId else {
+            throw CloudKitClientError.unauthorized
+        }
+
+        record[CKSchema.CheckInField.status] = checkIn.status.rawValue as CKRecordValue
+        if let rejectReason = checkIn.rejectReason, !rejectReason.isEmpty {
+            record[CKSchema.CheckInField.rejectReason] = rejectReason as CKRecordValue
+        } else {
+            record[CKSchema.CheckInField.rejectReason] = nil
+        }
+        record[CKSchema.CheckInField.updatedAt] = Date() as CKRecordValue
+
+        _ = try await service.save(record: record)
     }
 
     func updateCheckInTimes(checkIn: CheckIn, newCheckInTime: Date, newCheckOutTime: Date?) async throws {
-        guard let managerUid = Auth.auth().currentUser?.uid else {
-            throw NSError(domain: "StorePass", code: 4001, userInfo: [NSLocalizedDescriptionKey: "You must be signed in."])
+        try await service.ensureCloudKitAvailable()
+
+        let currentUserId = try service.requireCurrentUserId()
+        let recordID = CloudKitService.checkInRecordID(checkInId: checkIn.id)
+        guard let record = try await service.fetchRecord(with: recordID) else {
+            throw CloudKitClientError.missingRecord("Check-in session not found.")
         }
 
-        let maxAllowed = Date().addingTimeInterval(5 * 60)
-        if newCheckInTime > maxAllowed {
-            throw NSError(domain: "StorePass", code: 4014, userInfo: [NSLocalizedDescriptionKey: "Check-in time cannot be set in the future."])
+        let managerId = record.string(CKSchema.CheckInField.managerUserId)
+        guard managerId == currentUserId else {
+            throw CloudKitClientError.unauthorized
         }
+
+        record[CKSchema.CheckInField.checkInAt] = newCheckInTime as CKRecordValue
         if let newCheckOutTime {
-            if newCheckOutTime > maxAllowed {
-                throw NSError(domain: "StorePass", code: 4015, userInfo: [NSLocalizedDescriptionKey: "Check-out time cannot be set in the future."])
-            }
-            if newCheckInTime > newCheckOutTime {
-                throw NSError(domain: "StorePass", code: 4016, userInfo: [NSLocalizedDescriptionKey: "Check-in time must be before check-out time."])
-            }
+            record[CKSchema.CheckInField.checkOutAt] = newCheckOutTime as CKRecordValue
+            let duration = max(Int(newCheckOutTime.timeIntervalSince(newCheckInTime)), 0)
+            record[CKSchema.CheckInField.durationSeconds] = NSNumber(value: duration)
+        } else {
+            record[CKSchema.CheckInField.checkOutAt] = nil
+            record[CKSchema.CheckInField.durationSeconds] = nil
         }
+        record[CKSchema.CheckInField.updatedAt] = Date() as CKRecordValue
 
-        let managerId = try await resolveManagerId(storeId: checkIn.storeId, preferredManagerId: managerUid)
-        let payload: [String: Any] = [
-            "checkInTime": Timestamp(date: newCheckInTime),
-            "checkOutTime": newCheckOutTime.map { Timestamp(date: $0) } ?? NSNull(),
-            "updatedAt": FieldValue.serverTimestamp()
-        ]
-
-        let batch = db.batch()
-        batch.updateData(payload, forDocument: db.collection("checkins").document(checkIn.id))
-        batch.updateData(payload, forDocument: db.collection("employeeCheckins").document(checkIn.employeeId).collection("checkins").document(checkIn.id))
-        batch.updateData(payload, forDocument: db.collection("managerCheckins").document(managerId).collection("stores").document(checkIn.storeId).collection("checkins").document(checkIn.id))
-
-        do {
-            try await batch.commit()
-        } catch {
-            print("[ManagerEditTimes] error=\(error.localizedDescription)")
-            throw mapFirestoreError(error)
-        }
+        _ = try await service.save(record: record)
     }
 
     func deleteCheckIn(checkinId: String, employeeId: String, storeId: String, managerId: String?) async throws {
-        await logOperationContext(
-            operation: "employee_delete_checkin",
-            paths: [
-                "checkins/\(checkinId)",
-                "employeeCheckins/\(employeeId)/checkins/\(checkinId)",
-                "managerCheckins/<resolved>/stores/\(storeId)/checkins/\(checkinId)"
-            ]
-        )
-        let managerId = try await resolveManagerId(storeId: storeId, preferredManagerId: managerId)
-        let batch = db.batch()
-        batch.deleteDocument(db.collection("checkins").document(checkinId))
-        batch.deleteDocument(db.collection("employeeCheckins").document(employeeId).collection("checkins").document(checkinId))
-        batch.deleteDocument(db.collection("managerCheckins").document(managerId).collection("stores").document(storeId).collection("checkins").document(checkinId))
-        try await batch.commit()
+        _ = employeeId
+        _ = storeId
+
+        try await service.ensureCloudKitAvailable()
+        let currentUserId = try service.requireCurrentUserId()
+
+        let recordID = CloudKitService.checkInRecordID(checkInId: checkinId)
+        guard let record = try await service.fetchRecord(with: recordID) else {
+            return
+        }
+
+        let isOwner = record.string(CKSchema.CheckInField.employeeUserId) == currentUserId
+        let isManager = record.string(CKSchema.CheckInField.managerUserId) == currentUserId
+        let allowedByManagerParam = managerId == nil || managerId == currentUserId
+
+        guard (isOwner || isManager), allowedByManagerParam else {
+            throw CloudKitClientError.unauthorized
+        }
+
+        try await service.deleteRecord(with: recordID)
     }
 
     func deleteCheckIn(checkinId: String, storeId: String, managerId: String) async throws {
-        await logOperationContext(
-            operation: "manager_delete_checkin",
-            paths: [
-                "checkins/\(checkinId)",
-                "managerCheckins/\(managerId)/stores/\(storeId)/checkins/\(checkinId)",
-                "employeeCheckins/<resolvedEmployee>/checkins/\(checkinId)"
-            ]
-        )
-        let managerMirrorRef = db.collection("managerCheckins")
-            .document(managerId)
-            .collection("stores")
-            .document(storeId)
-            .collection("checkins")
-            .document(checkinId)
+        _ = storeId
 
-        let managerMirror = try await managerMirrorRef.getDocument()
-        let employeeId = managerMirror.data()?["employeeId"] as? String
-
-        let batch = db.batch()
-        batch.deleteDocument(db.collection("checkins").document(checkinId))
-        if let employeeId, !employeeId.isEmpty {
-            batch.deleteDocument(db.collection("employeeCheckins").document(employeeId).collection("checkins").document(checkinId))
+        try await service.ensureCloudKitAvailable()
+        let currentUserId = try service.requireCurrentUserId()
+        guard currentUserId == managerId else {
+            throw CloudKitClientError.unauthorized
         }
-        batch.deleteDocument(managerMirrorRef)
-        try await batch.commit()
+
+        let recordID = CloudKitService.checkInRecordID(checkInId: checkinId)
+        guard let record = try await service.fetchRecord(with: recordID) else {
+            return
+        }
+
+        guard record.string(CKSchema.CheckInField.managerUserId) == managerId else {
+            throw CloudKitClientError.unauthorized
+        }
+
+        try await service.deleteRecord(with: recordID)
     }
 
     func clearAllCheckIns(isManagerScope: Bool, storeId: String?, managerId: String?) async throws {
-        await logOperationContext(
-            operation: isManagerScope ? "manager_clear_all_checkins" : "employee_clear_all_checkins",
-            paths: [
-                isManagerScope
-                    ? "managerCheckins/\(managerId ?? "<resolved>")/stores/\(storeId ?? "<missing>")/checkins/*"
-                    : "employeeCheckins/\(Auth.auth().currentUser?.uid ?? "<nil>")/checkins/*"
-            ]
-        )
-        guard let uid = Auth.auth().currentUser?.uid else {
-            throw NSError(domain: "StorePass", code: 4001, userInfo: [NSLocalizedDescriptionKey: "You must be signed in."])
-        }
-
         if isManagerScope {
-            guard let storeId else { return }
-            let manager = try await resolveManagerId(storeId: storeId, preferredManagerId: managerId)
-            try await clearAllCheckIns(storeId: storeId, managerId: manager, limit: 500)
+            guard let storeId, let managerId else { return }
+            try await clearAllCheckIns(storeId: storeId, managerId: managerId, limit: 500)
+            return
+        }
+
+        let currentUserId = try service.requireCurrentUserId()
+        let predicate = NSPredicate(format: "%K == %@", CKSchema.CheckInField.employeeUserId, currentUserId)
+        let records = try await service.queryRecords(recordType: CKSchema.RecordType.checkInSession, predicate: predicate)
+        let recordIds = records.map(\.recordID)
+        if !recordIds.isEmpty {
+            _ = try await service.modify(recordsToSave: [], recordIDsToDelete: recordIds, atomic: false)
+        }
+    }
+
+    func clearAllCheckIns(storeId: String, managerId: String, limit: Int) async throws {
+        _ = limit
+
+        let currentUserId = try service.requireCurrentUserId()
+        guard currentUserId == managerId else {
+            throw CloudKitClientError.unauthorized
+        }
+
+        let predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [
+            NSPredicate(format: "%K == %@", CKSchema.CheckInField.managerUserId, managerId),
+            NSPredicate(format: "%K == %@", CKSchema.CheckInField.storeId, storeId)
+        ])
+
+        let records = try await service.queryRecords(recordType: CKSchema.RecordType.checkInSession, predicate: predicate)
+        let recordIds = records.map(\.recordID)
+        if !recordIds.isEmpty {
+            _ = try await service.modify(recordsToSave: [], recordIDsToDelete: recordIds, atomic: false)
+        }
+    }
+
+    func fetchCheckIns(employeeId: String?, limit: Int) async throws -> [CheckIn] {
+        if let employeeId {
+            return try await fetchEmployeeCheckIns(employeeId: employeeId, limit: limit)
+        }
+
+        let currentUserId = try service.requireCurrentUserId()
+        let role = service.currentRole
+
+        let predicate: NSPredicate
+        if role == .manager {
+            predicate = NSPredicate(format: "%K == %@", CKSchema.CheckInField.managerUserId, currentUserId)
         } else {
-            let snap = try await db.collection("employeeCheckins").document(uid).collection("checkins").getDocuments()
-            for document in snap.documents {
-                let data = document.data()
-                let storeId = data["storeId"] as? String ?? ""
-                let manager = data["managerId"] as? String
-                try await deleteCheckIn(checkinId: document.documentID, employeeId: uid, storeId: storeId, managerId: manager)
-            }
+            predicate = NSPredicate(format: "%K == %@", CKSchema.CheckInField.employeeUserId, currentUserId)
         }
+
+        let records = try await service.queryRecords(
+            recordType: CKSchema.RecordType.checkInSession,
+            predicate: predicate,
+            sortDescriptors: [NSSortDescriptor(key: CKSchema.CheckInField.checkInAt, ascending: false)]
+        )
+
+        return Array(records.compactMap(decodeCheckIn(record:)).prefix(limit))
     }
 
-    func clearAllCheckIns(storeId: String, managerId: String, limit: Int = 500) async throws {
-        let queryLimit = max(1, min(limit, 500))
+    func fetchEmployeeCheckIns(employeeId: String, limit: Int) async throws -> [CheckIn] {
+        try await service.ensureCloudKitAvailable()
 
-        let managerSnapshot = try await db.collection("managerCheckins")
-            .document(managerId)
-            .collection("stores")
-            .document(storeId)
-            .collection("checkins")
-            .limit(to: queryLimit)
-            .getDocuments()
+        let records = try await service.queryRecords(
+            recordType: CKSchema.RecordType.checkInSession,
+            predicate: NSPredicate(format: "%K == %@", CKSchema.CheckInField.employeeUserId, employeeId),
+            sortDescriptors: [NSSortDescriptor(key: CKSchema.CheckInField.checkInAt, ascending: false)]
+        )
 
-        if managerSnapshot.documents.isEmpty { return }
-
-        // Local chunk helper (avoids fileprivate extension visibility issues)
-        func chunkDocuments<T>(_ items: [T], size: Int) -> [[T]] {
-            guard size > 0 else { return [items] }
-            var result: [[T]] = []
-            result.reserveCapacity((items.count + size - 1) / size)
-            var index = 0
-            while index < items.count {
-                let end = min(index + size, items.count)
-                result.append(Array(items[index..<end]))
-                index = end
-            }
-            return result
-        }
-
-        // 150 deletes per batch is safe (Firestore limit is 500 ops per batch)
-        let chunks = chunkDocuments(managerSnapshot.documents, size: 150)
-
-        for chunk in chunks {
-            let batch = db.batch()
-
-            for document in chunk {
-                let checkinId = document.documentID
-                let employeeId = document.data()["employeeId"] as? String
-
-                batch.deleteDocument(db.collection("checkins").document(checkinId))
-
-                if let employeeId, !employeeId.isEmpty {
-                    batch.deleteDocument(
-                        db.collection("employeeCheckins")
-                            .document(employeeId)
-                            .collection("checkins")
-                            .document(checkinId)
-                    )
-                }
-
-                batch.deleteDocument(
-                    db.collection("managerCheckins")
-                        .document(managerId)
-                        .collection("stores")
-                        .document(storeId)
-                        .collection("checkins")
-                        .document(checkinId)
-                )
-            }
-
-            try await batch.commit()
-        }
+        return Array(records.compactMap(decodeCheckIn(record:)).prefix(limit))
     }
 
-    func fetchCheckIns(employeeId: String? = nil, limit: Int = 30) async throws -> [CheckIn] {
-        // Debugging notes:
-        // - Expected query shape: /checkins where employeeId == <uid> orderBy(checkInTime desc) limit(<N>)
-        // - Required composite index (if missing): employeeId ASC + checkInTime DESC on collection checkins
-        do {
-            var query: Query = db.collection("checkins").limit(to: limit)
-            var filterSummary = "none"
+    func fetchManagerStoreCheckIns(
+        managerId: String,
+        storeId: String,
+        fromDate: Date,
+        toDate: Date,
+        employeeId: String?,
+        limit: Int
+    ) async throws -> [CheckIn] {
+        try await service.ensureCloudKitAvailable()
 
-            if let employeeId {
-                query = query.whereField("employeeId", isEqualTo: employeeId)
-                filterSummary = "employeeId == \(employeeId)"
-            }
-
-            query = query.order(by: "checkInTime", descending: true)
-
-            print("[CheckIn][QUERY] employeeHistory uid=\(employeeId ?? "nil") collection=checkins filters=[\(filterSummary)] orderBy=[checkInTime DESC] limit=\(limit)")
-            print("[CheckIn][QUERY] indexHint=checkins(employeeId ASC, checkInTime DESC)")
-
-            let snap = try await query.getDocuments()
-            let decoded = snap.documents.compactMap(decodeCheckIn)
-            let first = decoded.first?.checkInTime.description ?? "nil"
-            let last = decoded.last?.checkInTime.description ?? "nil"
-            print("[CheckIn][QUERY] employeeHistory resultCount=\(decoded.count) firstCheckInTime=\(first) lastCheckInTime=\(last)")
-            return decoded
-        } catch {
-            logFirestoreError(prefix: "[CheckIn][QUERY] employeeHistory", error: error)
-            throw mapFirestoreError(error)
+        let currentUserId = try service.requireCurrentUserId()
+        guard managerId == currentUserId else {
+            throw CloudKitClientError.unauthorized
         }
-    }
 
-    func fetchEmployeeCheckIns(employeeId: String, limit: Int = 30) async throws -> [CheckIn] {
-        let path = "employeeCheckins/\(employeeId)/checkins"
-        print("[CheckIn][QUERY] path=\(path) uid=\(employeeId) storeId=nil orderBy=checkInTime DESC limit=\(limit)")
-        print("[CheckIn][QUERY] indexHint=none")
+        var predicates: [NSPredicate] = [
+            NSPredicate(format: "%K == %@", CKSchema.CheckInField.managerUserId, managerId),
+            NSPredicate(format: "%K == %@", CKSchema.CheckInField.storeId, storeId),
+            NSPredicate(format: "%K >= %@", CKSchema.CheckInField.checkInAt, fromDate as NSDate),
+            NSPredicate(format: "%K < %@", CKSchema.CheckInField.checkInAt, toDate as NSDate)
+        ]
 
-        do {
-            let snapshot = try await db.collection("employeeCheckins")
-                .document(employeeId)
-                .collection("checkins")
-                .order(by: "checkInTime", descending: true)
-                .limit(to: limit)
-                .getDocuments()
-
-            let decoded = snapshot.documents.compactMap(decodeCheckIn)
-            print("[CheckIn][QUERY] employeeMirror uid=\(employeeId) count=\(decoded.count)")
-            return decoded
-        } catch {
-            logFirestoreError(prefix: "[CheckIn][QUERY] employeeMirror", error: error)
-            throw mapFirestoreError(error)
+        if let employeeId, !employeeId.isEmpty {
+            predicates.append(NSPredicate(format: "%K == %@", CKSchema.CheckInField.employeeUserId, employeeId))
         }
-    }
 
-    func fetchManagerStoreCheckIns(managerId: String, storeId: String, fromDate: Date, toDate: Date, employeeId: String?, limit: Int = 100) async throws -> [CheckIn] {
-        let path = "managerCheckins/\(managerId)/stores/\(storeId)/checkins"
-        print("[CheckIn][QUERY] path=\(path) uid=\(managerId) storeId=\(storeId) orderBy=checkInTime DESC limit=\(limit)")
-        print("[CheckIn][QUERY] indexHint=none")
+        let records = try await service.queryRecords(
+            recordType: CKSchema.RecordType.checkInSession,
+            predicate: NSCompoundPredicate(andPredicateWithSubpredicates: predicates),
+            sortDescriptors: [NSSortDescriptor(key: CKSchema.CheckInField.checkInAt, ascending: false)]
+        )
 
-        do {
-            var query: Query = db.collection("managerCheckins")
-                .document(managerId)
-                .collection("stores")
-                .document(storeId)
-                .collection("checkins")
-                .whereField("checkInTime", isGreaterThanOrEqualTo: Timestamp(date: fromDate))
-                .whereField("checkInTime", isLessThan: Timestamp(date: toDate))
-
-            if let employeeId, !employeeId.isEmpty {
-                query = query.whereField("employeeId", isEqualTo: employeeId)
-            }
-
-            let snapshot = try await query
-                .order(by: "checkInTime", descending: true)
-                .limit(to: limit)
-                .getDocuments()
-            let decoded = snapshot.documents.compactMap(decodeCheckIn)
-            print("[CheckIn][QUERY] managerMirror managerUid=\(managerId) storeId=\(storeId) count=\(decoded.count)")
-            return decoded
-        } catch {
-            logFirestoreError(prefix: "[CheckIn][QUERY] managerMirror", error: error)
-            throw mapFirestoreError(error)
-        }
+        return Array(records.compactMap(decodeCheckIn(record:)).prefix(limit))
     }
 
     func fetchTodaysCheckIns(filter: CheckInFilter) async throws -> [CheckIn] {
-        do {
-            let snapshot = try await todaysCheckinsQuery(for: filter).getDocuments()
-            return snapshot.documents.compactMap(decodeCheckIn)
-        } catch {
-            throw mapFirestoreError(error)
+        try await service.ensureCloudKitAvailable()
+
+        let calendar = Calendar.current
+        let start = calendar.startOfDay(for: filter.date)
+        let end = calendar.date(byAdding: .day, value: 1, to: start) ?? Date()
+
+        let currentUserId = try service.requireCurrentUserId()
+        let role = service.currentRole
+
+        var predicates: [NSPredicate] = [
+            NSPredicate(format: "%K >= %@", CKSchema.CheckInField.checkInAt, start as NSDate),
+            NSPredicate(format: "%K < %@", CKSchema.CheckInField.checkInAt, end as NSDate)
+        ]
+
+        if role == .manager {
+            predicates.append(NSPredicate(format: "%K == %@", CKSchema.CheckInField.managerUserId, currentUserId))
+        } else {
+            predicates.append(NSPredicate(format: "%K == %@", CKSchema.CheckInField.employeeUserId, currentUserId))
         }
-    }
-
-    private func resolveManagerIdIfPresent(checkinId: String, storeId: String) async throws -> String? {
-        let checkinSnapshot = try await db.collection("checkins").document(checkinId).getDocument()
-        if let managerId = checkinSnapshot.data()?["managerId"] as? String,
-           !managerId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return managerId
-        }
-
-        let storeSnapshot = try await db.collection("stores").document(storeId).getDocument()
-        if let managerId = storeSnapshot.data()?["managerId"] as? String,
-           !managerId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return managerId
-        }
-
-        return nil
-    }
-
-    private func todaysCheckinsQuery(for filter: CheckInFilter) -> Query {
-        let start = Calendar.current.startOfDay(for: filter.date)
-        let end = Calendar.current.date(byAdding: .day, value: 1, to: start) ?? Date()
-
-        var query: Query = db.collection("checkins")
-            .whereField("checkInTime", isGreaterThanOrEqualTo: Timestamp(date: start))
-            .whereField("checkInTime", isLessThan: Timestamp(date: end))
 
         if let storeId = filter.storeId, !storeId.isEmpty {
-            query = query.whereField("storeId", isEqualTo: storeId)
+            predicates.append(NSPredicate(format: "%K == %@", CKSchema.CheckInField.storeId, storeId))
         }
 
         if let status = filter.status {
-            query = query.whereField("status", isEqualTo: status.rawValue)
+            predicates.append(NSPredicate(format: "%K == %@", CKSchema.CheckInField.status, status.rawValue))
         }
 
-        return query.order(by: "checkInTime", descending: true)
+        let records = try await service.queryRecords(
+            recordType: CKSchema.RecordType.checkInSession,
+            predicate: NSCompoundPredicate(andPredicateWithSubpredicates: predicates),
+            sortDescriptors: [NSSortDescriptor(key: CKSchema.CheckInField.checkInAt, ascending: false)]
+        )
+
+        return records.compactMap(decodeCheckIn(record:))
     }
 
-    private func encode(checkIn: CheckIn, storeData: [String: Any]? = nil, includeCheckoutFields: Bool) -> [String: Any] {
-        let resolvedStoreName = checkIn.storeName.isEmpty
-            ? (storeData?["name"] as? String ?? "Store")
-            : checkIn.storeName
+    private func fetchActiveSessions(employeeId: String, storeId: String) async throws -> [CheckIn] {
+        let records = try await service.queryRecords(
+            recordType: CKSchema.RecordType.checkInSession,
+            predicate: NSCompoundPredicate(andPredicateWithSubpredicates: [
+                NSPredicate(format: "%K == %@", CKSchema.CheckInField.employeeUserId, employeeId),
+                NSPredicate(format: "%K == %@", CKSchema.CheckInField.storeId, storeId)
+            ]),
+            sortDescriptors: [NSSortDescriptor(key: CKSchema.CheckInField.checkInAt, ascending: false)]
+        )
 
-        var payload: [String: Any] = [
-            "employeeId": checkIn.employeeId,
-            "storeId": checkIn.storeId,
-            "checkInTime": Timestamp(date: checkIn.checkInTime),
-            "createdAt": FieldValue.serverTimestamp(),
-            "latitude": checkIn.clientLat,
-            "longitude": checkIn.clientLng,
-            "clientLat": checkIn.clientLat,
-            "clientLng": checkIn.clientLng,
-            "distanceMeters": checkIn.distanceMeters,
-            "accuracyMeters": checkIn.accuracyMeters,
-            "status": checkIn.status.rawValue,
-            "rejectReason": checkIn.rejectReason as Any,
-            "employeeName": checkIn.employeeName,
-            "employeeEmail": checkIn.employeeEmail as Any,
-            "storeName": resolvedStoreName,
-            "managerId": storeData?["managerId"] as Any,
-            "verifyMethod": checkIn.verifyMethod as Any,
-            "verifyVersion": checkIn.verifyVersion as Any,
-            "verifyInInside": checkIn.verifyInInside as Any,
-            "verifyInDistance1Meters": checkIn.verifyInDistance1Meters as Any,
-            "verifyInDistance2Meters": checkIn.verifyInDistance2Meters as Any,
-            "verifyInDriftMeters": checkIn.verifyInDriftMeters as Any,
-            "verifyInRead1At": checkIn.verifyInRead1At.map { Timestamp(date: $0) } as Any,
-            "verifyInRead2At": checkIn.verifyInRead2At.map { Timestamp(date: $0) } as Any,
-            "verifyInAccuracy1Meters": checkIn.verifyInAccuracy1Meters as Any,
-            "verifyInAccuracy2Meters": checkIn.verifyInAccuracy2Meters as Any,
-            "verifyOutInside": checkIn.verifyOutInside as Any,
-            "verifyOutDistance1Meters": checkIn.verifyOutDistance1Meters as Any,
-            "verifyOutDistance2Meters": checkIn.verifyOutDistance2Meters as Any,
-            "verifyOutDriftMeters": checkIn.verifyOutDriftMeters as Any,
-            "verifyOutRead1At": checkIn.verifyOutRead1At.map { Timestamp(date: $0) } as Any,
-            "verifyOutRead2At": checkIn.verifyOutRead2At.map { Timestamp(date: $0) } as Any,
-            "verifyOutAccuracy1Meters": checkIn.verifyOutAccuracy1Meters as Any,
-            "verifyOutAccuracy2Meters": checkIn.verifyOutAccuracy2Meters as Any
-        ]
-
-        if includeCheckoutFields {
-            if let checkOutTime = checkIn.checkOutTime {
-                payload["checkOutTime"] = Timestamp(date: checkOutTime)
-            }
-            if let checkOutLat = checkIn.checkOutLat {
-                payload["checkOutLat"] = checkOutLat
-            }
-            if let checkOutLng = checkIn.checkOutLng {
-                payload["checkOutLng"] = checkOutLng
-            }
-            if let checkOutDistanceMeters = checkIn.checkOutDistanceMeters {
-                payload["checkOutDistanceMeters"] = checkOutDistanceMeters
-            }
-            if let checkOutAccuracyMeters = checkIn.checkOutAccuracyMeters {
-                payload["checkOutAccuracyMeters"] = checkOutAccuracyMeters
-            }
-            if let durationSeconds = checkIn.durationSeconds {
-                payload["durationSeconds"] = durationSeconds
-            }
-        }
-
-        return payload
+        return records.compactMap(decodeCheckIn(record:)).filter { $0.checkOutTime == nil }
     }
 
-    private struct RulesPreflightSnapshot {
-        var userDocExists = false
-        var role: String?
-        var isActive: Bool?
-        var assignedStoreIdsCount = 0
-        var assignedStoreIdsContains = false
-        var membershipExists = false
-        var employeeStoreMirrorExists = false
-        var storeExists = false
-        var storeManagerId: String?
-        var storeIsActive: Bool?
+    private func ensureActiveMembership(employeeId: String, storeId: String) async throws {
+        let membershipRecordID = CloudKitService.membershipRecordID(storeId: storeId, employeeId: employeeId)
+        guard let membership = try await service.fetchRecord(with: membershipRecordID) else {
+            throw CloudKitClientError.invalidData("You are no longer a member of this store.")
+        }
+
+        let status = membership.string(CKSchema.StoreMemberField.status)
+        guard status == CKSchema.MemberStatus.active else {
+            throw CloudKitClientError.invalidData("You are no longer a member of this store.")
+        }
+
+        guard let storeRecord = try await service.fetchRecord(with: CloudKitService.storeRecordID(storeId: storeId)),
+              storeRecord.bool(CKSchema.StoreField.isActive, default: true) else {
+            throw CloudKitClientError.invalidData("This store is no longer active.")
+        }
     }
 
-    private func runRulesPreflight(uid: String, storeId: String) async -> RulesPreflightSnapshot {
-        var preflight = RulesPreflightSnapshot()
-
-        do {
-            let userDoc = try await db.collection("users").document(uid).getDocument(source: .server)
-            preflight.userDocExists = userDoc.exists
-
-            let userData = userDoc.data() ?? [:]
-            preflight.role = userData["role"] as? String
-            preflight.isActive = userData["isActive"] as? Bool
-
-            let assignedStoreIds = userData["assignedStoreIds"] as? [String] ?? []
-            preflight.assignedStoreIdsCount = assignedStoreIds.count
-            preflight.assignedStoreIdsContains = assignedStoreIds.contains(storeId)
-
-            let roleStr = preflight.role ?? "nil"
-            let activeStr = String(describing: preflight.isActive)
-
-            print("[RulesPreflight][users] uid=\(uid) storeId=\(storeId) userDocExists=\(preflight.userDocExists) role=\(roleStr) isActive=\(activeStr) assignedStoreIdsCount=\(preflight.assignedStoreIdsCount) assignedStoreIdsContains=\(preflight.assignedStoreIdsContains)")
-        } catch {
-            logFirestoreError(prefix: "[RulesPreflight][users] uid=\(uid) storeId=\(storeId)", error: error)
-        }
-
-        do {
-            let memberDoc = try await db.collection("stores").document(storeId)
-                .collection("members").document(uid)
-                .getDocument(source: .server)
-
-            preflight.membershipExists = memberDoc.exists
-            print("[RulesPreflight][members] uid=\(uid) storeId=\(storeId) membershipExists=\(preflight.membershipExists)")
-        } catch {
-            logFirestoreError(prefix: "[RulesPreflight][members] uid=\(uid) storeId=\(storeId)", error: error)
-        }
-
-        do {
-            let employeeStoreDoc = try await db.collection("employeeStores").document(uid)
-                .collection("stores").document(storeId)
-                .getDocument(source: .server)
-
-            preflight.employeeStoreMirrorExists = employeeStoreDoc.exists
-            print("[RulesPreflight][employeeStores] uid=\(uid) storeId=\(storeId) employeeStoreMirrorExists=\(preflight.employeeStoreMirrorExists)")
-        } catch {
-            logFirestoreError(prefix: "[RulesPreflight][employeeStores] uid=\(uid) storeId=\(storeId)", error: error)
-        }
-
-        do {
-            let storeDoc = try await db.collection("stores").document(storeId).getDocument(source: .server)
-            preflight.storeExists = storeDoc.exists
-
-            let storeData = storeDoc.data() ?? [:]
-            preflight.storeManagerId = storeData["managerId"] as? String
-            preflight.storeIsActive = storeData["isActive"] as? Bool
-
-            let managerIdStr = preflight.storeManagerId ?? "nil"
-            let storeActiveStr = String(describing: preflight.storeIsActive)
-
-            print("[RulesPreflight][store] uid=\(uid) storeId=\(storeId) storeExists=\(preflight.storeExists) managerId=\(managerIdStr) isActive=\(storeActiveStr)")
-        } catch {
-            logFirestoreError(prefix: "[RulesPreflight][store] uid=\(uid) storeId=\(storeId)", error: error)
-        }
-
-        logPreflightSummary(preflight: preflight, uid: uid, storeId: storeId, prefix: "[RulesPreflight]")
-        return preflight
-    }
-
-    private func logPreflightSummary(preflight: RulesPreflightSnapshot, uid: String, storeId: String, prefix: String) {
-        print("\(prefix) uid=\(uid) storeId=\(storeId) assignedStoreIdsContains=\(preflight.assignedStoreIdsContains) membershipExists=\(preflight.membershipExists) employeeStoreMirrorExists=\(preflight.employeeStoreMirrorExists) storeExists=\(preflight.storeExists)")
-    }
-
-    private func decodeCheckIn(document: QueryDocumentSnapshot) -> CheckIn? {
-        let data = document.data()
-        guard let employeeId = data["employeeId"] as? String,
-              let storeId = data["storeId"] as? String,
-              let checkInTime = decodeDate(data["checkInTime"]) else {
+    private func decodeCheckIn(record: CKRecord) -> CheckIn? {
+        guard let id = record.string(CKSchema.CheckInField.sessionId),
+              let employeeId = record.string(CKSchema.CheckInField.employeeUserId),
+              let storeId = record.string(CKSchema.CheckInField.storeId),
+              let checkInTime = record.date(CKSchema.CheckInField.checkInAt) else {
             return nil
         }
 
-        let legacyVerifyInInside = (data["verifyStatus"] as? String) == "approved"
-        let legacyVerifyOutInside = (data["checkoutVerifyStatus"] as? String) == "approved"
+        let statusRaw = record.string(CKSchema.CheckInField.status) ?? CheckInStatus.approved.rawValue
+        let status = CheckInStatus(rawValue: statusRaw) ?? .approved
 
         return CheckIn(
-            id: document.documentID,
+            id: id,
             employeeId: employeeId,
             storeId: storeId,
             checkInTime: checkInTime,
-            checkOutTime: decodeDate(data["checkOutTime"]),
-            clientLat: (data["latitude"] as? Double) ?? (data["clientLat"] as? Double ?? 0),
-            clientLng: (data["longitude"] as? Double) ?? (data["clientLng"] as? Double ?? 0),
-            distanceMeters: data["distanceMeters"] as? Double ?? 0,
-            accuracyMeters: data["accuracyMeters"] as? Double ?? 0,
-            checkOutLat: data["checkOutLat"] as? Double,
-            checkOutLng: data["checkOutLng"] as? Double,
-            checkOutDistanceMeters: data["checkOutDistanceMeters"] as? Double,
-            checkOutAccuracyMeters: data["checkOutAccuracyMeters"] as? Double,
-            durationSeconds: data["durationSeconds"] as? Int,
-            status: CheckInStatus(rawValue: data["status"] as? String ?? "rejected") ?? .rejected,
-            rejectReason: data["rejectReason"] as? String,
-            employeeName: data["employeeName"] as? String ?? "Employee",
-            employeeEmail: data["employeeEmail"] as? String,
-            storeName: data["storeName"] as? String ?? "Store",
-            verifyVersion: data["verifyVersion"] as? Int,
-            verifyMethod: data["verifyMethod"] as? String,
-            verifyInInside: (data["verifyInInside"] as? Bool) ?? ((data["verifyStatus"] as? String) != nil ? legacyVerifyInInside : nil),
-            verifyInDistance1Meters: (data["verifyInDistance1Meters"] as? Double) ?? (data["verifyDistance1Meters"] as? Double),
-            verifyInDistance2Meters: (data["verifyInDistance2Meters"] as? Double) ?? (data["verifyDistance2Meters"] as? Double),
-            verifyInDriftMeters: (data["verifyInDriftMeters"] as? Double) ?? (data["verifyDriftMeters"] as? Double),
-            verifyInRead1At: decodeDate(data["verifyInRead1At"]) ?? decodeDate(data["verifyRead1At"]),
-            verifyInRead2At: decodeDate(data["verifyInRead2At"]) ?? decodeDate(data["verifyRead2At"]),
-            verifyInAccuracy1Meters: (data["verifyInAccuracy1Meters"] as? Double) ?? (data["verifyRead1Accuracy"] as? Double),
-            verifyInAccuracy2Meters: (data["verifyInAccuracy2Meters"] as? Double) ?? (data["verifyRead2Accuracy"] as? Double),
-            verifyOutInside: (data["verifyOutInside"] as? Bool) ?? ((data["checkoutVerifyStatus"] as? String) != nil ? legacyVerifyOutInside : nil),
-            verifyOutDistance1Meters: (data["verifyOutDistance1Meters"] as? Double) ?? (data["checkoutVerifyDistance1Meters"] as? Double),
-            verifyOutDistance2Meters: (data["verifyOutDistance2Meters"] as? Double) ?? (data["checkoutVerifyDistance2Meters"] as? Double),
-            verifyOutDriftMeters: (data["verifyOutDriftMeters"] as? Double) ?? (data["checkoutVerifyDriftMeters"] as? Double),
-            verifyOutRead1At: decodeDate(data["verifyOutRead1At"]) ?? decodeDate(data["checkoutVerifyRead1At"]),
-            verifyOutRead2At: decodeDate(data["verifyOutRead2At"]) ?? decodeDate(data["checkoutVerifyRead2At"]),
-            verifyOutAccuracy1Meters: (data["verifyOutAccuracy1Meters"] as? Double) ?? (data["checkoutVerifyRead1Accuracy"] as? Double),
-            verifyOutAccuracy2Meters: (data["verifyOutAccuracy2Meters"] as? Double) ?? (data["checkoutVerifyRead2Accuracy"] as? Double)
+            checkOutTime: record.date(CKSchema.CheckInField.checkOutAt),
+            clientLat: (record[CKSchema.CheckInField.checkInLocationLat] as? NSNumber)?.doubleValue ?? 0,
+            clientLng: (record[CKSchema.CheckInField.checkInLocationLng] as? NSNumber)?.doubleValue ?? 0,
+            distanceMeters: (record[CKSchema.CheckInField.checkInDistanceMeters] as? NSNumber)?.doubleValue ?? 0,
+            accuracyMeters: (record[CKSchema.CheckInField.checkInAccuracyMeters] as? NSNumber)?.doubleValue ?? 0,
+            checkOutLat: (record[CKSchema.CheckInField.checkOutLocationLat] as? NSNumber)?.doubleValue,
+            checkOutLng: (record[CKSchema.CheckInField.checkOutLocationLng] as? NSNumber)?.doubleValue,
+            checkOutDistanceMeters: (record[CKSchema.CheckInField.checkOutDistanceMeters] as? NSNumber)?.doubleValue,
+            checkOutAccuracyMeters: (record[CKSchema.CheckInField.checkOutAccuracyMeters] as? NSNumber)?.doubleValue,
+            durationSeconds: (record[CKSchema.CheckInField.durationSeconds] as? NSNumber)?.intValue,
+            status: status,
+            rejectReason: record.string(CKSchema.CheckInField.rejectReason),
+            employeeName: record.string(CKSchema.CheckInField.employeeName) ?? "Employee",
+            employeeEmail: record.string(CKSchema.CheckInField.employeeEmail),
+            storeName: record.string(CKSchema.CheckInField.storeName) ?? "Store",
+            verifyVersion: (record[CKSchema.CheckInField.verifyVersion] as? NSNumber)?.intValue,
+            verifyMethod: record.string(CKSchema.CheckInField.verifyMethod),
+            verifyInInside: (record[CKSchema.CheckInField.verifyInInside] as? NSNumber)?.boolValue,
+            verifyInDistance1Meters: (record[CKSchema.CheckInField.verifyInDistance1Meters] as? NSNumber)?.doubleValue,
+            verifyInDistance2Meters: (record[CKSchema.CheckInField.verifyInDistance2Meters] as? NSNumber)?.doubleValue,
+            verifyInDriftMeters: (record[CKSchema.CheckInField.verifyInDriftMeters] as? NSNumber)?.doubleValue,
+            verifyInRead1At: record.date(CKSchema.CheckInField.verifyInRead1At),
+            verifyInRead2At: record.date(CKSchema.CheckInField.verifyInRead2At),
+            verifyInAccuracy1Meters: (record[CKSchema.CheckInField.verifyInAccuracy1Meters] as? NSNumber)?.doubleValue,
+            verifyInAccuracy2Meters: (record[CKSchema.CheckInField.verifyInAccuracy2Meters] as? NSNumber)?.doubleValue,
+            verifyOutInside: (record[CKSchema.CheckInField.verifyOutInside] as? NSNumber)?.boolValue,
+            verifyOutDistance1Meters: (record[CKSchema.CheckInField.verifyOutDistance1Meters] as? NSNumber)?.doubleValue,
+            verifyOutDistance2Meters: (record[CKSchema.CheckInField.verifyOutDistance2Meters] as? NSNumber)?.doubleValue,
+            verifyOutDriftMeters: (record[CKSchema.CheckInField.verifyOutDriftMeters] as? NSNumber)?.doubleValue,
+            verifyOutRead1At: record.date(CKSchema.CheckInField.verifyOutRead1At),
+            verifyOutRead2At: record.date(CKSchema.CheckInField.verifyOutRead2At),
+            verifyOutAccuracy1Meters: (record[CKSchema.CheckInField.verifyOutAccuracy1Meters] as? NSNumber)?.doubleValue,
+            verifyOutAccuracy2Meters: (record[CKSchema.CheckInField.verifyOutAccuracy2Meters] as? NSNumber)?.doubleValue,
+            checkInPhotoAssetID: (record[CKSchema.CheckInField.checkInPhotoAsset] as? CKAsset)?.fileURL?.lastPathComponent,
+            checkOutPhotoAssetID: (record[CKSchema.CheckInField.checkOutPhotoAsset] as? CKAsset)?.fileURL?.lastPathComponent,
+            createdAt: record.date(CKSchema.CheckInField.createdAt),
+            updatedAt: record.date(CKSchema.CheckInField.updatedAt)
         )
     }
 
-    private func resolveManagerId(storeId: String, preferredManagerId: String?) async throws -> String {
-        if let preferredManagerId, !preferredManagerId.isEmpty {
-            return preferredManagerId
+    private func encodeVerificationIn(record: CKRecord, from checkIn: CheckIn) {
+        if let verifyVersion = checkIn.verifyVersion {
+            record[CKSchema.CheckInField.verifyVersion] = NSNumber(value: verifyVersion)
         }
-        let storeSnapshot = try await db.collection("stores").document(storeId).getDocument()
-        guard let managerId = storeSnapshot.data()?["managerId"] as? String, !managerId.isEmpty else {
-            throw NSError(domain: "StorePass", code: 4010, userInfo: [NSLocalizedDescriptionKey: "Store manager could not be resolved."])
+        if let verifyMethod = checkIn.verifyMethod {
+            record[CKSchema.CheckInField.verifyMethod] = verifyMethod as CKRecordValue
         }
-        return managerId
+        if let verifyInInside = checkIn.verifyInInside {
+            record[CKSchema.CheckInField.verifyInInside] = NSNumber(value: verifyInInside)
+        }
+        if let verifyInDistance1Meters = checkIn.verifyInDistance1Meters {
+            record[CKSchema.CheckInField.verifyInDistance1Meters] = NSNumber(value: verifyInDistance1Meters)
+        }
+        if let verifyInDistance2Meters = checkIn.verifyInDistance2Meters {
+            record[CKSchema.CheckInField.verifyInDistance2Meters] = NSNumber(value: verifyInDistance2Meters)
+        }
+        if let verifyInDriftMeters = checkIn.verifyInDriftMeters {
+            record[CKSchema.CheckInField.verifyInDriftMeters] = NSNumber(value: verifyInDriftMeters)
+        }
+        if let verifyInRead1At = checkIn.verifyInRead1At {
+            record[CKSchema.CheckInField.verifyInRead1At] = verifyInRead1At as CKRecordValue
+        }
+        if let verifyInRead2At = checkIn.verifyInRead2At {
+            record[CKSchema.CheckInField.verifyInRead2At] = verifyInRead2At as CKRecordValue
+        }
+        if let verifyInAccuracy1Meters = checkIn.verifyInAccuracy1Meters {
+            record[CKSchema.CheckInField.verifyInAccuracy1Meters] = NSNumber(value: verifyInAccuracy1Meters)
+        }
+        if let verifyInAccuracy2Meters = checkIn.verifyInAccuracy2Meters {
+            record[CKSchema.CheckInField.verifyInAccuracy2Meters] = NSNumber(value: verifyInAccuracy2Meters)
+        }
     }
 
-    private func decodeDate(_ raw: Any?) -> Date? {
-        if let ts = raw as? Timestamp {
-            return ts.dateValue()
-        }
-
-        if let date = raw as? Date {
-            return date
-        }
-
-        return nil
+    private func makeTemporaryAssetFile(data: Data, prefix: String) throws -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent(prefix)
+            .appendingPathExtension("jpg")
+        try data.write(to: url, options: .atomic)
+        return url
     }
 
-
-    private func logOperationContext(operation: String, paths: [String]) async {
-        let uid = Auth.auth().currentUser?.uid ?? "nil"
-        let providerIDs = Auth.auth().currentUser?.providerData.map(\.providerID) ?? []
-        var role = "nil"
-        var isActive = "nil"
-
-        if uid != "nil" {
-            do {
-                let doc = try await db.collection("users").document(uid).getDocument()
-                role = (doc.data()?["role"] as? String) ?? "nil"
-                if let active = doc.data()?["isActive"] as? Bool {
-                    isActive = String(active)
-                }
-            } catch {
-                print("[CheckInOp] operation=\(operation) uid=\(uid) profileLookupError=\(error.localizedDescription)")
+    private static func signature(for checkIns: [CheckIn]) -> String {
+        checkIns
+            .map { item in
+                let updated = item.updatedAt?.timeIntervalSince1970 ?? item.checkInTime.timeIntervalSince1970
+                return "\(item.id):\(updated):\(item.checkOutTime?.timeIntervalSince1970 ?? 0):\(item.status.rawValue)"
             }
-        }
-
-        print("[CheckInOp] operation=\(operation) uid=\(uid) providerIDs=\(providerIDs) role=\(role) isActive=\(isActive) paths=\(paths)")
-    }
-
-    private func mapFirestoreError(_ error: Error) -> Error {
-        let nsError = error as NSError
-
-        if nsError.domain == FirestoreErrorDomain,
-           let code = FirestoreErrorCode.Code(rawValue: nsError.code),
-           code == .permissionDenied {
-            return NSError(
-                domain: "StorePass",
-                code: nsError.code,
-                userInfo: [NSLocalizedDescriptionKey: "You don't have permission for this action."]
-            )
-        }
-
-        if nsError.domain == FirestoreErrorDomain,
-           let code = FirestoreErrorCode.Code(rawValue: nsError.code),
-           code == .failedPrecondition {
-            return NSError(
-                domain: "StorePass",
-                code: nsError.code,
-                userInfo: [NSLocalizedDescriptionKey: "Missing Firestore index for check-ins (employeeId + checkInTime)."]
-            )
-        }
-
-        return error
-    }
-
-    private func logFirestoreError(prefix: String, error: Error) {
-        let nsError = error as NSError
-        print("\(prefix) error domain=\(nsError.domain) code=\(nsError.code)")
-        print("\(prefix) userInfo=\(nsError.userInfo)")
-
-        if nsError.domain == FirestoreErrorDomain,
-           let code = FirestoreErrorCode.Code(rawValue: nsError.code) {
-            print("\(prefix) firestoreCode=\(code)")
-        }
+            .joined(separator: "|")
     }
 }

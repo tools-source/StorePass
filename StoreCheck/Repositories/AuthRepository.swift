@@ -1,6 +1,6 @@
-import FirebaseAuth
 import Foundation
 
+@MainActor
 protocol AuthRepositoryProtocol {
     var currentUserId: String? { get }
     func signIn(email: String, password: String) async throws -> String
@@ -8,27 +8,41 @@ protocol AuthRepositoryProtocol {
     func signOut() throws
 }
 
-final class FirebaseAuthRepository: AuthRepositoryProtocol {
-    private var auth: Auth {
-        FirebaseBootstrap.assertConfigured(context: "FirebaseAuthRepository.auth")
-        return Auth.auth()
+@MainActor
+final class CloudKitAuthRepository: AuthRepositoryProtocol {
+    private weak var authService: AuthService?
+
+    init(authService: AuthService) {
+        self.authService = authService
     }
 
-    var currentUserId: String? { auth.currentUser?.uid }
+    var currentUserId: String? {
+        authService?.currentIdentity?.userId
+    }
 
     func signIn(email: String, password: String) async throws -> String {
         _ = email
         _ = password
-        throw NSError(domain: "StorePass", code: 4101, userInfo: [NSLocalizedDescriptionKey: "Email/password sign-in is disabled. Use Google or Apple sign-in."])
+        throw NSError(
+            domain: "StorePass",
+            code: 4101,
+            userInfo: [NSLocalizedDescriptionKey: "Email/password sign-in is disabled. Use Sign in with Apple."]
+        )
     }
 
     func createUser(email: String, password: String) async throws -> String {
         _ = email
         _ = password
-        throw NSError(domain: "StorePass", code: 4102, userInfo: [NSLocalizedDescriptionKey: "Email/password account creation is disabled. Use Google or Apple sign-in."])
+        throw NSError(
+            domain: "StorePass",
+            code: 4102,
+            userInfo: [NSLocalizedDescriptionKey: "Email/password account creation is disabled. Use Sign in with Apple."]
+        )
     }
 
     func signOut() throws {
-        try auth.signOut()
+        Task { [weak authService] in
+            try? await authService?.signOut()
+        }
     }
 }

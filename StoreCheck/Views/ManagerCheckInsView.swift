@@ -17,46 +17,82 @@ struct ManagerCheckInsView: View {
 
     var body: some View {
         NavigationStack {
-            List {
-                ForEach(viewModel.visibleCheckIns) { item in
-                    NavigationLink {
-                        ManagerCheckInDetailView(item: item)
-                    } label: {
-                        VStack(alignment: .leading, spacing: 6) {
-                            HStack {
-                                Text(item.employeeName).font(.headline).lineLimit(1)
-                                Spacer()
-                                StatBadge(style: item.verifyInInside == true ? .inside : .outside, text: item.verifyInInside == true ? "Inside ✓" : "Outside ✕")
+            ZStack {
+                AppBackground()
+
+                ScrollView(showsIndicators: false) {
+                    VStack(spacing: DS.Spacing.m) {
+                        ScreenHeader(
+                            title: "Attendance",
+                            subtitle: "Review check-ins, apply filters, and export reports",
+                            icon: "checklist"
+                        )
+
+                        filterSummaryCard
+
+                        if viewModel.isLoading {
+                            loadingCard
+                        }
+
+                        if let error = viewModel.errorMessage {
+                            BannerView(text: error, isError: true)
+                        }
+
+                        if !viewModel.isLoading && viewModel.daySections.isEmpty {
+                            EmptyStateView(
+                                icon: "calendar.badge.exclamationmark",
+                                title: "No attendance found",
+                                message: "Adjust your date or employee filter to see check-ins."
+                            )
+                        } else {
+                            VStack(spacing: DS.Spacing.s) {
+                                ForEach(viewModel.daySections) { section in
+                                    daySectionCard(section)
+                                }
                             }
-                            Text("\(viewModel.formattedTime(item.checkInTime)) → \(item.checkOutTime.map(viewModel.formattedTime) ?? "Open") • \(viewModel.formattedDuration(item))")
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                            Text("\(item.status.rawValue.capitalized) • d2 \(Int(item.verifyInDistance2Meters ?? 0))m • ±\(Int(item.verifyInAccuracy2Meters ?? 0))m • drift \(Int(item.verifyInDriftMeters ?? 0))m")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
                         }
                     }
-                    .listRowBackground(DS.Colors.card)
-                    .listRowSeparator(.hidden)
+                    .frame(maxWidth: DS.Metrics.maxReadableWidth)
+                    .padding(.horizontal, DS.Spacing.m)
+                    .padding(.vertical, DS.Spacing.m)
                 }
             }
-            .safeAreaInset(edge: .top) { filterBar }
-            .listStyle(.plain)
-            .scrollContentBackground(.hidden)
-            .background(DS.Colors.background)
-            .navigationTitle("Check-ins")
+            .navigationTitle("Attendance")
             .toolbar {
                 ToolbarItemGroup(placement: .topBarTrailing) {
-                    Button { viewModel.copyVisibleList() } label: { Image(systemName: "doc.on.doc") }
-                    if let exportURL = viewModel.exportURL() {
-                        ShareLink(item: exportURL) { Image(systemName: "square.and.arrow.up") }
+                    Button {
+                        viewModel.copyVisibleList()
+                    } label: {
+                        Image(systemName: "doc.on.doc")
                     }
-                    Button("Clear", role: .destructive) { showClearAllConfirm = true }
+
+                    if let exportURL = viewModel.exportURL() {
+                        ShareLink(item: exportURL) {
+                            Image(systemName: "square.and.arrow.up")
+                        }
+                    }
+
+                    Button {
+                        seedDraftFilters()
+                        showFilterSheet = true
+                    } label: {
+                        Image(systemName: "line.3.horizontal.decrease.circle")
+                    }
+
+                    Button("Clear", role: .destructive) {
+                        showClearAllConfirm = true
+                    }
                 }
             }
             .task { await viewModel.load() }
             .refreshable { await viewModel.load() }
             .onChange(of: viewModel.selectedStoreId) { _, _ in Task { await viewModel.load() } }
+            .onReceive(Timer.publish(every: 12, on: .main, in: .common).autoconnect()) { _ in
+                Task { await viewModel.load() }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .cloudKitDidReceiveRemoteChange)) { _ in
+                Task { await viewModel.load() }
+            }
             .sheet(isPresented: $showFilterSheet) { filterSheet }
             .alert("Clear store check-ins?", isPresented: $showClearAllConfirm) {
                 Button("Cancel", role: .cancel) { }
@@ -65,16 +101,90 @@ struct ManagerCheckInsView: View {
         }
     }
 
-    private var filterBar: some View {
-        HStack(spacing: 8) {
-            Text(viewModel.selectedStoreName).font(.caption.weight(.semibold)).lineLimit(1)
-            Text(viewModel.selectedEmployeeName).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-            Spacer()
-            Button { seedDraftFilters(); showFilterSheet = true } label: { Image(systemName: "line.3.horizontal.decrease.circle") }
+    private var filterSummaryCard: some View {
+        CardView {
+            VStack(alignment: .leading, spacing: DS.Spacing.s) {
+                HStack(spacing: DS.Spacing.s) {
+                    MetricChip(label: "Store", value: viewModel.selectedStoreName, icon: "building.2")
+                    MetricChip(label: "Employee", value: viewModel.selectedEmployeeName, icon: "person")
+                }
+
+                HStack(spacing: DS.Spacing.s) {
+                    MetricChip(label: "From", value: viewModel.fromDate.formatted(date: .abbreviated, time: .omitted), icon: "calendar")
+                    MetricChip(label: "To", value: viewModel.toDate.addingTimeInterval(-1).formatted(date: .abbreviated, time: .omitted), icon: "calendar.badge.clock")
+                }
+
+                if viewModel.showOpenSessionsOnly {
+                    StatBadge(style: .open, text: "Open sessions only")
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(.horizontal, DS.Spacing.m)
-        .padding(.vertical, DS.Spacing.s)
-        .background(DS.Colors.background)
+    }
+
+    private var loadingCard: some View {
+        CardView {
+            VStack(alignment: .leading, spacing: DS.Spacing.s) {
+                SkeletonLine(width: 140)
+                SkeletonLine()
+                SkeletonLine(width: 220)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private func daySectionCard(_ section: ManagerCheckInsViewModel.DaySection) -> some View {
+        CardView {
+            VStack(alignment: .leading, spacing: DS.Spacing.s) {
+                HStack {
+                    Text(viewModel.formattedDay(section.day))
+                        .font(DS.Typography.headline)
+                        .foregroundStyle(DS.Colors.textPrimary)
+
+                    Spacer()
+
+                    Text(viewModel.formattedDuration(seconds: section.dailyTotalSeconds))
+                        .font(DS.Typography.mono.weight(.semibold))
+                        .foregroundStyle(DS.Colors.textSecondary)
+                }
+
+                ForEach(section.items) { item in
+                    NavigationLink {
+                        ManagerCheckInDetailView(item: item)
+                    } label: {
+                        checkInRow(item)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private func checkInRow(_ item: CheckIn) -> some View {
+        HStack(alignment: .top, spacing: DS.Spacing.s) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(item.employeeName)
+                    .font(DS.Typography.headline)
+                    .foregroundStyle(DS.Colors.textPrimary)
+
+                Text("\(viewModel.formattedTime(item.checkInTime)) → \(item.checkOutTime.map(viewModel.formattedTime) ?? "Open") • \(viewModel.formattedDuration(item))")
+                    .font(DS.Typography.caption)
+                    .foregroundStyle(DS.Colors.textSecondary)
+
+                Text("d2 \(Int(item.verifyInDistance2Meters ?? 0))m • ±\(Int(item.verifyInAccuracy2Meters ?? 0))m • drift \(Int(item.verifyInDriftMeters ?? 0))m")
+                    .font(DS.Typography.micro)
+                    .foregroundStyle(DS.Colors.textSecondary)
+            }
+
+            Spacer(minLength: 6)
+
+            VStack(alignment: .trailing, spacing: 6) {
+                StatBadge(style: item.verifyInInside == true ? .inside : .outside, text: item.verifyInInside == true ? "Inside" : "Outside")
+                StatBadge(style: item.status == .approved ? .approved : .rejected)
+            }
+        }
+        .padding(.vertical, 4)
     }
 
     private var filterSheet: some View {
@@ -89,6 +199,7 @@ struct ManagerCheckInsView: View {
                 DatePicker("From", selection: $draftFromDate, displayedComponents: .date)
                 DatePicker("To", selection: $draftToDate, displayedComponents: .date)
                 Toggle("Open sessions only", isOn: $draftOpenOnly)
+
                 Section("Presets") {
                     ForEach([ManagerCheckInsViewModel.DatePreset.today, .yesterday, .last7, .thisMonth], id: \.id) { preset in
                         Button(preset.rawValue) { applyDraftPreset(preset) }
@@ -97,7 +208,12 @@ struct ManagerCheckInsView: View {
             }
             .navigationTitle("Filters")
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Clear") { viewModel.clearFilters(); seedDraftFilters() } }
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Clear") {
+                        viewModel.clearFilters()
+                        seedDraftFilters()
+                    }
+                }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Apply") {
                         viewModel.selectedStoreId = draftStoreId
@@ -136,24 +252,29 @@ private struct ManagerCheckInDetailView: View {
             VStack(spacing: DS.Spacing.m) {
                 CardView {
                     VStack(alignment: .leading, spacing: DS.Spacing.s) {
-                        Text(item.employeeName).font(.headline)
-                        Text("\(item.checkInTime.formatted(date: .abbreviated, time: .shortened)) → \(item.checkOutTime?.formatted(date: .omitted, time: .shortened) ?? "Open")")
+                        ScreenHeader(title: item.employeeName, subtitle: item.storeName, icon: "person.crop.square")
+                        KeyValueRow(title: "Check-In", value: item.checkInTime.formatted(date: .abbreviated, time: .shortened))
+                        KeyValueRow(title: "Check-Out", value: item.checkOutTime?.formatted(date: .abbreviated, time: .shortened) ?? "Open")
+                        KeyValueRow(title: "Status", value: item.status.rawValue.capitalized)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
+
                 CardView {
                     VStack(alignment: .leading, spacing: DS.Spacing.s) {
-                        Text("Verification")
-                            .font(.headline)
-                        Text("d2 \(Int(item.verifyInDistance2Meters ?? 0))m • ±\(Int(item.verifyInAccuracy2Meters ?? 0))m • drift \(Int(item.verifyInDriftMeters ?? 0))m")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
+                        ScreenHeader(title: "Verification", subtitle: "Geo-fence evidence", icon: "location.viewfinder")
+                        KeyValueRow(title: "Distance", value: "\(Int(item.verifyInDistance2Meters ?? 0))m")
+                        KeyValueRow(title: "Accuracy", value: "±\(Int(item.verifyInAccuracy2Meters ?? 0))m")
+                        KeyValueRow(title: "Drift", value: "\(Int(item.verifyInDriftMeters ?? 0))m")
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
-            .padding(DS.Spacing.m)
+            .frame(maxWidth: DS.Metrics.maxReadableWidth)
+            .padding(.horizontal, DS.Spacing.m)
+            .padding(.vertical, DS.Spacing.m)
         }
-        .navigationTitle("Check-in")
+        .background(AppBackground())
+        .navigationTitle("Check-In Detail")
     }
 }

@@ -1,4 +1,3 @@
-import GoogleSignIn
 import SwiftUI
 
 @main
@@ -7,7 +6,7 @@ struct StoreCheckApp: App {
     @StateObject private var appContainer: AppContainer
 
     init() {
-        FirebaseBootstrap.configureIfNeeded(caller: "StoreCheckApp.init")
+        CloudKitBootstrap.configureIfNeeded(caller: "StoreCheckApp.init")
         _appContainer = StateObject(wrappedValue: AppContainer())
     }
 
@@ -15,9 +14,6 @@ struct StoreCheckApp: App {
         WindowGroup {
             RootView()
                 .environmentObject(appContainer)
-                .onOpenURL { url in
-                    _ = GIDSignIn.sharedInstance.handle(url)
-                }
         }
     }
 }

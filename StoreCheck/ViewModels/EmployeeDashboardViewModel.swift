@@ -3,6 +3,11 @@ import Foundation
 
 @MainActor
 final class EmployeeDashboardViewModel: ObservableObject {
+    enum AttendanceAction {
+        case checkIn
+        case checkOut
+    }
+
     @Published var stores: [Store] = []
     @Published var selectedStore: Store?
     @Published var locationStatus: LocationCheckState = .unknown
@@ -21,8 +26,7 @@ final class EmployeeDashboardViewModel: ObservableObject {
     private let checkInRepository: CheckInRepositoryProtocol
     private let locationService: LocationServiceProtocol
 
-    // Tuning constants for geo-fence verification.
-    private let verifyReadDelayNanoseconds: UInt64 = 2_000_000_000
+    private let verifyReadDelayNanoseconds: UInt64 = 1_500_000_000
     private let verifyAccuracyThresholdMeters: Double = 65
 
     init(
@@ -43,16 +47,15 @@ final class EmployeeDashboardViewModel: ObservableObject {
         case permissionDenied
         case lowAccuracy
         case outsideStore
-        case locationUnavailable
 
         var errorDescription: String? {
             switch self {
             case .permissionDenied:
                 return "Location permission is required before checking in."
             case .lowAccuracy:
-                return "Location accuracy is too low. Move closer to a window and retry."
-            case .outsideStore, .locationUnavailable:
-                return "We couldn’t confirm you’re inside the store. Try again near the entrance."
+                return "Location accuracy is too low. Move to a clear area and retry."
+            case .outsideStore:
+                return "You must be inside the store geo-fence to continue."
             }
         }
     }
@@ -65,53 +68,64 @@ final class EmployeeDashboardViewModel: ObservableObject {
         todaysCheckIns.first(where: { $0.checkOutTime == nil })
     }
 
+    var totalTodaySeconds: Int {
+        todaysCheckIns.compactMap(\.computedDurationSeconds).reduce(0, +)
+    }
+
     func selectStore(withId storeId: String) {
-        Task { @MainActor in
-            selectedStore = stores.first(where: { $0.id == storeId })
-            refreshLocation()
-        }
+        selectedStore = stores.first(where: { $0.id == storeId })
+        refreshLocation()
     }
 
     func load() async {
         guard let user = authService.currentUser else { return }
+
         do {
             stores = try await storeRepository.fetchStores(ids: user.assignedStoreIds)
-            if let currentSelection = selectedStore, stores.contains(where: { $0.id == currentSelection.id }) {
-                selectedStore = currentSelection
+            if let current = selectedStore, stores.contains(where: { $0.id == current.id }) {
+                selectedStore = current
             } else {
                 selectedStore = stores.first
             }
+
             refreshLocation()
             try await loadTodaySessions()
+            errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription
+            AppLog.error("Failed loading employee dashboard", error: error)
         }
     }
 
     func refreshLocation() {
         guard let selectedStore else { return }
+
+        if selectedStore.radiusMeters <= 0 {
+            locationStatus = .locationUnavailable
+            errorMessage = "This store is missing a valid check-in radius. Contact your manager."
+            return
+        }
+
         lastLocationRefreshAt = Date()
         locationService.requestWhenInUseAuthorization()
         locationService.requestLocation()
         locationStatus = checkInService.evaluateLocation(for: selectedStore, user: authService.currentUser)
+
         if let locationError = locationService.lastErrorMessage {
             errorMessage = locationError
         }
     }
 
-    func beginCheckIn() {
-        Task {
-            await runCheckInFlow()
+    func performAttendanceAction(_ action: AttendanceAction, photoData: Data) async {
+        switch action {
+        case .checkIn:
+            await runCheckInFlow(photoData: photoData)
+        case .checkOut:
+            await runCheckOutFlow(photoData: photoData)
         }
     }
 
-    func beginCheckOut() {
-        Task {
-            await runCheckOutFlow()
-        }
-    }
-
-    private func runCheckInFlow() async {
+    private func runCheckInFlow(photoData: Data) async {
         guard !isCheckInInProgress else { return }
         guard let user = authService.currentUser else {
             errorMessage = "Sign in required."
@@ -121,8 +135,13 @@ final class EmployeeDashboardViewModel: ObservableObject {
             errorMessage = "No assigned store available."
             return
         }
+        guard !photoData.isEmpty else {
+            errorMessage = "A front camera photo is required to check in."
+            return
+        }
+
         refreshLocation()
-        guard blockedReason == nil else {
+        if let blockedReason {
             errorMessage = blockedReason
             return
         }
@@ -132,7 +151,10 @@ final class EmployeeDashboardViewModel: ObservableObject {
 
         do {
             let verify = try await runTwoReadVerification(for: store)
-            let approved = verify.inside
+            guard verify.inside else {
+                throw Verify2ReadError.outsideStore
+            }
+
             let checkIn = CheckIn(
                 id: UUID().uuidString,
                 employeeId: user.id,
@@ -148,8 +170,8 @@ final class EmployeeDashboardViewModel: ObservableObject {
                 checkOutDistanceMeters: nil,
                 checkOutAccuracyMeters: nil,
                 durationSeconds: nil,
-                status: approved ? .approved : .rejected,
-                rejectReason: approved ? nil : verify.reason,
+                status: .approved,
+                rejectReason: nil,
                 employeeName: user.name,
                 employeeEmail: user.email,
                 storeName: store.name,
@@ -170,25 +192,37 @@ final class EmployeeDashboardViewModel: ObservableObject {
                 verifyOutRead1At: nil,
                 verifyOutRead2At: nil,
                 verifyOutAccuracy1Meters: nil,
-                verifyOutAccuracy2Meters: nil
+                verifyOutAccuracy2Meters: nil,
+                checkInPhotoAssetID: nil,
+                checkOutPhotoAssetID: nil,
+                createdAt: Date(),
+                updatedAt: Date()
             )
 
-            try await checkInRepository.createCheckIn(checkIn)
-            if approved {
-                checkInSuccessBanner = true
-            } else {
-                errorMessage = verify.reason ?? Verify2ReadError.outsideStore.localizedDescription
-            }
-
+            try await checkInRepository.createCheckIn(checkIn, checkInPhotoData: photoData)
+            checkInSuccessBanner = true
             try await loadTodaySessions()
         } catch {
             errorMessage = error.localizedDescription
+            AppLog.error("Check-in flow failed", error: error)
         }
     }
 
-    private func runCheckOutFlow() async {
+    private func runCheckOutFlow(photoData: Data) async {
         guard !isCheckOutInProgress else { return }
-        guard let activeSession, let store = selectedStore else { return }
+        guard let activeSession else {
+            errorMessage = "You don't have an active check-in session."
+            return
+        }
+        guard let store = selectedStore else {
+            errorMessage = "No assigned store available."
+            return
+        }
+        guard !photoData.isEmpty else {
+            errorMessage = "A front camera photo is required to check out."
+            return
+        }
+
         refreshLocation()
 
         isCheckOutInProgress = true
@@ -197,40 +231,38 @@ final class EmployeeDashboardViewModel: ObservableObject {
         do {
             let verify = try await runTwoReadVerification(for: store)
             guard verify.inside else {
-                errorMessage = verify.reason ?? Verify2ReadError.outsideStore.localizedDescription
-                return
+                throw Verify2ReadError.outsideStore
             }
 
             try await checkInRepository.checkout(
                 checkinId: activeSession.id,
                 storeId: store.id,
-                managerId: nil,
+                managerId: store.managerId,
                 checkoutLat: verify.read2Lat,
                 checkoutLng: verify.read2Lng,
                 distanceMeters: verify.distance2Meters,
                 accuracyMeters: verify.read2Accuracy,
-                verification: verify
+                verification: verify,
+                checkOutPhotoData: photoData
             )
+
             try await loadTodaySessions()
         } catch {
             errorMessage = error.localizedDescription
+            AppLog.error("Check-out flow failed", error: error)
         }
     }
 
     private func runTwoReadVerification(for store: Store) async throws -> Verify2ReadEvidence {
         locationService.requestWhenInUseAuthorization()
-        let auth = locationService.authorizationStatus
-        guard auth == .authorizedWhenInUse || auth == .authorizedAlways else {
+        let authorization = locationService.authorizationStatus
+        guard authorization == .authorizedWhenInUse || authorization == .authorizedAlways else {
             throw Verify2ReadError.permissionDenied
         }
 
         let read1 = try await locationService.requestSingleAccurateLocation(timeoutSeconds: 8)
-        print("[Verify2Read] step=read1 lat=\(read1.coordinate.latitude) lng=\(read1.coordinate.longitude) accuracy=\(read1.horizontalAccuracy)")
-
         try await Task.sleep(nanoseconds: verifyReadDelayNanoseconds)
-
         let read2 = try await locationService.requestSingleAccurateLocation(timeoutSeconds: 8)
-        print("[Verify2Read] step=read2 lat=\(read2.coordinate.latitude) lng=\(read2.coordinate.longitude) accuracy=\(read2.horizontalAccuracy)")
 
         let storeLocation = CLLocation(latitude: store.coordinate.latitude, longitude: store.coordinate.longitude)
         let distance1 = read1.distance(from: storeLocation)
@@ -238,22 +270,18 @@ final class EmployeeDashboardViewModel: ObservableObject {
         let drift = read2.distance(from: read1)
 
         let accuracy2 = read2.horizontalAccuracy
-        let isInsideFence = distance2 <= Double(store.radiusMeters)
         let isAccurate = accuracy2 > 0 && accuracy2 <= verifyAccuracyThresholdMeters
-        let reason: String?
-        if !isAccurate {
-            reason = "Low accuracy"
-        } else if !isInsideFence {
-            reason = "Out of range"
-        } else {
-            reason = nil
+        guard isAccurate else {
+            throw Verify2ReadError.lowAccuracy
         }
+
+        let isInside = distance2 <= Double(store.radiusMeters)
 
         return Verify2ReadEvidence(
             method: "gps_v2",
             version: 2,
-            inside: reason == nil,
-            reason: reason,
+            inside: isInside,
+            reason: isInside ? nil : "Out of range",
             read1Lat: read1.coordinate.latitude,
             read1Lng: read1.coordinate.longitude,
             read1Accuracy: read1.horizontalAccuracy,
@@ -270,7 +298,7 @@ final class EmployeeDashboardViewModel: ObservableObject {
 
     private func loadTodaySessions() async throws {
         guard let user = authService.currentUser else { return }
-        let history = try await checkInRepository.fetchEmployeeCheckIns(employeeId: user.id, limit: 30)
+        let history = try await checkInRepository.fetchEmployeeCheckIns(employeeId: user.id, limit: 60)
         let today = Calendar.current.startOfDay(for: Date())
         todaysCheckIns = history.filter { Calendar.current.isDate($0.checkInTime, inSameDayAs: today) }
     }
@@ -285,21 +313,20 @@ final class EmployeeDashboardViewModel: ObservableObject {
                 authService.setCurrentUser(currentUser)
             }
 
-            let joinedStore = try await storeRepository.fetchStores(ids: [result.storeId]).first
-            if let joinedStore, stores.contains(where: { $0.id == joinedStore.id }) == false {
+            if let joinedStore = try await storeRepository.fetchStores(ids: [result.storeId]).first,
+               !stores.contains(where: { $0.id == joinedStore.id }) {
                 stores.append(joinedStore)
                 stores.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
             }
-            selectedStore = selectedStore ?? joinedStore
+
+            selectedStore = selectedStore ?? stores.first(where: { $0.id == result.storeId })
             refreshLocation()
-            joinStatusMessage = result.alreadyJoined
-                ? "You're already linked to \(result.storeName)."
-                : "Joined \(result.storeName) successfully."
+            joinStatusMessage = result.alreadyJoined ? "You are already linked to \(result.storeName)." : "Joined \(result.storeName)."
             joinCodeInput = ""
         } catch {
             joinStatusMessage = nil
             errorMessage = error.localizedDescription
-            print("[Stores] Join-by-code error: \(error.localizedDescription)")
+            AppLog.error("Failed joining store", error: error)
         }
     }
 
@@ -316,6 +343,7 @@ final class EmployeeDashboardViewModel: ObservableObject {
             }
         } catch {
             errorMessage = error.localizedDescription
+            AppLog.error("Failed leaving store", error: error)
         }
     }
 }

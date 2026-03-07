@@ -4,21 +4,16 @@ struct ManagerHomeView: View {
     let container: AppContainer
 
     private enum ManagerTab: Hashable {
-        case dashboard, stores, employees, checkIns, settings
+        case stores
+        case employees
+        case attendance
+        case settings
     }
 
-    @State private var selectedTab: ManagerTab = .dashboard
+    @State private var selectedTab: ManagerTab = .stores
 
     var body: some View {
         TabView(selection: $selectedTab) {
-            ManagerDashboardView(
-                checkInRepository: container.checkInRepository,
-                csvExporter: container.csvExporter,
-                isActiveTab: selectedTab == .dashboard
-            )
-            .tabItem { Label("Dashboard", systemImage: "chart.bar.fill") }
-            .tag(ManagerTab.dashboard)
-
             ManageStoresView(repository: container.storeRepository)
                 .tabItem { Label("Stores", systemImage: "building.2.fill") }
                 .tag(ManagerTab.stores)
@@ -36,13 +31,16 @@ struct ManagerHomeView: View {
                 authRepository: container.authRepository,
                 csvExporter: container.csvExporter
             )
-            .tabItem { Label("Check-ins", systemImage: "checkmark.circle.fill") }
-            .tag(ManagerTab.checkIns)
+            .tabItem { Label("Attendance", systemImage: "checklist.checked") }
+            .tag(ManagerTab.attendance)
 
             AccountSettingsView()
                 .tabItem { Label("Settings", systemImage: "gearshape.fill") }
                 .tag(ManagerTab.settings)
         }
+        .tint(DS.Colors.primary)
+        .toolbarBackground(.visible, for: .tabBar)
+        .toolbarBackground(Color.white.opacity(0.92), for: .tabBar)
     }
 }
 

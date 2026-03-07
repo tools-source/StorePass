@@ -1,4 +1,3 @@
-import FirebaseFirestore
 import Foundation
 
 @MainActor
@@ -26,7 +25,7 @@ final class StoreManagementViewModel: ObservableObject {
             storeError = nil
         } catch {
             storeError = error.localizedDescription
-            print("[Stores] Load error: \(error.localizedDescription)")
+            AppLog.error("Failed loading stores", error: error)
         }
     }
 
@@ -50,12 +49,12 @@ final class StoreManagementViewModel: ObservableObject {
                 radiusMeters: radiusMeters
             )
             latestJoinCodesByStoreId[result.store.id] = result.joinCode
-            showToast("Store created. Code: \(result.joinCode)")
+            showToast("Store created. Join code: \(result.joinCode)")
             storeError = nil
             return true
         } catch {
             storeError = error.localizedDescription
-            logCreateError(error)
+            AppLog.error("Failed creating store", error: error)
             return false
         }
     }
@@ -67,7 +66,7 @@ final class StoreManagementViewModel: ObservableObject {
             storeError = nil
         } catch {
             storeError = error.localizedDescription
-            print("[Stores] Save error: \(error.localizedDescription)")
+            AppLog.error("Failed saving store", error: error)
         }
     }
 
@@ -78,35 +77,31 @@ final class StoreManagementViewModel: ObservableObject {
             storeError = nil
         } catch {
             storeError = error.localizedDescription
-            print("[Stores] Delete error: \(error.localizedDescription)")
+            AppLog.error("Failed deleting store", error: error)
         }
     }
 
     func rotateStoreCode(storeId: String, managerId: String?) async {
-        print("[StoreCode] rotate_start storeId=\(storeId)")
+        _ = managerId
+
         do {
             let code = try await repository.rotateStoreCode(storeId: storeId)
-            let newLast4 = String(code.suffix(4))
             latestJoinCodesByStoreId[storeId] = code
 
             if let index = stores.firstIndex(where: { $0.id == storeId }) {
                 stores[index].joinCode = code
                 stores[index].joinCodeCiphertext = code
-                stores[index].joinCodeLast4 = newLast4
+                stores[index].joinCodeLast4 = String(code.suffix(4))
                 stores[index].updatedAt = Date()
             }
 
-            print("[StoreCode] rotate_ok storeId=\(storeId) newLast4=\(newLast4)")
-            print("[StoreCode] rotate_ui_updated storeId=\(storeId)")
-            await load(managerId: managerId)
-            showToast("Code rotated")
+            showToast("Join code rotated")
             storeError = nil
         } catch {
             storeError = error.localizedDescription
-            print("[StoreCode] rotate_failed storeId=\(storeId) error=\(error.localizedDescription)")
+            AppLog.error("Failed rotating store code", error: error)
         }
     }
-
 
     func resolvedJoinCode(for store: Store) -> String {
         if let cached = latestJoinCodesByStoreId[store.id], !cached.isEmpty {
@@ -138,7 +133,7 @@ final class StoreManagementViewModel: ObservableObject {
             return code
         } catch {
             storeError = error.localizedDescription
-            print("[Stores] Fetch-code error: \(error.localizedDescription)")
+            AppLog.error("Failed fetching join code", error: error)
             return nil
         }
     }
@@ -155,29 +150,11 @@ final class StoreManagementViewModel: ObservableObject {
         toastMessage = message
         toastClearTask?.cancel()
         toastClearTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            try? await Task.sleep(nanoseconds: 2_500_000_000)
             guard !Task.isCancelled else { return }
             await MainActor.run {
                 self?.toastMessage = nil
             }
-        }
-    }
-
-    private func logCreateError(_ error: Error) {
-        let nsError = error as NSError
-        print("[Stores] Create error: \(error.localizedDescription)")
-        print("[Stores] Create NSError domain=\(nsError.domain) code=\(nsError.code)")
-        print("[Stores] Create NSError userInfo=\(nsError.userInfo)")
-
-        // ✅ Correct way to decode Firestore error code
-        if nsError.domain == FirestoreErrorDomain,
-           let code = FirestoreErrorCode.Code(rawValue: nsError.code) {
-            let firestoreCode = FirestoreErrorCode(code)
-            print("[Stores] Create FirestoreErrorCode=\(firestoreCode) (code=\(code))")
-        }
-
-        if let path = nsError.userInfo["path"] as? String {
-            print("[Stores] Create write path=\(path)")
         }
     }
 }

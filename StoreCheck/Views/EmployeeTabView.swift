@@ -12,26 +12,20 @@ struct EmployeeTabView: View {
                 checkInRepository: container.checkInRepository,
                 locationService: container.locationService
             )
-            .tabItem { Label("Home", systemImage: "house.fill") }
-
-            EmployeeCheckInView(
-                authService: container.authService,
-                storeRepository: container.storeRepository,
-                checkInService: container.checkInService,
-                checkInRepository: container.checkInRepository,
-                locationService: container.locationService
-            )
-            .tabItem { Label("Check In", systemImage: "location.fill") }
+            .tabItem { Label("Shift", systemImage: "location.circle.fill") }
 
             EmployeeHistoryView(
                 authService: container.authService,
                 checkInRepository: container.checkInRepository,
                 csvExporter: container.csvExporter
             )
-            .tabItem { Label("History", systemImage: "clock.arrow.circlepath") }
+            .tabItem { Label("History", systemImage: "clock.badge.checkmark") }
 
             EmployeeSettingsView()
                 .tabItem { Label("Settings", systemImage: "gearshape.fill") }
         }
+        .tint(DS.Colors.primary)
+        .toolbarBackground(.visible, for: .tabBar)
+        .toolbarBackground(Color.white.opacity(0.92), for: .tabBar)
     }
 }

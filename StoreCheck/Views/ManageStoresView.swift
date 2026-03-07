@@ -1,4 +1,3 @@
-import MapKit
 import SwiftUI
 import UIKit
 
@@ -8,20 +7,11 @@ struct ManageStoresView: View {
 
     @State private var name = ""
     @State private var address = ""
-    @State private var latitude = 0.0
-    @State private var longitude = 0.0
-    @State private var radius = 150.0
+    @State private var latitudeText = ""
+    @State private var longitudeText = ""
+    @State private var radiusText = "150"
 
-    @State private var editingStore: Store?
     @State private var deletingStore: Store?
-    @State private var errorMessage: String?
-
-    private var canCreateStore: Bool {
-        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        let trimmedAddress = address.trimmingCharacters(in: .whitespacesAndNewlines)
-        let coordsSet = abs(latitude) > 0.000001 || abs(longitude) > 0.000001
-        return !viewModel.isCreatingStore && !trimmedName.isEmpty && !trimmedAddress.isEmpty && coordsSet
-    }
 
     init(repository: StoreRepositoryProtocol) {
         _viewModel = StateObject(wrappedValue: StoreManagementViewModel(repository: repository))
@@ -29,432 +19,266 @@ struct ManageStoresView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(spacing: DS.Spacing.m) {
-                    createStoreCard
-                    storeListCard
+            ZStack {
+                AppBackground()
+
+                ScrollView(showsIndicators: false) {
+                    VStack(spacing: DS.Spacing.m) {
+                        ScreenHeader(
+                            title: "Stores",
+                            subtitle: "Create and manage geofenced work locations",
+                            icon: "building.2"
+                        )
+
+                        summaryCard
+                        createStoreCard
+
+                        if viewModel.stores.isEmpty {
+                            EmptyStateView(
+                                icon: "building.2.crop.circle",
+                                title: "No stores yet",
+                                message: "Create your first store to onboard employees with join codes."
+                            )
+                        } else {
+                            VStack(spacing: DS.Spacing.s) {
+                                ForEach(viewModel.stores) { store in
+                                    NavigationLink {
+                                        StoreDetailView(
+                                            store: store,
+                                            viewModel: viewModel,
+                                            managerId: container.authRepository.currentUserId,
+                                            onDelete: { deletingStore = store }
+                                        )
+                                    } label: {
+                                        storeRow(store)
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                        }
+
+                        if let error = viewModel.storeError {
+                            BannerView(text: error, isError: true)
+                        }
+                    }
+                    .frame(maxWidth: DS.Metrics.maxReadableWidth)
+                    .padding(.horizontal, DS.Spacing.m)
+                    .padding(.vertical, DS.Spacing.m)
                 }
-                .padding(DS.Spacing.m)
             }
-            .background(DS.Colors.background.ignoresSafeArea())
             .navigationTitle("Stores")
             .task { await viewModel.load(managerId: container.authRepository.currentUserId) }
             .refreshable { await viewModel.load(managerId: container.authRepository.currentUserId) }
-            .sheet(item: $editingStore) { store in
-                EditStoreView(store: store) { updatedStore in
-                    Task {
-                        await viewModel.saveStore(updatedStore)
-                        await viewModel.load(managerId: container.authRepository.currentUserId)
-                    }
-                }
+            .onReceive(Timer.publish(every: 12, on: .main, in: .common).autoconnect()) { _ in
+                Task { await viewModel.load(managerId: container.authRepository.currentUserId) }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .cloudKitDidReceiveRemoteChange)) { _ in
+                Task { await viewModel.load(managerId: container.authRepository.currentUserId) }
             }
             .alert(
-                "Delete store",
+                "Delete Store",
                 isPresented: Binding(get: { deletingStore != nil }, set: { if !$0 { deletingStore = nil } })
             ) {
                 Button("Delete", role: .destructive) {
-                    guard let storeId = deletingStore?.id else { return }
+                    guard let store = deletingStore else { return }
                     Task {
-                        await viewModel.deleteStore(id: storeId)
+                        await viewModel.deleteStore(id: store.id)
                         await viewModel.load(managerId: container.authRepository.currentUserId)
                     }
                     deletingStore = nil
                 }
                 Button("Cancel", role: .cancel) { deletingStore = nil }
             } message: {
-                Text("This store and its member links will be removed.")
-            }
-            .alert("Stores", isPresented: Binding(get: { errorMessage != nil }, set: { isPresented in
-                if !isPresented {
-                    errorMessage = nil
-                    viewModel.clearStoreError()
-                }
-            })) {
-                Button("OK", role: .cancel) {
-                    errorMessage = nil
-                    viewModel.clearStoreError()
-                }
-            } message: {
-                Text(errorMessage ?? "")
-            }
-            .onChange(of: viewModel.storeError) { _, newValue in
-                if let newValue, !newValue.isEmpty {
-                    errorMessage = newValue
-                }
+                Text("Employees will lose access to this store immediately.")
             }
             .overlay(alignment: .bottom) {
                 if let toast = viewModel.toastMessage {
                     Text(toast)
+                        .font(DS.Typography.caption)
                         .padding(.horizontal, 16)
                         .padding(.vertical, 10)
-                        .background(DS.Colors.card.opacity(0.95))
-                        .overlay(Capsule().stroke(DS.Colors.separator.opacity(0.4), lineWidth: 1))
-                        .clipShape(Capsule())
-                        .padding(.bottom, 24)
+                        .background(DS.Colors.card.opacity(0.95), in: Capsule())
+                        .padding(.bottom, 22)
                 }
+            }
+        }
+    }
+
+    private var summaryCard: some View {
+        CardView {
+            HStack(spacing: DS.Spacing.s) {
+                MetricChip(label: "Total Stores", value: "\(viewModel.stores.count)", icon: "building.2")
+                MetricChip(label: "Default Radius", value: "\(radiusText)m", icon: "scope")
             }
         }
     }
 
     private var createStoreCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Create Store")
-                    .font(.headline)
-                Text("Add a location and assign its check-in radius.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+        CardView {
+            VStack(alignment: .leading, spacing: DS.Spacing.s) {
+                ScreenHeader(
+                    title: "Create Store",
+                    subtitle: "Set location and radius used for attendance validation.",
+                    icon: "plus.circle"
+                )
+
+                Group {
+                    entryField(title: "Store name", text: $name, keyboard: .default)
+                    entryField(title: "Address", text: $address, keyboard: .default)
+
+                    HStack(spacing: DS.Spacing.s) {
+                        entryField(title: "Latitude", text: $latitudeText, keyboard: .numbersAndPunctuation)
+                        entryField(title: "Longitude", text: $longitudeText, keyboard: .numbersAndPunctuation)
+                    }
+
+                    entryField(title: "Radius (meters)", text: $radiusText, keyboard: .numberPad)
+                }
+
+                Button(viewModel.isCreatingStore ? "Creating..." : "Create Store") {
+                    Task {
+                        await createStore()
+                    }
+                }
+                .buttonStyle(PrimaryButtonStyle())
+                .disabled(viewModel.isCreatingStore)
             }
+        }
+    }
 
-            TextField("Store name", text: $name)
-                .textFieldStyle(.roundedBorder)
-
-            AddressSearchField(address: $address, latitude: $latitude, longitude: $longitude)
-
-            VStack(alignment: .leading, spacing: 6) {
-                HStack {
-                    Text("Radius")
-                        .font(.subheadline.weight(.semibold))
+    private func storeRow(_ store: Store) -> some View {
+        CardView {
+            VStack(alignment: .leading, spacing: DS.Spacing.s) {
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: DS.Spacing.xxs) {
+                        Text(store.name)
+                            .font(DS.Typography.headline)
+                            .foregroundStyle(DS.Colors.textPrimary)
+                        Text(store.address)
+                            .font(DS.Typography.caption)
+                            .foregroundStyle(DS.Colors.textSecondary)
+                            .lineLimit(2)
+                    }
                     Spacer()
-                    Text("\(Int(radius))m")
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(.secondary)
+                    StatBadge(style: .neutral, text: "\(store.radiusMeters)m")
                 }
-                Slider(value: $radius, in: 50 ... 500, step: 10)
+
+                Divider()
+
+                KeyValueRow(title: "Join code", value: viewModel.resolvedJoinCode(for: store))
             }
-
-            Button(viewModel.isCreatingStore ? "Creating..." : "Create") {
-                Task {
-                    guard canCreateStore else { return }
-                    let didCreate = await viewModel.createStore(
-                        name: name,
-                        address: address,
-                        latitude: latitude,
-                        longitude: longitude,
-                        radiusMeters: Int(radius)
-                    )
-                    await viewModel.load(managerId: container.authRepository.currentUserId)
-                    if didCreate {
-                        await MainActor.run {
-                            name = ""
-                            address = ""
-                            latitude = 0
-                            longitude = 0
-                            radius = 150
-                        }
-                    }
-                }
-            }
-            .buttonStyle(PrimaryButtonStyle())
-            .disabled(!canCreateStore)
-            .opacity(canCreateStore ? 1 : 0.6)
-        }
-        .padding(DS.Spacing.m)
-        .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(DS.Colors.card)
-        )
-        .overlay {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(DS.Colors.separator.opacity(0.35), lineWidth: 1)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
-    private var storeListCard: some View {
-        VStack(alignment: .leading, spacing: DS.Spacing.s) {
-            Text("Store List")
-                .font(.headline)
-
-            if viewModel.stores.isEmpty {
-                Text("No stores yet")
-                    .foregroundStyle(.secondary)
-            }
-
-            ForEach(viewModel.stores) { store in
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(store.name)
-                        .font(.headline)
-
-                    Text(store.address)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    Text("\(store.radiusMeters)m radius")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-
-                    Text("Join code: \(viewModel.resolvedJoinCode(for: store))")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-
-                    VStack(spacing: 8) {
-                        HStack(spacing: 8) {
-                            actionButton("Copy code", icon: "doc.on.doc", prominence: .secondary) {
-                                Task {
-                                    let resolvedJoinCode = viewModel.resolvedJoinCode(storeId: store.id)
-                                    if resolvedJoinCode != "----" {
-                                        UIPasteboard.general.string = resolvedJoinCode
-                                        viewModel.showToast("Code copied")
-                                        return
-                                    }
-
-                                    let fetched = await viewModel.fetchJoinCode(storeId: store.id)
-                                    if let fetched {
-                                        UIPasteboard.general.string = fetched
-                                        viewModel.showToast("Code copied")
-                                    } else {
-                                        await MainActor.run {
-                                            viewModel.presentStoreError("Unable to fetch store code.")
-                                        }
-                                    }
-                                }
-                            }
-
-                            actionButton("Rotate code", icon: "arrow.triangle.2.circlepath", prominence: .primary) {
-                                Task {
-                                    await viewModel.rotateStoreCode(storeId: store.id, managerId: container.authRepository.currentUserId)
-                                    let resolvedJoinCode = viewModel.resolvedJoinCode(storeId: store.id)
-                                    if resolvedJoinCode != "----" {
-                                        UIPasteboard.general.string = resolvedJoinCode
-                                        viewModel.showToast("New code copied")
-                                    }
-                                }
-                            }
-                        }
-
-                        HStack(spacing: 8) {
-                            actionButton("Edit", icon: "pencil", prominence: .secondary) {
-                                editingStore = store
-                            }
-
-                            actionButton("Delete", icon: "trash", prominence: .destructive) {
-                                deletingStore = store
-                            }
-                        }
-                    }
-                }
-                .padding(.vertical, 6)
-
-                if store.id != viewModel.stores.last?.id {
-                    Color.clear
-                        .frame(height: 2)
-                }
-            }
-        }
-        .cardStyle()
-    }
-
-    private enum StoreActionProminence {
-        case primary
-        case secondary
-        case destructive
-    }
-
-    @ViewBuilder
-    private func actionButton(
-        _ title: String,
-        icon: String,
-        prominence: StoreActionProminence,
-        action: @escaping () -> Void
-    ) -> some View {
-        let foreground: Color = prominence == .primary ? Color(uiColor: .white) : (prominence == .destructive ? DS.Colors.destructive : DS.Colors.textPrimary)
-        Button(action: action) {
-            Label(title, systemImage: icon)
-                .font(.subheadline.weight(.semibold))
-                .frame(maxWidth: .infinity)
-        }
-        .buttonStyle(.plain)
-        .foregroundStyle(foreground)
-        .padding(.vertical, 9)
-        .background(buttonBackground(for: prominence), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(buttonStroke(for: prominence), lineWidth: 1)
-        }
-    }
-
-    private func buttonBackground(for prominence: StoreActionProminence) -> Color {
-        switch prominence {
-        case .primary:
-            return DS.Colors.primary.opacity(0.95)
-        case .secondary:
-            return DS.Colors.background
-        case .destructive:
-            return DS.Colors.destructive.opacity(0.12)
-        }
-    }
-
-    private func buttonStroke(for prominence: StoreActionProminence) -> Color {
-        switch prominence {
-        case .primary:
-            return .clear
-        case .secondary:
-            return DS.Colors.separator.opacity(0.7)
-        case .destructive:
-            return DS.Colors.destructive.opacity(0.5)
-        }
-    }
-}
-
-@MainActor
-final class AddressSearchService: NSObject, ObservableObject, MKLocalSearchCompleterDelegate {
-    @Published var query = "" {
-        didSet { completer.queryFragment = query }
-    }
-    @Published var suggestions: [MKLocalSearchCompletion] = []
-
-    private var suppressNextResults = false
-    private var lastSelectedQuery: String?
-
-    private let completer = MKLocalSearchCompleter()
-
-    override init() {
-        super.init()
-        completer.delegate = self
-        completer.resultTypes = .address
-    }
-
-    func completerDidUpdateResults(_ completer: MKLocalSearchCompleter) {
-        if suppressNextResults {
-            suppressNextResults = false
-            suggestions = []
-            return
-        }
-
-        if let lastSelectedQuery,
-           query.trimmingCharacters(in: .whitespacesAndNewlines)
-                .caseInsensitiveCompare(lastSelectedQuery.trimmingCharacters(in: .whitespacesAndNewlines)) == .orderedSame {
-            suggestions = []
-            return
-        }
-
-        suggestions = completer.results
-    }
-
-    func select(_ completion: MKLocalSearchCompletion) async -> (String, CLLocationCoordinate2D)? {
-        let request = MKLocalSearch.Request(completion: completion)
-        let response = try? await MKLocalSearch(request: request).start()
-        guard let item = response?.mapItems.first else { return nil }
-        return (item.placemark.title ?? completion.title, item.placemark.coordinate)
-    }
-
-    func markSelection(_ selectedQuery: String) {
-        lastSelectedQuery = selectedQuery
-        suppressNextResults = true
-        suggestions = []
-    }
-}
-
-struct AddressSearchField: View {
-    @Binding var address: String
-    @Binding var latitude: Double
-    @Binding var longitude: Double
-
-    @StateObject private var search = AddressSearchService()
-    @FocusState private var isFocused: Bool
-
-    var body: some View {
+    private func entryField(title: String, text: Binding<String>, keyboard: UIKeyboardType) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            TextField("Search address", text: $search.query)
-                .textFieldStyle(.roundedBorder)
-                .focused($isFocused)
+            Text(title)
+                .font(DS.Typography.micro)
+                .foregroundStyle(DS.Colors.textSecondary)
 
-            if !search.suggestions.isEmpty {
-                VStack(alignment: .leading, spacing: 4) {
-                    ForEach(search.suggestions.prefix(5), id: \.self) { suggestion in
-                        Button {
-                            Task {
-                                guard let resolved = await search.select(suggestion) else { return }
-                                await MainActor.run {
-                                    address = resolved.0
-                                    latitude = resolved.1.latitude
-                                    longitude = resolved.1.longitude
-                                    search.markSelection(resolved.0)
-                                    search.query = resolved.0
-                                    isFocused = false
-                                }
-                            }
-                        } label: {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(suggestion.title)
-                                Text(suggestion.subtitle)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                        .buttonStyle(.plain)
-                        .padding(.vertical, 2)
-                    }
-                }
-            }
-
-            Text("Lat: \(latitude, specifier: "%.5f"), Lng: \(longitude, specifier: "%.5f")")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
+            TextField(title, text: text)
+                .keyboardType(keyboard)
+                .padding(.horizontal, DS.Spacing.s)
+                .frame(height: DS.Metrics.rowHeight)
+                .background(DS.Colors.elevated.opacity(0.75), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
-        .onAppear {
-            if !address.isEmpty, search.query.isEmpty {
-                search.query = address
-            }
-        }
-        .onChange(of: address) { _, newValue in
-            if search.query != newValue {
-                search.query = newValue
-            }
+    }
 
-            if newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                search.suggestions = []
-                isFocused = false
-            }
+    private func createStore() async {
+        guard let latitude = Double(latitudeText),
+              let longitude = Double(longitudeText),
+              let radius = Int(radiusText) else {
+            viewModel.presentStoreError("Latitude, longitude, and radius must be valid numbers.")
+            return
+        }
+
+        let created = await viewModel.createStore(
+            name: name,
+            address: address,
+            latitude: latitude,
+            longitude: longitude,
+            radiusMeters: radius
+        )
+
+        await viewModel.load(managerId: container.authRepository.currentUserId)
+
+        if created {
+            name = ""
+            address = ""
+            latitudeText = ""
+            longitudeText = ""
+            radiusText = "150"
         }
     }
 }
 
-private struct EditStoreView: View {
-    @Environment(\.dismiss) private var dismiss
+private struct StoreDetailView: View {
+    let store: Store
+    @ObservedObject var viewModel: StoreManagementViewModel
+    let managerId: String?
+    let onDelete: () -> Void
 
-    @State private var store: Store
-    @State private var address: String
-    @State private var latitude: Double
-    @State private var longitude: Double
-
-    let onSave: (Store) -> Void
-
-    init(store: Store, onSave: @escaping (Store) -> Void) {
-        _store = State(initialValue: store)
-        _address = State(initialValue: store.address)
-        _latitude = State(initialValue: store.latitude)
-        _longitude = State(initialValue: store.longitude)
-        self.onSave = onSave
-    }
+    @State private var isRotating = false
 
     var body: some View {
-        NavigationStack {
-            Form {
-                Section("Store") {
-                    TextField("Store name", text: $store.name)
-                    AddressSearchField(address: $address, latitude: $latitude, longitude: $longitude)
-                    TextField("Latitude", value: $latitude, format: .number)
-                    TextField("Longitude", value: $longitude, format: .number)
-                    Stepper("Radius \(store.radiusMeters)m", value: $store.radiusMeters, in: 50 ... 600, step: 10)
-                }
-            }
-            .navigationTitle("Edit Store")
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") {
-                        store.address = address
-                        store.latitude = latitude
-                        store.longitude = longitude
-                        onSave(store)
-                        dismiss()
+        ScrollView {
+            VStack(spacing: DS.Spacing.m) {
+                CardView {
+                    VStack(alignment: .leading, spacing: DS.Spacing.s) {
+                        ScreenHeader(title: store.name, subtitle: store.address, icon: "mappin.circle")
+                        KeyValueRow(title: "Latitude", value: String(format: "%.6f", store.latitude))
+                        KeyValueRow(title: "Longitude", value: String(format: "%.6f", store.longitude))
+                        KeyValueRow(title: "Radius", value: "\(store.radiusMeters)m")
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                CardView {
+                    VStack(alignment: .leading, spacing: DS.Spacing.s) {
+                        ScreenHeader(title: "Join Code", subtitle: "Use this code to join the store", icon: "number")
+
+                        Text(viewModel.resolvedJoinCode(for: store))
+                            .font(.system(.title2, design: .monospaced).weight(.bold))
+                            .foregroundStyle(DS.Colors.textPrimary)
+
+                        HStack(spacing: DS.Spacing.s) {
+                            Button("Copy") {
+                                UIPasteboard.general.string = viewModel.resolvedJoinCode(for: store)
+                                viewModel.showToast("Join code copied")
+                            }
+                            .buttonStyle(SecondaryButtonStyle())
+
+                            Button(isRotating ? "Rotating..." : "Rotate") {
+                                Task {
+                                    isRotating = true
+                                    await viewModel.rotateStoreCode(storeId: store.id, managerId: managerId)
+                                    isRotating = false
+                                }
+                            }
+                            .buttonStyle(PrimaryButtonStyle())
+                            .disabled(isRotating)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                CardView {
+                    VStack(alignment: .leading, spacing: DS.Spacing.s) {
+                        ScreenHeader(title: "Danger Zone", subtitle: "Permanent store removal", icon: "trash")
+
+                        Button("Delete Store", role: .destructive) {
+                            onDelete()
+                        }
+                        .buttonStyle(DestructiveButtonStyle())
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
+            .frame(maxWidth: DS.Metrics.maxReadableWidth)
+            .padding(.horizontal, DS.Spacing.m)
+            .padding(.vertical, DS.Spacing.m)
         }
+        .background(AppBackground())
+        .navigationTitle("Store Detail")
     }
 }

@@ -1,5 +1,3 @@
-import FirebaseAuth
-import FirebaseFirestore
 import Foundation
 
 enum DebugOptions {
@@ -10,24 +8,35 @@ enum DebugOptions {
     #endif
 }
 
-enum FirestorePermissionLogger {
-    static func log(
-        operation: String,
-        path: String,
-        error: Error,
-        uid: String? = Auth.auth().currentUser?.uid
-    ) {
-        let nsError = error as NSError
-        let safeUID = uid ?? "anonymous"
-        let message = nsError.localizedDescription
+enum AppLog {
+    static func info(_ message: String) {
+        #if DEBUG
+        print("[StorePass][INFO] \(message)")
+        #endif
+    }
 
-        if nsError.domain == FirestoreErrorDomain,
-           let code = FirestoreErrorCode.Code(rawValue: nsError.code),
-           code == .permissionDenied {
-            print("[FirestorePermissionDenied] op=\(operation) path=\(path) uid=\(safeUID) code=\(code.rawValue) message=\(message)")
-            return
+    static func warning(_ message: String) {
+        #if DEBUG
+        print("[StorePass][WARN] \(message)")
+        #endif
+    }
+
+    static func error(_ message: String, error: Error? = nil) {
+        #if DEBUG
+        if let error {
+            print("[StorePass][ERROR] \(message) :: \(sanitize(error.localizedDescription))")
+        } else {
+            print("[StorePass][ERROR] \(message)")
         }
+        #endif
+    }
 
-        print("[FirestoreError] op=\(operation) path=\(path) uid=\(safeUID) domain=\(nsError.domain) code=\(nsError.code) message=\(message)")
+    static func sanitize(_ value: String) -> String {
+        value.replacingOccurrences(of: "\n", with: " ")
+    }
+
+    static func redactIdentifier(_ value: String) -> String {
+        let prefix = value.prefix(6)
+        return "\(prefix)…"
     }
 }

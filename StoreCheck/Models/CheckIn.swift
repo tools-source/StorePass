@@ -1,6 +1,5 @@
 import Foundation
 
-
 struct Verify2ReadEvidence: Codable, Hashable {
     let method: String
     let version: Int
@@ -62,12 +61,16 @@ struct CheckIn: Codable, Identifiable, Hashable {
     var verifyOutRead2At: Date?
     var verifyOutAccuracy1Meters: Double?
     var verifyOutAccuracy2Meters: Double?
+    var checkInPhotoAssetID: String?
+    var checkOutPhotoAssetID: String?
+    var createdAt: Date?
+    var updatedAt: Date?
 
     var computedDurationSeconds: Int? {
-        guard let checkOutTime else { return nil }
         if let durationSeconds {
             return durationSeconds
         }
+        guard let checkOutTime else { return nil }
         return max(Int(checkOutTime.timeIntervalSince(checkInTime)), 0)
     }
 
@@ -77,5 +80,17 @@ struct CheckIn: Codable, Identifiable, Hashable {
 
     var isCheckOutVerifiedInside: Bool {
         verifyOutInside == true
+    }
+
+    var hasVerificationPhoto: Bool {
+        checkInPhotoAssetID != nil
+    }
+
+    var verificationPhotoPath: String? {
+        checkInPhotoAssetID
+    }
+
+    var verificationPhotoCapturedAt: Date? {
+        checkInTime
     }
 }
