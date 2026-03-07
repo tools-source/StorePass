@@ -7,6 +7,8 @@ struct LoginView: View {
     @State private var showError = false
     @State private var employeeName = ""
     @State private var employeeEmail = ""
+    @State private var employeePassword = ""
+    @State private var isEmployeeSignupMode = true
 
     var body: some View {
         ZStack {
@@ -112,20 +114,43 @@ struct LoginView: View {
 
     private var employeeAuthSection: some View {
         VStack(alignment: .leading, spacing: DS.Spacing.s) {
-            Text("Employees can use Apple Sign-In or quick email access.")
+            Text("Employees can use Apple Sign-In or local email + password.")
                 .font(DS.Typography.caption)
                 .foregroundStyle(DS.Colors.textSecondary)
 
-            VStack(alignment: .leading, spacing: DS.Spacing.s) {
-                entryField(title: "Employee name", placeholder: "Jane Doe", text: $employeeName, autocapitalization: .words, keyboard: .default)
-                entryField(title: "Employee email", placeholder: "jane@storepass.app", text: $employeeEmail, autocapitalization: .never, keyboard: .emailAddress)
+            Picker("Employee auth mode", selection: $isEmployeeSignupMode) {
+                Text("Sign Up").tag(true)
+                Text("Log In").tag(false)
+            }
+            .pickerStyle(.segmented)
 
-                Button(viewModel.isLoading ? "Signing In..." : "Continue as Employee") {
+            VStack(alignment: .leading, spacing: DS.Spacing.s) {
+                if isEmployeeSignupMode {
+                    entryField(title: "Employee name", placeholder: "Jane Doe", text: $employeeName, autocapitalization: .words, keyboard: .default)
+                }
+                entryField(title: "Employee email", placeholder: "jane@storepass.app", text: $employeeEmail, autocapitalization: .never, keyboard: .emailAddress)
+                secureEntryField(title: "Password", placeholder: "At least 8 characters", text: $employeePassword)
+
+                Button(viewModel.isLoading ? "Please wait..." : (isEmployeeSignupMode ? "Create Employee Account" : "Log In as Employee")) {
+                    Task {
+                        if isEmployeeSignupMode {
+                            await viewModel.signUpEmployee(name: employeeName, email: employeeEmail, password: employeePassword)
+                        } else {
+                            await viewModel.signInEmployee(email: employeeEmail, password: employeePassword)
+                        }
+                    }
+                }
+                .buttonStyle(PrimaryButtonStyle())
+                .disabled(viewModel.isLoading)
+
+                Button("Quick Email Access") {
                     Task {
                         await viewModel.signInManuallyAsEmployee(name: employeeName, email: employeeEmail)
                     }
                 }
-                .buttonStyle(PrimaryButtonStyle())
+                .buttonStyle(.plain)
+                .font(DS.Typography.micro)
+                .foregroundStyle(DS.Colors.textSecondary)
                 .disabled(viewModel.isLoading)
             }
 
@@ -225,6 +250,27 @@ struct LoginView: View {
                 .textInputAutocapitalization(autocapitalization)
                 .autocorrectionDisabled()
                 .keyboardType(keyboard)
+                .padding(.horizontal, DS.Spacing.s)
+                .frame(height: DS.Metrics.rowHeight)
+                .background(DS.Colors.elevated.opacity(0.75), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .foregroundStyle(DS.Colors.textPrimary)
+        }
+    }
+
+
+    private func secureEntryField(
+        title: String,
+        placeholder: String,
+        text: Binding<String>
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(DS.Typography.micro)
+                .foregroundStyle(DS.Colors.textSecondary)
+
+            SecureField(placeholder, text: text)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
                 .padding(.horizontal, DS.Spacing.s)
                 .frame(height: DS.Metrics.rowHeight)
                 .background(DS.Colors.elevated.opacity(0.75), in: RoundedRectangle(cornerRadius: 12, style: .continuous))

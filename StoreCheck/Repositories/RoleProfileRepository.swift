@@ -210,20 +210,12 @@ final class CloudKitRoleProfileRepository: RoleProfileRepositoryProtocol {
     func softDeleteAccount(uid: String, role: UserRole) async throws {
         try await service.ensureCloudKitAvailable()
 
-        guard let existingProfile = try await resolveAnyProfile(userId: uid) else {
+        guard try await resolveAnyProfile(userId: uid) != nil else {
             throw CloudKitClientError.missingRecord("Account not found.")
         }
 
-        let now = Date()
-        var deactivatedProfile = existingProfile
-        deactivatedProfile.isActive = false
-        deactivatedProfile.assignedStoreIds = []
-        deactivatedProfile.lastLoginAt = now
-
-        _ = try await profileStore.upsertCanonicalProfile(deactivatedProfile, deletedAt: now)
-        await profileStore.upsertPublicProfileBestEffort(deactivatedProfile, deletedAt: now)
-
-        var recordsToSave: [CKRecord] = []
+        var recordIDsToDelete: [CKRecord.ID] = [CloudKitService.userRecordID(userId: uid)]
+        var employeeIdsToSync = Set<String>()
 
         switch role {
         case .employee:
@@ -231,11 +223,13 @@ final class CloudKitRoleProfileRepository: RoleProfileRepositoryProtocol {
                 recordType: CKSchema.RecordType.storeMember,
                 predicate: NSPredicate(format: "%K == %@", CKSchema.StoreMemberField.employeeUserId, uid)
             )
-            for membership in memberships {
-                membership[CKSchema.StoreMemberField.status] = CKSchema.MemberStatus.removed as CKRecordValue
-                membership[CKSchema.StoreMemberField.updatedAt] = now as CKRecordValue
-                recordsToSave.append(membership)
-            }
+            recordIDsToDelete.append(contentsOf: memberships.map(\.recordID))
+
+            let employeeCheckIns = try await service.queryRecords(
+                recordType: CKSchema.RecordType.checkInSession,
+                predicate: NSPredicate(format: "%K == %@", CKSchema.CheckInField.employeeUserId, uid)
+            )
+            recordIDsToDelete.append(contentsOf: employeeCheckIns.map(\.recordID))
 
         case .manager:
             let managerStores = try await service.queryRecords(
@@ -244,27 +238,50 @@ final class CloudKitRoleProfileRepository: RoleProfileRepositoryProtocol {
             )
 
             for store in managerStores {
-                store[CKSchema.StoreField.isActive] = NSNumber(value: false)
-                store[CKSchema.StoreField.updatedAt] = now as CKRecordValue
-                store[CKSchema.StoreField.deletedAt] = now as CKRecordValue
-                recordsToSave.append(store)
-
+                recordIDsToDelete.append(store.recordID)
                 if let storeId = store.string(CKSchema.StoreField.storeId) {
                     let memberships = try await service.queryRecords(
                         recordType: CKSchema.RecordType.storeMember,
                         predicate: NSPredicate(format: "%K == %@", CKSchema.StoreMemberField.storeId, storeId)
                     )
                     for membership in memberships {
-                        membership[CKSchema.StoreMemberField.status] = CKSchema.MemberStatus.removed as CKRecordValue
-                        membership[CKSchema.StoreMemberField.updatedAt] = now as CKRecordValue
-                        recordsToSave.append(membership)
+                        if let employeeId = membership.string(CKSchema.StoreMemberField.employeeUserId) {
+                            employeeIdsToSync.insert(employeeId)
+                        }
                     }
+                    recordIDsToDelete.append(contentsOf: memberships.map(\.recordID))
+
+                    let checkIns = try await service.queryRecords(
+                        recordType: CKSchema.RecordType.checkInSession,
+                        predicate: NSPredicate(format: "%K == %@", CKSchema.CheckInField.storeId, storeId)
+                    )
+                    recordIDsToDelete.append(contentsOf: checkIns.map(\.recordID))
                 }
             }
         }
 
-        if !recordsToSave.isEmpty {
-            _ = try await service.modify(recordsToSave: deduplicate(records: recordsToSave), atomic: false)
+        let uniqueRecordIDs = Array(Set(recordIDsToDelete.map(\.recordName))).map { CKRecord.ID(recordName: $0) }
+        if !uniqueRecordIDs.isEmpty {
+            _ = try await service.modify(recordsToSave: [], recordIDsToDelete: uniqueRecordIDs, atomic: false)
+        }
+
+        do {
+            try await service.deleteRecord(with: CloudKitService.userRecordID(userId: uid), in: service.privateDB)
+        } catch {
+            AppLog.warning("Private user record delete skipped for user=\(AppLog.redactIdentifier(uid)): \(AppLog.sanitize(error.localizedDescription))")
+        }
+
+        for employeeId in employeeIdsToSync {
+            do {
+                if var employee = try await profileStore.fetchCanonicalProfile(userId: employeeId) {
+                    employee.assignedStoreIds = []
+                    employee.lastLoginAt = Date()
+                    _ = try await profileStore.upsertCanonicalProfile(employee, deletedAt: employee.isActive ? nil : Date())
+                    await profileStore.upsertPublicProfileBestEffort(employee, deletedAt: employee.isActive ? nil : Date())
+                }
+            } catch {
+                AppLog.warning("Employee profile sync skipped after manager deletion user=\(AppLog.redactIdentifier(employeeId)): \(AppLog.sanitize(error.localizedDescription))")
+            }
         }
     }
 
