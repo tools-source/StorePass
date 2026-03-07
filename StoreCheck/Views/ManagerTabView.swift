@@ -40,7 +40,7 @@ struct ManagerHomeView: View {
         }
         .tint(DS.Colors.primary)
         .toolbarBackground(.visible, for: .tabBar)
-        .toolbarBackground(Color.white.opacity(0.92), for: .tabBar)
+        .toolbarBackground(DS.Colors.tabBarBackground, for: .tabBar)
     }
 }
 

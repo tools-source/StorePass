@@ -32,6 +32,7 @@ final class AuthViewModel: ObservableObject {
     }
 
     func restoreSession(forceSignOutOnLaunch: Bool = false) async {
+        AppLog.info("AuthViewModel.restoreSession started (forceSignOutOnLaunch=\(forceSignOutOnLaunch))")
         isLoading = true
         isRoleResolutionLoading = true
         defer {
@@ -42,19 +43,23 @@ final class AuthViewModel: ObservableObject {
         await authService.restoreSession(forceSignOutOnLaunch: forceSignOutOnLaunch)
 
         guard let identity = authService.authUser() else {
+            AppLog.info("AuthViewModel.restoreSession found no cached identity")
             clearState()
             return
         }
 
         do {
+            AppLog.info("AuthViewModel.restoreSession resolving profile for user=\(AppLog.redactIdentifier(identity.userId))")
             try await resolveProfileAndRoute(identity: identity, requestedRole: UserRole(rawValue: lastRequestedRoleRaw))
         } catch {
+            logAuthError(error, context: "restoreSession.resolveProfileAndRoute")
             clearState()
             errorMessage = userFacingMessage(for: error)
         }
     }
 
     func signInWithApple(requestedRole: UserRole) async {
+        AppLog.info("AuthViewModel.signInWithApple started (requestedRole=\(requestedRole.rawValue))")
         isLoading = true
         isRoleResolutionLoading = true
         errorMessage = nil
@@ -68,13 +73,62 @@ final class AuthViewModel: ObservableObject {
             let result = try await authService.signInWithApple()
             lastRequestedRoleRaw = requestedRole.rawValue
             self.requestedRole = requestedRole
+            AppLog.info("AuthViewModel.signInWithApple received identity user=\(AppLog.redactIdentifier(result.identity.userId))")
             try await resolveProfileAndRoute(identity: result.identity, requestedRole: requestedRole)
         } catch {
+            logAuthError(error, context: "signInWithApple.async")
+            errorMessage = userFacingMessage(for: error)
+        }
+    }
+
+    func signInWithApple(authorizationResult: Result<ASAuthorization, Error>, requestedRole: UserRole) async {
+        AppLog.info("AuthViewModel.signInWithApple(buttonResult) started (requestedRole=\(requestedRole.rawValue))")
+        isLoading = true
+        isRoleResolutionLoading = true
+        errorMessage = nil
+        signInNoticeMessage = nil
+        defer {
+            isLoading = false
+            isRoleResolutionLoading = false
+        }
+
+        do {
+            let result = try authService.signInWithApple(authorizationResult: authorizationResult)
+            lastRequestedRoleRaw = requestedRole.rawValue
+            self.requestedRole = requestedRole
+            AppLog.info("AuthViewModel.signInWithApple(buttonResult) received identity user=\(AppLog.redactIdentifier(result.identity.userId))")
+            try await resolveProfileAndRoute(identity: result.identity, requestedRole: requestedRole)
+        } catch {
+            logAuthError(error, context: "signInWithApple.buttonResult")
+            errorMessage = userFacingMessage(for: error)
+        }
+    }
+
+    func signInManuallyAsEmployee(name: String, email: String) async {
+        AppLog.info("AuthViewModel.signInManuallyAsEmployee started")
+        isLoading = true
+        isRoleResolutionLoading = true
+        errorMessage = nil
+        signInNoticeMessage = nil
+        defer {
+            isLoading = false
+            isRoleResolutionLoading = false
+        }
+
+        do {
+            let result = try await authService.signInManuallyAsEmployee(name: name, email: email)
+            lastRequestedRoleRaw = UserRole.employee.rawValue
+            requestedRole = .employee
+            AppLog.info("AuthViewModel.signInManuallyAsEmployee received identity user=\(AppLog.redactIdentifier(result.identity.userId))")
+            try await resolveProfileAndRoute(identity: result.identity, requestedRole: .employee)
+        } catch {
+            logAuthError(error, context: "signInManuallyAsEmployee")
             errorMessage = userFacingMessage(for: error)
         }
     }
 
     func signOut() async {
+        AppLog.info("AuthViewModel.signOut started")
         isLoading = true
         defer { isLoading = false }
 
@@ -82,6 +136,7 @@ final class AuthViewModel: ObservableObject {
             try await authService.signOut()
             clearState()
         } catch {
+            logAuthError(error, context: "signOut")
             errorMessage = userFacingMessage(for: error)
         }
     }
@@ -108,15 +163,19 @@ final class AuthViewModel: ObservableObject {
     }
 
     private func resolveProfileAndRoute(identity: AuthIdentity, requestedRole: UserRole?) async throws {
+        AppLog.info(
+            "Resolving CloudKit profile for user=\(AppLog.redactIdentifier(identity.userId)) requestedRole=\(requestedRole?.rawValue ?? "nil")"
+        )
         let status = try await roleProfileRepository.ensureUserProfile(
             uid: identity.userId,
             name: identity.fullName,
             email: identity.email,
-            provider: "apple",
+            provider: identity.provider,
             requestedRole: requestedRole
         )
 
         guard case .resolved(let profile) = status else {
+            AppLog.warning("Profile resolution returned setupRequired for user=\(AppLog.redactIdentifier(identity.userId))")
             authState = .signedOut
             resolvedRole = nil
             currentUser = nil
@@ -126,6 +185,7 @@ final class AuthViewModel: ObservableObject {
         }
 
         guard profile.isActive else {
+            AppLog.warning("Resolved profile is inactive for user=\(AppLog.redactIdentifier(profile.id))")
             clearState()
             managerAccessMessage = "Your account is inactive. Contact your manager."
             showManagerAccessRequired = true
@@ -133,13 +193,15 @@ final class AuthViewModel: ObservableObject {
         }
 
         if requestedRole == .manager && profile.role != .manager {
+            AppLog.warning("Manager access denied for user=\(AppLog.redactIdentifier(profile.id)) resolvedRole=\(profile.role.rawValue)")
             try await authService.signOut()
             clearState()
-            managerAccessMessage = "This Apple account is not configured as a manager."
+            managerAccessMessage = "This account is not configured as a manager."
             showManagerAccessRequired = true
             return
         }
 
+        AppLog.info("Profile resolved successfully for user=\(AppLog.redactIdentifier(profile.id)) role=\(profile.role.rawValue)")
         syncState(with: toAppUser(profile), role: profile.role)
     }
 
@@ -152,6 +214,7 @@ final class AuthViewModel: ObservableObject {
     }
 
     private func clearState() {
+        AppLog.info("AuthViewModel.clearState invoked")
         authState = .signedOut
         resolvedRole = nil
         currentUser = nil
@@ -188,5 +251,15 @@ final class AuthViewModel: ObservableObject {
         }
 
         return error.localizedDescription
+    }
+
+    private func logAuthError(_ error: Error, context: String) {
+        let nsError = error as NSError
+        let base = "Auth failure [\(context)] domain=\(nsError.domain) code=\(nsError.code)"
+        if let ckError = error as? CloudKitClientError {
+            AppLog.error("\(base) cloudClientError=\(String(describing: ckError)) message=\(AppLog.sanitize(ckError.localizedDescription))")
+            return
+        }
+        AppLog.error("\(base) message=\(AppLog.sanitize(error.localizedDescription))", error: error)
     }
 }

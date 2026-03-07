@@ -1,4 +1,15 @@
 import SwiftUI
+import UIKit
+
+private extension Color {
+    static func adaptive(light: UIColor, dark: UIColor) -> Color {
+        Color(
+            uiColor: UIColor { traitCollection in
+                traitCollection.userInterfaceStyle == .dark ? dark : light
+            }
+        )
+    }
+}
 
 enum DS {
     enum Spacing {
@@ -24,23 +35,73 @@ enum DS {
     }
 
     enum Colors {
-        static let background = Color(red: 0.95, green: 0.97, blue: 1.00)
-        static let backgroundAlt = Color(red: 1.00, green: 0.97, blue: 0.93)
-        static let card = Color.white.opacity(0.92)
-        static let elevated = Color(red: 0.89, green: 0.93, blue: 0.98)
-        static let primary = Color(red: 0.07, green: 0.33, blue: 0.67)
-        static let accent = Color(red: 0.05, green: 0.60, blue: 0.63)
-        static let textPrimary = Color(red: 0.10, green: 0.14, blue: 0.22)
-        static let textSecondary = Color(red: 0.36, green: 0.42, blue: 0.54)
-        static let separator = Color.black.opacity(0.08)
-        static let destructive = Color(red: 0.74, green: 0.16, blue: 0.20)
-        static let success = Color(red: 0.08, green: 0.57, blue: 0.33)
-        static let warning = Color(red: 0.78, green: 0.49, blue: 0.08)
+        static let background = Color.adaptive(
+            light: UIColor(red: 0.95, green: 0.97, blue: 1.00, alpha: 1.00),
+            dark: UIColor(red: 0.06, green: 0.08, blue: 0.12, alpha: 1.00)
+        )
+        static let backgroundAlt = Color.adaptive(
+            light: UIColor(red: 1.00, green: 0.97, blue: 0.93, alpha: 1.00),
+            dark: UIColor(red: 0.09, green: 0.12, blue: 0.18, alpha: 1.00)
+        )
+        static let card = Color.adaptive(
+            light: UIColor(red: 1.00, green: 1.00, blue: 1.00, alpha: 0.92),
+            dark: UIColor(red: 0.10, green: 0.12, blue: 0.17, alpha: 0.92)
+        )
+        static let elevated = Color.adaptive(
+            light: UIColor(red: 0.89, green: 0.93, blue: 0.98, alpha: 1.00),
+            dark: UIColor(red: 0.16, green: 0.20, blue: 0.28, alpha: 1.00)
+        )
+        static let primary = Color.adaptive(
+            light: UIColor(red: 0.07, green: 0.33, blue: 0.67, alpha: 1.00),
+            dark: UIColor(red: 0.37, green: 0.60, blue: 0.95, alpha: 1.00)
+        )
+        static let accent = Color.adaptive(
+            light: UIColor(red: 0.05, green: 0.60, blue: 0.63, alpha: 1.00),
+            dark: UIColor(red: 0.29, green: 0.78, blue: 0.79, alpha: 1.00)
+        )
+        static let textPrimary = Color.adaptive(
+            light: UIColor(red: 0.10, green: 0.14, blue: 0.22, alpha: 1.00),
+            dark: UIColor(red: 0.94, green: 0.96, blue: 1.00, alpha: 1.00)
+        )
+        static let textSecondary = Color.adaptive(
+            light: UIColor(red: 0.36, green: 0.42, blue: 0.54, alpha: 1.00),
+            dark: UIColor(red: 0.69, green: 0.74, blue: 0.82, alpha: 1.00)
+        )
+        static let separator = Color.adaptive(
+            light: UIColor(red: 0.00, green: 0.00, blue: 0.00, alpha: 0.08),
+            dark: UIColor(red: 1.00, green: 1.00, blue: 1.00, alpha: 0.10)
+        )
+        static let destructive = Color.adaptive(
+            light: UIColor(red: 0.74, green: 0.16, blue: 0.20, alpha: 1.00),
+            dark: UIColor(red: 0.95, green: 0.39, blue: 0.41, alpha: 1.00)
+        )
+        static let success = Color.adaptive(
+            light: UIColor(red: 0.08, green: 0.57, blue: 0.33, alpha: 1.00),
+            dark: UIColor(red: 0.33, green: 0.80, blue: 0.52, alpha: 1.00)
+        )
+        static let warning = Color.adaptive(
+            light: UIColor(red: 0.78, green: 0.49, blue: 0.08, alpha: 1.00),
+            dark: UIColor(red: 0.95, green: 0.72, blue: 0.28, alpha: 1.00)
+        )
+        static let tabBarBackground = Color.adaptive(
+            light: UIColor(red: 1.00, green: 1.00, blue: 1.00, alpha: 0.92),
+            dark: UIColor(red: 0.08, green: 0.10, blue: 0.14, alpha: 0.92)
+        )
+        static let ambientGlow = Color.adaptive(
+            light: UIColor(red: 1.00, green: 1.00, blue: 1.00, alpha: 0.28),
+            dark: UIColor(red: 0.22, green: 0.30, blue: 0.44, alpha: 0.20)
+        )
 
         static let primaryGradient = LinearGradient(
             colors: [
-                Color(red: 0.05, green: 0.36, blue: 0.76),
-                Color(red: 0.06, green: 0.54, blue: 0.76)
+                Color.adaptive(
+                    light: UIColor(red: 0.05, green: 0.36, blue: 0.76, alpha: 1.00),
+                    dark: UIColor(red: 0.25, green: 0.48, blue: 0.93, alpha: 1.00)
+                ),
+                Color.adaptive(
+                    light: UIColor(red: 0.06, green: 0.54, blue: 0.76, alpha: 1.00),
+                    dark: UIColor(red: 0.18, green: 0.70, blue: 0.80, alpha: 1.00)
+                )
             ],
             startPoint: .topLeading,
             endPoint: .bottomTrailing
@@ -71,7 +132,7 @@ struct AppBackground: View {
             DS.Colors.canvasGradient.ignoresSafeArea()
 
             Circle()
-                .fill(Color.white.opacity(0.28))
+                .fill(DS.Colors.ambientGlow)
                 .frame(width: 280, height: 280)
                 .blur(radius: 8)
                 .offset(x: -130, y: -340)

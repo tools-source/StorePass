@@ -26,7 +26,7 @@ final class CloudKitAuthRepository: AuthRepositoryProtocol {
         throw NSError(
             domain: "StorePass",
             code: 4101,
-            userInfo: [NSLocalizedDescriptionKey: "Email/password sign-in is disabled. Use Sign in with Apple."]
+            userInfo: [NSLocalizedDescriptionKey: "Use the login screen. Managers sign in with Apple, and employees can use Apple or quick email access."]
         )
     }
 
@@ -36,7 +36,7 @@ final class CloudKitAuthRepository: AuthRepositoryProtocol {
         throw NSError(
             domain: "StorePass",
             code: 4102,
-            userInfo: [NSLocalizedDescriptionKey: "Email/password account creation is disabled. Use Sign in with Apple."]
+            userInfo: [NSLocalizedDescriptionKey: "Accounts are created from the app login flow. Managers use Apple, and employees can use Apple or quick email access."]
         )
     }
 

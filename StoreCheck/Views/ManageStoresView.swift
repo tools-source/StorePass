@@ -1,15 +1,19 @@
+import MapKit
 import SwiftUI
 import UIKit
 
 struct ManageStoresView: View {
     @EnvironmentObject private var container: AppContainer
     @StateObject private var viewModel: StoreManagementViewModel
+    @StateObject private var addressSearch = StoreAddressSearchModel()
 
     @State private var name = ""
     @State private var address = ""
     @State private var latitudeText = ""
     @State private var longitudeText = ""
     @State private var radiusText = "150"
+    @State private var isApplyingAddressSelection = false
+    @State private var isResolvingAddress = false
 
     @State private var deletingStore: Store?
 
@@ -33,7 +37,7 @@ struct ManageStoresView: View {
                         summaryCard
                         createStoreCard
 
-                        if viewModel.stores.isEmpty {
+                        if viewModel.stores.isEmpty, viewModel.storeError == nil {
                             EmptyStateView(
                                 icon: "building.2.crop.circle",
                                 title: "No stores yet",
@@ -124,7 +128,7 @@ struct ManageStoresView: View {
 
                 Group {
                     entryField(title: "Store name", text: $name, keyboard: .default)
-                    entryField(title: "Address", text: $address, keyboard: .default)
+                    addressEntrySection
 
                     HStack(spacing: DS.Spacing.s) {
                         entryField(title: "Latitude", text: $latitudeText, keyboard: .numbersAndPunctuation)
@@ -141,6 +145,75 @@ struct ManageStoresView: View {
                 }
                 .buttonStyle(PrimaryButtonStyle())
                 .disabled(viewModel.isCreatingStore)
+            }
+        }
+    }
+
+    private var addressEntrySection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Address")
+                .font(DS.Typography.micro)
+                .foregroundStyle(DS.Colors.textSecondary)
+
+            TextField("Address", text: $address)
+                .textInputAutocapitalization(.words)
+                .autocorrectionDisabled()
+                .padding(.horizontal, DS.Spacing.s)
+                .frame(height: DS.Metrics.rowHeight)
+                .background(DS.Colors.elevated.opacity(0.75), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .onChange(of: address) { _, newValue in
+                    if isApplyingAddressSelection {
+                        isApplyingAddressSelection = false
+                        return
+                    }
+                    addressSearch.updateQuery(newValue)
+                }
+
+            if isResolvingAddress {
+                HStack(spacing: DS.Spacing.xs) {
+                    ProgressView()
+                        .tint(DS.Colors.primary)
+                    Text("Resolving address coordinates...")
+                        .font(DS.Typography.micro)
+                        .foregroundStyle(DS.Colors.textSecondary)
+                }
+                .padding(.horizontal, DS.Spacing.xs)
+            }
+
+            if !addressSearch.suggestions.isEmpty {
+                VStack(spacing: 0) {
+                    ForEach(addressSearch.suggestions) { suggestion in
+                        Button {
+                            Task { await applyAddressSuggestion(suggestion) }
+                        } label: {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(suggestion.title)
+                                    .font(DS.Typography.caption.weight(.semibold))
+                                    .foregroundStyle(DS.Colors.textPrimary)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                                if !suggestion.subtitle.isEmpty {
+                                    Text(suggestion.subtitle)
+                                        .font(DS.Typography.micro)
+                                        .foregroundStyle(DS.Colors.textSecondary)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                            }
+                            .padding(.horizontal, DS.Spacing.s)
+                            .padding(.vertical, 10)
+                        }
+                        .buttonStyle(.plain)
+
+                        if suggestion.id != addressSearch.suggestions.last?.id {
+                            Divider()
+                        }
+                    }
+                }
+                .background(DS.Colors.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .stroke(DS.Colors.separator, lineWidth: 1)
+                }
             }
         }
     }
@@ -184,6 +257,24 @@ struct ManageStoresView: View {
         }
     }
 
+    private func applyAddressSuggestion(_ suggestion: StoreAddressSuggestion) async {
+        isResolvingAddress = true
+        defer { isResolvingAddress = false }
+
+        do {
+            let resolved = try await addressSearch.resolveSuggestion(suggestion)
+            isApplyingAddressSelection = true
+            address = resolved.displayText
+            latitudeText = String(format: "%.6f", resolved.coordinate.latitude)
+            longitudeText = String(format: "%.6f", resolved.coordinate.longitude)
+            addressSearch.clear()
+            viewModel.clearStoreError()
+        } catch {
+            viewModel.presentStoreError("Unable to resolve that address. Choose a different result or enter coordinates manually.")
+            AppLog.error("Failed resolving store address", error: error)
+        }
+    }
+
     private func createStore() async {
         guard let latitude = Double(latitudeText),
               let longitude = Double(longitudeText),
@@ -209,6 +300,91 @@ struct ManageStoresView: View {
             longitudeText = ""
             radiusText = "150"
         }
+    }
+}
+
+private struct StoreAddressSuggestion: Identifiable, Equatable {
+    let id: String
+    let title: String
+    let subtitle: String
+}
+
+private struct ResolvedStoreAddress {
+    let displayText: String
+    let coordinate: CLLocationCoordinate2D
+}
+
+@MainActor
+private final class StoreAddressSearchModel: NSObject, ObservableObject, MKLocalSearchCompleterDelegate {
+    @Published private(set) var suggestions: [StoreAddressSuggestion] = []
+
+    private let completer = MKLocalSearchCompleter()
+
+    override init() {
+        super.init()
+        completer.delegate = self
+        completer.resultTypes = .address
+    }
+
+    func updateQuery(_ query: String) {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count >= 3 else {
+            suggestions = []
+            completer.queryFragment = ""
+            return
+        }
+
+        completer.queryFragment = trimmed
+    }
+
+    func clear() {
+        suggestions = []
+        completer.queryFragment = ""
+    }
+
+    nonisolated func completerDidUpdateResults(_ completer: MKLocalSearchCompleter) {
+        let resolvedSuggestions = completer.results.prefix(5).map {
+            StoreAddressSuggestion(
+                id: "\($0.title)|\($0.subtitle)",
+                title: $0.title,
+                subtitle: $0.subtitle
+            )
+        }
+        Task { @MainActor in
+            suggestions = resolvedSuggestions
+        }
+    }
+
+    nonisolated func completer(_ completer: MKLocalSearchCompleter, didFailWithError error: Error) {
+        Task { @MainActor in
+            suggestions = []
+            AppLog.warning("Address completer failed: \(AppLog.sanitize(error.localizedDescription))")
+        }
+    }
+
+    func resolveSuggestion(_ suggestion: StoreAddressSuggestion) async throws -> ResolvedStoreAddress {
+        let request = MKLocalSearch.Request()
+        request.naturalLanguageQuery = [suggestion.title, suggestion.subtitle]
+            .filter { !$0.isEmpty }
+            .joined(separator: ", ")
+
+        let response = try await MKLocalSearch(request: request).start()
+        guard let item = response.mapItems.first else {
+            throw NSError(
+                domain: "StorePass",
+                code: 6201,
+                userInfo: [NSLocalizedDescriptionKey: "No location was returned for that address."]
+            )
+        }
+
+        let displayText = [suggestion.title, suggestion.subtitle]
+            .filter { !$0.isEmpty }
+            .joined(separator: ", ")
+
+        return ResolvedStoreAddress(
+            displayText: displayText,
+            coordinate: item.placemark.coordinate
+        )
     }
 }
 

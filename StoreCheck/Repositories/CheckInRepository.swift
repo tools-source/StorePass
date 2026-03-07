@@ -111,9 +111,11 @@ private final class PollingCheckInListenerToken: CheckInListenerToken {
 @MainActor
 final class CloudKitCheckInRepository: CheckInRepositoryProtocol {
     private let service: CloudKitService
+    private let userProfileStore: UserProfileStoreProtocol
 
-    init(service: CloudKitService) {
+    init(service: CloudKitService, userProfileStore: UserProfileStoreProtocol) {
         self.service = service
+        self.userProfileStore = userProfileStore
     }
 
     @discardableResult
@@ -181,7 +183,11 @@ final class CloudKitCheckInRepository: CheckInRepositoryProtocol {
         record[CKSchema.CheckInField.storeId] = checkIn.storeId as CKRecordValue
         record[CKSchema.CheckInField.storeRef] = CKRecord.Reference(recordID: storeRecordID, action: .none)
         record[CKSchema.CheckInField.employeeUserId] = checkIn.employeeId as CKRecordValue
-        record[CKSchema.CheckInField.employeeUserRef] = CKRecord.Reference(recordID: CloudKitService.userRecordID(userId: checkIn.employeeId), action: .none)
+        if let publicUserRecordID = await userProfileStore.resolvePublicUserRecordID(userId: checkIn.employeeId) {
+            record[CKSchema.CheckInField.employeeUserRef] = CKRecord.Reference(recordID: publicUserRecordID, action: .none)
+        } else {
+            record[CKSchema.CheckInField.employeeUserRef] = nil
+        }
         record[CKSchema.CheckInField.managerUserId] = managerUserId as CKRecordValue
 
         record[CKSchema.CheckInField.checkInAt] = checkIn.checkInTime as CKRecordValue

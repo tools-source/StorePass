@@ -1,4 +1,5 @@
 import AuthenticationServices
+import CryptoKit
 import Foundation
 import UIKit
 
@@ -6,9 +7,14 @@ struct AuthIdentity: Equatable {
     let userId: String
     let fullName: String?
     let email: String?
+    let provider: String
 }
 
 struct AppleSignInResult {
+    let identity: AuthIdentity
+}
+
+struct ManualEmployeeSignInResult {
     let identity: AuthIdentity
 }
 
@@ -20,6 +26,8 @@ protocol AuthServiceProtocol: AnyObject {
     func setCurrentUser(_ user: AppUser?)
     func restoreSession(forceSignOutOnLaunch: Bool) async
     func signInWithApple() async throws -> AppleSignInResult
+    func signInWithApple(authorizationResult: Result<ASAuthorization, Error>) throws -> AppleSignInResult
+    func signInManuallyAsEmployee(name: String, email: String) async throws -> ManualEmployeeSignInResult
     func authUser() -> AuthIdentity?
     func signOut() async throws
     func deleteAuthAccount() async throws
@@ -29,6 +37,16 @@ protocol AuthServiceProtocol: AnyObject {
 final class AuthService: ObservableObject, AuthServiceProtocol {
     @Published private(set) var currentUser: AppUser?
     @Published private(set) var currentIdentity: AuthIdentity?
+
+    private enum SessionProvider {
+        static let apple = "apple"
+        static let manualEmployee = "manual.employee"
+    }
+
+    private let sessionUserIdKey = "auth.session.userId"
+    private let sessionNameKey = "auth.session.name"
+    private let sessionEmailKey = "auth.session.email"
+    private let sessionProviderKey = "auth.session.provider"
 
     private let appleUserIdKey = "auth.apple.userId"
     private let appleNameKey = "auth.apple.name"
@@ -40,22 +58,36 @@ final class AuthService: ObservableObject, AuthServiceProtocol {
             return
         }
 
-        guard let savedUserId = UserDefaults.standard.string(forKey: appleUserIdKey), !savedUserId.isEmpty else {
+        guard let session = loadPersistedSession(), !session.userId.isEmpty else {
             currentIdentity = nil
             return
         }
 
+        if session.provider == SessionProvider.manualEmployee {
+            currentIdentity = AuthIdentity(
+                userId: session.userId,
+                fullName: session.name,
+                email: session.email,
+                provider: session.provider
+            )
+            AppLog.info("Restored manual employee session for user=\(AppLog.redactIdentifier(session.userId))")
+            return
+        }
+
         do {
-            let state = try await credentialState(for: savedUserId)
+            let state = try await credentialState(for: session.userId)
             guard state == .authorized else {
                 clearSession()
                 return
             }
 
-            let savedName = UserDefaults.standard.string(forKey: appleNameKey)
-            let savedEmail = UserDefaults.standard.string(forKey: appleEmailKey)
-            currentIdentity = AuthIdentity(userId: savedUserId, fullName: savedName, email: savedEmail)
-            AppLog.info("Restored Apple session for user=\(AppLog.redactIdentifier(savedUserId))")
+            currentIdentity = AuthIdentity(
+                userId: session.userId,
+                fullName: session.name,
+                email: session.email,
+                provider: SessionProvider.apple
+            )
+            AppLog.info("Restored Apple session for user=\(AppLog.redactIdentifier(session.userId))")
         } catch {
             AppLog.error("Failed restoring Apple session", error: error)
             clearSession()
@@ -63,8 +95,63 @@ final class AuthService: ObservableObject, AuthServiceProtocol {
     }
 
     func signInWithApple() async throws -> AppleSignInResult {
+        AppLog.info("Apple sign-in started (async request)")
         let credential = try await Self.performAppleAuthorization()
+        let result = finalizeAppleSignIn(with: credential)
+        AppLog.info("Apple sign-in completed for user=\(AppLog.redactIdentifier(result.identity.userId))")
+        return result
+    }
 
+    func signInWithApple(authorizationResult: Result<ASAuthorization, Error>) throws -> AppleSignInResult {
+        AppLog.info("Apple sign-in started (button completion path)")
+        let authorization: ASAuthorization
+        switch authorizationResult {
+        case .success(let value):
+            authorization = value
+        case .failure(let error):
+            AppLog.error("Apple sign-in failed before credential parsing", error: error)
+            throw error
+        }
+
+        guard let credential = authorization.credential as? ASAuthorizationAppleIDCredential else {
+            AppLog.error("Apple sign-in returned non-AppleID credential")
+            throw NSError(
+                domain: "StorePass",
+                code: 10001,
+                userInfo: [NSLocalizedDescriptionKey: "Apple sign-in returned an invalid credential."]
+            )
+        }
+
+        let result = finalizeAppleSignIn(with: credential)
+        AppLog.info("Apple sign-in completed for user=\(AppLog.redactIdentifier(result.identity.userId))")
+        return result
+    }
+
+    func signInManuallyAsEmployee(name: String, email: String) async throws -> ManualEmployeeSignInResult {
+        let normalizedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedName.isEmpty else {
+            throw CloudKitClientError.invalidData("Enter your name to continue as an employee.")
+        }
+
+        let normalizedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard isValidEmail(normalizedEmail) else {
+            throw CloudKitClientError.invalidData("Enter a valid employee email address.")
+        }
+
+        let identity = AuthIdentity(
+            userId: manualEmployeeUserId(for: normalizedEmail),
+            fullName: normalizedName,
+            email: normalizedEmail,
+            provider: SessionProvider.manualEmployee
+        )
+
+        persist(identity: identity)
+        currentIdentity = identity
+        AppLog.info("Manual employee sign-in completed for user=\(AppLog.redactIdentifier(identity.userId))")
+        return ManualEmployeeSignInResult(identity: identity)
+    }
+
+    private func finalizeAppleSignIn(with credential: ASAuthorizationAppleIDCredential) -> AppleSignInResult {
         let nameFromCredential: String? = {
             guard let fullName = credential.fullName else { return nil }
             let normalized = PersonNameComponentsFormatter().string(from: fullName).trimmingCharacters(in: .whitespacesAndNewlines)
@@ -78,11 +165,13 @@ final class AuthService: ObservableObject, AuthServiceProtocol {
         let identity = AuthIdentity(
             userId: credential.user,
             fullName: nameFromCredential ?? fallbackName,
-            email: emailFromCredential ?? fallbackEmail
+            email: emailFromCredential ?? fallbackEmail,
+            provider: SessionProvider.apple
         )
 
         persist(identity: identity)
         currentIdentity = identity
+        AppLog.info("Auth identity persisted for user=\(AppLog.redactIdentifier(identity.userId))")
         return AppleSignInResult(identity: identity)
     }
 
@@ -104,21 +193,50 @@ final class AuthService: ObservableObject, AuthServiceProtocol {
     }
 
     private func clearSession() {
+        if let currentIdentity {
+            AppLog.info("Clearing auth session for user=\(AppLog.redactIdentifier(currentIdentity.userId))")
+        } else {
+            AppLog.info("Clearing auth session with no active identity")
+        }
         currentUser = nil
         currentIdentity = nil
+        UserDefaults.standard.removeObject(forKey: sessionUserIdKey)
+        UserDefaults.standard.removeObject(forKey: sessionNameKey)
+        UserDefaults.standard.removeObject(forKey: sessionEmailKey)
+        UserDefaults.standard.removeObject(forKey: sessionProviderKey)
         UserDefaults.standard.removeObject(forKey: appleUserIdKey)
         UserDefaults.standard.removeObject(forKey: appleNameKey)
         UserDefaults.standard.removeObject(forKey: appleEmailKey)
     }
 
     private func persist(identity: AuthIdentity) {
-        UserDefaults.standard.set(identity.userId, forKey: appleUserIdKey)
+        UserDefaults.standard.set(identity.userId, forKey: sessionUserIdKey)
+        UserDefaults.standard.set(identity.provider, forKey: sessionProviderKey)
         if let name = identity.fullName, !name.isEmpty {
-            UserDefaults.standard.set(name, forKey: appleNameKey)
+            UserDefaults.standard.set(name, forKey: sessionNameKey)
+        } else {
+            UserDefaults.standard.removeObject(forKey: sessionNameKey)
         }
         if let email = identity.email, !email.isEmpty {
-            UserDefaults.standard.set(email, forKey: appleEmailKey)
+            UserDefaults.standard.set(email, forKey: sessionEmailKey)
+        } else {
+            UserDefaults.standard.removeObject(forKey: sessionEmailKey)
         }
+
+        if identity.provider == SessionProvider.apple {
+            UserDefaults.standard.set(identity.userId, forKey: appleUserIdKey)
+            if let name = identity.fullName, !name.isEmpty {
+                UserDefaults.standard.set(name, forKey: appleNameKey)
+            }
+            if let email = identity.email, !email.isEmpty {
+                UserDefaults.standard.set(email, forKey: appleEmailKey)
+            }
+        } else {
+            UserDefaults.standard.removeObject(forKey: appleUserIdKey)
+            UserDefaults.standard.removeObject(forKey: appleNameKey)
+            UserDefaults.standard.removeObject(forKey: appleEmailKey)
+        }
+        AppLog.info("Stored auth identity in UserDefaults for user=\(AppLog.redactIdentifier(identity.userId)) provider=\(identity.provider)")
     }
 
     private func credentialState(for userId: String) async throws -> ASAuthorizationAppleIDProvider.CredentialState {
@@ -131,6 +249,40 @@ final class AuthService: ObservableObject, AuthServiceProtocol {
                 continuation.resume(returning: state)
             }
         }
+    }
+
+    private func loadPersistedSession() -> (userId: String, name: String?, email: String?, provider: String)? {
+        if let userId = UserDefaults.standard.string(forKey: sessionUserIdKey), !userId.isEmpty {
+            return (
+                userId: userId,
+                name: UserDefaults.standard.string(forKey: sessionNameKey),
+                email: UserDefaults.standard.string(forKey: sessionEmailKey),
+                provider: UserDefaults.standard.string(forKey: sessionProviderKey) ?? SessionProvider.apple
+            )
+        }
+
+        if let legacyAppleUserId = UserDefaults.standard.string(forKey: appleUserIdKey), !legacyAppleUserId.isEmpty {
+            return (
+                userId: legacyAppleUserId,
+                name: UserDefaults.standard.string(forKey: appleNameKey),
+                email: UserDefaults.standard.string(forKey: appleEmailKey),
+                provider: SessionProvider.apple
+            )
+        }
+
+        return nil
+    }
+
+    private func manualEmployeeUserId(for email: String) -> String {
+        let digest = SHA256.hash(data: Data(email.utf8))
+        let hash = digest.map { String(format: "%02x", $0) }.joined()
+        return "manual_employee_\(hash)"
+    }
+
+    private func isValidEmail(_ email: String) -> Bool {
+        let parts = email.split(separator: "@")
+        guard parts.count == 2 else { return false }
+        return !parts[0].isEmpty && parts[1].contains(".")
     }
 }
 

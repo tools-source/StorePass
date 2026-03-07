@@ -4,16 +4,25 @@ import Foundation
 @MainActor
 final class CloudKitStoreRepository: StoreRepositoryProtocol {
     private let service: CloudKitService
+    private let authService: AuthService
+    private let userProfileStore: UserProfileStoreProtocol
 
-    init(service: CloudKitService) {
+    init(service: CloudKitService, authService: AuthService, userProfileStore: UserProfileStoreProtocol) {
         self.service = service
+        self.authService = authService
+        self.userProfileStore = userProfileStore
     }
 
     func fetchStores(ids: [String]?) async throws -> [Store] {
         try await service.ensureCloudKitAvailable()
 
         if let ids {
-            if ids.isEmpty { return [] }
+            if ids.isEmpty {
+                if service.currentRole == .employee {
+                    return try await fetchStores(ids: nil)
+                }
+                return []
+            }
             var fetched: [Store] = []
             for id in ids {
                 let recordID = CloudKitService.storeRecordID(storeId: id)
@@ -49,19 +58,46 @@ final class CloudKitStoreRepository: StoreRepositoryProtocol {
 
     func fetchManagerStores(managerId: String) async throws -> [Store] {
         try await service.ensureCloudKitAvailable()
+        var publicStores: [Store] = []
+        var publicQueryRecovered = false
 
-        let predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [
-            NSPredicate(format: "%K == %@", CKSchema.StoreField.managerUserId, managerId),
-            NSPredicate(format: "%K == %@", CKSchema.StoreField.isActive, NSNumber(value: true))
-        ])
+        do {
+            publicStores = try await queryManagerStores(managerId: managerId, in: service.publicDB)
+            await seedPrivateStoresBestEffort(publicStores)
+        } catch {
+            guard isRecoverableManagerStoreError(error) else {
+                throw error
+            }
+            publicQueryRecovered = true
+            AppLog.warning("Public manager store fetch failed; using private fallback only: \(AppLog.sanitize(error.localizedDescription))")
+        }
 
-        let records = try await service.queryRecords(
-            recordType: CKSchema.RecordType.store,
-            predicate: predicate,
-            sortDescriptors: [NSSortDescriptor(key: CKSchema.StoreField.name, ascending: true)]
-        )
+        var privateStores: [Store] = []
+        var privateQueryRecovered = false
+        do {
+            privateStores = try await queryManagerStores(managerId: managerId, in: service.privateDB)
+        } catch {
+            guard isRecoverableManagerStoreError(error) else {
+                throw error
+            }
+            privateQueryRecovered = true
+            AppLog.warning("Private manager store fetch failed; falling back to profile-backed store IDs: \(AppLog.sanitize(error.localizedDescription))")
+        }
 
-        return records.compactMap(decodeStore(record:))
+        let queriedStores = mergeStores(preferred: privateStores, fallback: publicStores)
+        let idFallbackStores = await fetchManagerStoresViaProfileIDs(managerId: managerId)
+
+        if queriedStores.isEmpty, !idFallbackStores.isEmpty {
+            AppLog.info("Manager store fetch recovered via profile IDs for manager=\(AppLog.redactIdentifier(managerId)) count=\(idFallbackStores.count)")
+            return idFallbackStores
+        }
+
+        if queriedStores.isEmpty, publicQueryRecovered || privateQueryRecovered {
+            AppLog.warning("Manager store queries recovered with no results; returning empty store list for manager=\(AppLog.redactIdentifier(managerId))")
+            return []
+        }
+
+        return mergeStores(preferred: queriedStores, fallback: idFallbackStores)
     }
 
     func upsertStore(_ store: Store) async throws {
@@ -71,68 +107,64 @@ final class CloudKitStoreRepository: StoreRepositoryProtocol {
             throw CloudKitClientError.signedOut
         }
 
-        let storeRecordID = CloudKitService.storeRecordID(storeId: store.id)
-        guard let record = try await service.fetchRecord(with: storeRecordID) else {
-            throw CloudKitClientError.missingRecord("Store not found.")
-        }
-
-        let managerId = record.string(CKSchema.StoreField.managerUserId)
-        guard managerId == currentUserId else {
-            throw CloudKitClientError.unauthorized
-        }
-
         try validateStore(name: store.name, address: store.address, latitude: store.latitude, longitude: store.longitude, radiusMeters: store.radiusMeters)
+        let record = try await fetchManagerCanonicalStoreRecord(storeId: store.id, expectedManagerId: currentUserId)
 
-        record[CKSchema.StoreField.name] = store.name.trimmingCharacters(in: .whitespacesAndNewlines) as CKRecordValue
-        record[CKSchema.StoreField.address] = store.address.trimmingCharacters(in: .whitespacesAndNewlines) as CKRecordValue
-        record[CKSchema.StoreField.latitude] = NSNumber(value: store.latitude)
-        record[CKSchema.StoreField.longitude] = NSNumber(value: store.longitude)
-        record[CKSchema.StoreField.radiusMeters] = NSNumber(value: store.radiusMeters)
-        record[CKSchema.StoreField.isActive] = NSNumber(value: store.isActive)
-        record[CKSchema.StoreField.updatedAt] = Date() as CKRecordValue
+        populateStoreRecord(
+            record,
+            store: store,
+            joinCode: store.resolvedJoinCode,
+            joinCodeHash: store.resolvedJoinCode.map { CloudKitService.stableHash(normalizeJoinCode($0)) },
+            managerPublicRecordID: nil
+        )
 
-        _ = try await service.save(record: record)
+        _ = try await service.save(record: record, in: service.privateDB)
+        await mirrorStoreRecordBestEffort(record, context: "upsertStore")
     }
 
     func deleteStore(id: String) async throws {
         try await service.ensureCloudKitAvailable()
         let currentUserId = try service.requireCurrentUserId()
-
-        let storeRecordID = CloudKitService.storeRecordID(storeId: id)
-        guard let storeRecord = try await service.fetchRecord(with: storeRecordID) else {
-            return
-        }
-
-        guard storeRecord.string(CKSchema.StoreField.managerUserId) == currentUserId else {
-            throw CloudKitClientError.unauthorized
-        }
+        let storeRecord = try await fetchManagerCanonicalStoreRecord(storeId: id, expectedManagerId: currentUserId)
 
         let now = Date()
         storeRecord[CKSchema.StoreField.isActive] = NSNumber(value: false)
         storeRecord[CKSchema.StoreField.updatedAt] = now as CKRecordValue
         storeRecord[CKSchema.StoreField.deletedAt] = now as CKRecordValue
 
-        let memberships = try await service.queryRecords(
-            recordType: CKSchema.RecordType.storeMember,
-            predicate: NSPredicate(format: "%K == %@", CKSchema.StoreMemberField.storeId, id)
-        )
+        _ = try await service.save(record: storeRecord, in: service.privateDB)
+        await mirrorStoreRecordBestEffort(storeRecord, context: "deleteStore")
+        await syncManagerOwnedStoreIdsBestEffort(managerId: currentUserId, storeId: id, isAdding: false, context: "deleteStore")
 
         var employeeIds = Set<String>()
-        var recordsToSave: [CKRecord] = [storeRecord]
+        do {
+            let memberships = try await service.queryRecords(
+                recordType: CKSchema.RecordType.storeMember,
+                predicate: NSPredicate(format: "%K == %@", CKSchema.StoreMemberField.storeId, id)
+            )
 
-        for membership in memberships {
-            membership[CKSchema.StoreMemberField.status] = CKSchema.MemberStatus.removed as CKRecordValue
-            membership[CKSchema.StoreMemberField.updatedAt] = now as CKRecordValue
-            if let employeeId = membership.string(CKSchema.StoreMemberField.employeeUserId) {
-                employeeIds.insert(employeeId)
+            var recordsToSave: [CKRecord] = []
+            for membership in memberships {
+                membership[CKSchema.StoreMemberField.status] = CKSchema.MemberStatus.removed as CKRecordValue
+                membership[CKSchema.StoreMemberField.updatedAt] = now as CKRecordValue
+                if let employeeId = membership.string(CKSchema.StoreMemberField.employeeUserId) {
+                    employeeIds.insert(employeeId)
+                }
+                recordsToSave.append(membership)
             }
-            recordsToSave.append(membership)
+
+            if !recordsToSave.isEmpty {
+                _ = try await service.modify(recordsToSave: recordsToSave)
+            }
+        } catch {
+            guard isRecoverableManagerStoreError(error) else {
+                throw error
+            }
+            AppLog.warning("Public membership cleanup skipped during deleteStore: \(AppLog.sanitize(error.localizedDescription))")
         }
 
-        _ = try await service.modify(recordsToSave: recordsToSave)
-
         for employeeId in employeeIds {
-            try await recomputeAssignedStores(for: employeeId)
+            await recomputeAssignedStoresBestEffort(for: employeeId, context: "deleteStore")
         }
     }
 
@@ -142,36 +174,20 @@ final class CloudKitStoreRepository: StoreRepositoryProtocol {
         let currentUserId = try service.requireCurrentUserId()
         try validateStore(name: name, address: address, latitude: latitude, longitude: longitude, radiusMeters: radiusMeters)
 
-        let managerRecordID = CloudKitService.userRecordID(userId: currentUserId)
-        guard let managerRecord = try await service.fetchRecord(with: managerRecordID),
-              managerRecord.bool(CKSchema.UserField.isActive, default: true) else {
-            throw CloudKitClientError.missingRecord("Manager profile is unavailable.")
+        let managerProfile = try await currentUserProfile(userId: currentUserId)
+        if let managerProfile {
+            guard managerProfile.role == .manager else {
+                throw CloudKitClientError.unauthorized
+            }
+            guard managerProfile.isActive else {
+                throw CloudKitClientError.invalidData("Your manager account is inactive.")
+            }
         }
 
         let storeId = UUID().uuidString
         let joinCode = Self.generateJoinCode()
         let joinCodeHash = CloudKitService.stableHash(normalizeJoinCode(joinCode))
         let now = Date()
-
-        let storeRecordID = CloudKitService.storeRecordID(storeId: storeId)
-        let record = CKRecord(recordType: CKSchema.RecordType.store, recordID: storeRecordID)
-        record[CKSchema.StoreField.storeId] = storeId as CKRecordValue
-        record[CKSchema.StoreField.managerUserId] = currentUserId as CKRecordValue
-        record[CKSchema.StoreField.managerUserRef] = CKRecord.Reference(recordID: managerRecordID, action: .none)
-        record[CKSchema.StoreField.name] = name.trimmingCharacters(in: .whitespacesAndNewlines) as CKRecordValue
-        record[CKSchema.StoreField.address] = address.trimmingCharacters(in: .whitespacesAndNewlines) as CKRecordValue
-        record[CKSchema.StoreField.latitude] = NSNumber(value: latitude)
-        record[CKSchema.StoreField.longitude] = NSNumber(value: longitude)
-        record[CKSchema.StoreField.radiusMeters] = NSNumber(value: radiusMeters)
-        record[CKSchema.StoreField.joinCode] = joinCode as CKRecordValue
-        record[CKSchema.StoreField.joinCodeHash] = joinCodeHash as CKRecordValue
-        record[CKSchema.StoreField.joinCodeLast4] = String(joinCode.suffix(4)) as CKRecordValue
-        record[CKSchema.StoreField.isActive] = NSNumber(value: true)
-        record[CKSchema.StoreField.createdAt] = now as CKRecordValue
-        record[CKSchema.StoreField.updatedAt] = now as CKRecordValue
-
-        _ = try await service.save(record: record)
-
         let store = Store(
             id: storeId,
             name: name,
@@ -188,6 +204,19 @@ final class CloudKitStoreRepository: StoreRepositoryProtocol {
             joinCodeLast4: String(joinCode.suffix(4))
         )
 
+        let record = CKRecord(recordType: CKSchema.RecordType.store, recordID: CloudKitService.storeRecordID(storeId: storeId))
+        populateStoreRecord(
+            record,
+            store: store,
+            joinCode: joinCode,
+            joinCodeHash: joinCodeHash,
+            managerPublicRecordID: nil
+        )
+
+        _ = try await service.save(record: record, in: service.privateDB)
+        await mirrorStoreRecordBestEffort(record, context: "createStore")
+        await syncManagerOwnedStoreIdsBestEffort(managerId: currentUserId, storeId: store.id, isAdding: true, context: "createStore")
+
         return StoreCreationResult(store: store, joinCode: joinCode)
     }
 
@@ -195,14 +224,7 @@ final class CloudKitStoreRepository: StoreRepositoryProtocol {
         try await service.ensureCloudKitAvailable()
 
         let currentUserId = try service.requireCurrentUserId()
-        let storeRecordID = CloudKitService.storeRecordID(storeId: storeId)
-        guard let record = try await service.fetchRecord(with: storeRecordID) else {
-            throw CloudKitClientError.missingRecord("Store not found.")
-        }
-
-        guard record.string(CKSchema.StoreField.managerUserId) == currentUserId else {
-            throw CloudKitClientError.unauthorized
-        }
+        let record = try await fetchManagerCanonicalStoreRecord(storeId: storeId, expectedManagerId: currentUserId)
 
         let newCode = Self.generateJoinCode()
         record[CKSchema.StoreField.joinCode] = newCode as CKRecordValue
@@ -210,7 +232,8 @@ final class CloudKitStoreRepository: StoreRepositoryProtocol {
         record[CKSchema.StoreField.joinCodeLast4] = String(newCode.suffix(4)) as CKRecordValue
         record[CKSchema.StoreField.updatedAt] = Date() as CKRecordValue
 
-        _ = try await service.save(record: record)
+        _ = try await service.save(record: record, in: service.privateDB)
+        await mirrorStoreRecordBestEffort(record, context: "rotateStoreCode")
         return newCode
     }
 
@@ -218,14 +241,7 @@ final class CloudKitStoreRepository: StoreRepositoryProtocol {
         try await service.ensureCloudKitAvailable()
 
         let currentUserId = try service.requireCurrentUserId()
-        let storeRecordID = CloudKitService.storeRecordID(storeId: storeId)
-        guard let record = try await service.fetchRecord(with: storeRecordID) else {
-            throw CloudKitClientError.missingRecord("Store not found.")
-        }
-
-        guard record.string(CKSchema.StoreField.managerUserId) == currentUserId else {
-            throw CloudKitClientError.unauthorized
-        }
+        let record = try await fetchManagerCanonicalStoreRecord(storeId: storeId, expectedManagerId: currentUserId)
 
         if let existing = record.string(CKSchema.StoreField.joinCode), !existing.isEmpty {
             return existing
@@ -243,9 +259,7 @@ final class CloudKitStoreRepository: StoreRepositoryProtocol {
         }
 
         let currentUserId = try service.requireCurrentUserId()
-        let userRecordID = CloudKitService.userRecordID(userId: currentUserId)
-        guard let userRecord = try await service.fetchRecord(with: userRecordID),
-              let userProfile = decodeUserProfile(record: userRecord) else {
+        guard let userProfile = try await currentUserProfile(userId: currentUserId) else {
             throw CloudKitClientError.missingRecord("Your profile is missing. Sign in again.")
         }
 
@@ -282,7 +296,13 @@ final class CloudKitStoreRepository: StoreRepositoryProtocol {
         membership[CKSchema.StoreMemberField.storeId] = store.id as CKRecordValue
         membership[CKSchema.StoreMemberField.storeRef] = CKRecord.Reference(recordID: storeRecord.recordID, action: .none)
         membership[CKSchema.StoreMemberField.employeeUserId] = currentUserId as CKRecordValue
-        membership[CKSchema.StoreMemberField.employeeUserRef] = CKRecord.Reference(recordID: userRecordID, action: .none)
+
+        if let publicUserRecordID = await userProfileStore.resolvePublicUserRecordID(userId: currentUserId) {
+            membership[CKSchema.StoreMemberField.employeeUserRef] = CKRecord.Reference(recordID: publicUserRecordID, action: .none)
+        } else {
+            membership[CKSchema.StoreMemberField.employeeUserRef] = nil
+        }
+
         membership[CKSchema.StoreMemberField.employeeName] = userProfile.name as CKRecordValue
         if let email = userProfile.email, !email.isEmpty {
             membership[CKSchema.StoreMemberField.employeeEmail] = email as CKRecordValue
@@ -293,18 +313,19 @@ final class CloudKitStoreRepository: StoreRepositoryProtocol {
         }
         membership[CKSchema.StoreMemberField.updatedAt] = Date() as CKRecordValue
 
-        var assignedStoreIds = Set(userProfile.assignedStoreIds)
-        assignedStoreIds.insert(store.id)
-        userRecord[CKSchema.UserField.assignedStoreIds] = Array(assignedStoreIds).sorted() as CKRecordValue
-        userRecord[CKSchema.UserField.updatedAt] = Date() as CKRecordValue
+        let previousAssignedStoreIds = Set(userProfile.assignedStoreIds)
+        var updatedProfile = userProfile
+        updatedProfile.assignedStoreIds = Array(previousAssignedStoreIds.union([store.id])).sorted()
+        updatedProfile.lastLoginAt = Date()
 
-        _ = try await service.modify(recordsToSave: [membership, userRecord])
+        _ = try await service.save(record: membership)
+        await persistProfileBestEffort(updatedProfile, deletedAt: nil, context: "joinStoreByCode")
 
         return JoinStoreResult(
             storeId: store.id,
             storeName: store.name,
             alreadyJoined: alreadyJoined,
-            assignedStoreIds: Array(assignedStoreIds).sorted()
+            assignedStoreIds: updatedProfile.assignedStoreIds
         )
     }
 
@@ -319,18 +340,9 @@ final class CloudKitStoreRepository: StoreRepositoryProtocol {
 
         membership[CKSchema.StoreMemberField.status] = CKSchema.MemberStatus.removed as CKRecordValue
         membership[CKSchema.StoreMemberField.updatedAt] = Date() as CKRecordValue
+        _ = try await service.save(record: membership)
 
-        let userRecordID = CloudKitService.userRecordID(userId: currentUserId)
-        let userRecord = try await service.fetchRecord(with: userRecordID)
-        if let userRecord {
-            var assignedStoreIds = Set(userRecord.stringArray(CKSchema.UserField.assignedStoreIds))
-            assignedStoreIds.remove(storeId)
-            userRecord[CKSchema.UserField.assignedStoreIds] = Array(assignedStoreIds).sorted() as CKRecordValue
-            userRecord[CKSchema.UserField.updatedAt] = Date() as CKRecordValue
-            _ = try await service.modify(recordsToSave: [membership, userRecord])
-        } else {
-            _ = try await service.save(record: membership)
-        }
+        await recomputeAssignedStoresBestEffort(for: currentUserId, context: "leaveStore")
     }
 
     private func recomputeAssignedStores(for employeeId: String) async throws {
@@ -352,13 +364,305 @@ final class CloudKitStoreRepository: StoreRepositoryProtocol {
             activeStoreIds.append(storeId)
         }
 
-        guard let userRecord = try await service.fetchRecord(with: CloudKitService.userRecordID(userId: employeeId)) else {
-            return
+        let existingProfile = try await resolveAnyProfile(userId: employeeId)
+        let fallbackName = existingProfile?.name ?? "Employee"
+        let fallbackEmail = existingProfile?.email
+        let fallbackRole = existingProfile?.role ?? .employee
+
+        var profile = try await userProfileStore.canonicalProfileEnsuringSeed(
+            userId: employeeId,
+            role: fallbackRole,
+            provider: existingProfile?.provider ?? "apple",
+            fallbackName: fallbackName,
+            fallbackEmail: fallbackEmail
+        )
+
+        profile.assignedStoreIds = Array(Set(activeStoreIds)).sorted()
+        profile.lastLoginAt = Date()
+
+        _ = try await userProfileStore.upsertCanonicalProfile(profile, deletedAt: nil)
+        await userProfileStore.upsertPublicProfileBestEffort(profile, deletedAt: nil)
+    }
+
+    private func recomputeAssignedStoresBestEffort(for employeeId: String, context: String) async {
+        do {
+            try await recomputeAssignedStores(for: employeeId)
+        } catch {
+            AppLog.warning(
+                "Assigned store sync skipped context=\(context) user=\(AppLog.redactIdentifier(employeeId)): \(AppLog.sanitize(error.localizedDescription))"
+            )
+        }
+    }
+
+    private func persistProfileBestEffort(_ profile: UserProfile, deletedAt: Date?, context: String) async {
+        do {
+            _ = try await userProfileStore.upsertCanonicalProfile(profile, deletedAt: deletedAt)
+        } catch {
+            AppLog.warning(
+                "Canonical profile sync skipped context=\(context) user=\(AppLog.redactIdentifier(profile.id)): \(AppLog.sanitize(error.localizedDescription))"
+            )
+        }
+        await userProfileStore.upsertPublicProfileBestEffort(profile, deletedAt: deletedAt)
+    }
+
+    private func currentUserProfile(userId: String) async throws -> UserProfile? {
+        if let currentUser = authService.currentUser, currentUser.id == userId {
+            return currentUser
+        }
+        return try await resolveAnyProfile(userId: userId)
+    }
+
+    private func resolveAnyProfile(userId: String) async throws -> UserProfile? {
+        if let canonical = try await userProfileStore.fetchCanonicalProfile(userId: userId) {
+            return canonical
+        }
+        return try await userProfileStore.fetchPublicProfile(userId: userId)
+    }
+
+    private func fetchManagerStoresViaProfileIDs(managerId: String) async -> [Store] {
+        do {
+            guard let profile = try await currentUserProfile(userId: managerId) else {
+                return []
+            }
+
+            let fallbackStoreIds = Array(Set(profile.assignedStoreIds)).sorted()
+            guard !fallbackStoreIds.isEmpty else {
+                return []
+            }
+
+            var resolvedStores: [Store] = []
+            for storeId in fallbackStoreIds {
+                if let store = await fetchManagerStoreByID(storeId: storeId, managerId: managerId) {
+                    resolvedStores.append(store)
+                }
+            }
+
+            return resolvedStores.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        } catch {
+            AppLog.warning("Manager profile ID fallback failed for manager=\(AppLog.redactIdentifier(managerId)): \(AppLog.sanitize(error.localizedDescription))")
+            return []
+        }
+    }
+
+    private func fetchManagerStoreByID(storeId: String, managerId: String) async -> Store? {
+        let recordID = CloudKitService.storeRecordID(storeId: storeId)
+
+        do {
+            if let privateRecord = try await service.fetchRecord(with: recordID, in: service.privateDB),
+               let store = decodeStore(record: privateRecord),
+               store.isActive,
+               store.managerId == managerId {
+                return store
+            }
+        } catch {
+            if !isRecoverableManagerStoreError(error) {
+                AppLog.warning("Private manager store ID fetch failed store=\(storeId): \(AppLog.sanitize(error.localizedDescription))")
+            }
         }
 
-        userRecord[CKSchema.UserField.assignedStoreIds] = Array(Set(activeStoreIds)).sorted() as CKRecordValue
-        userRecord[CKSchema.UserField.updatedAt] = Date() as CKRecordValue
-        _ = try await service.save(record: userRecord)
+        do {
+            if let publicRecord = try await service.fetchRecord(with: recordID),
+               let store = decodeStore(record: publicRecord),
+               store.isActive,
+               store.managerId == managerId {
+                return store
+            }
+        } catch {
+            if !isRecoverableManagerStoreError(error) {
+                AppLog.warning("Public manager store ID fetch failed store=\(storeId): \(AppLog.sanitize(error.localizedDescription))")
+            }
+        }
+
+        return nil
+    }
+
+    private func queryManagerStores(managerId: String, in database: CKDatabase) async throws -> [Store] {
+        let predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [
+            NSPredicate(format: "%K == %@", CKSchema.StoreField.managerUserId, managerId),
+            NSPredicate(format: "%K == %@", CKSchema.StoreField.isActive, NSNumber(value: true))
+        ])
+
+        let records = try await service.queryRecords(
+            recordType: CKSchema.RecordType.store,
+            predicate: predicate,
+            sortDescriptors: [NSSortDescriptor(key: CKSchema.StoreField.name, ascending: true)],
+            in: database
+        )
+
+        return records.compactMap(decodeStore(record:))
+    }
+
+    private func mergeStores(preferred: [Store], fallback: [Store]) -> [Store] {
+        var mergedById = Dictionary(uniqueKeysWithValues: fallback.map { ($0.id, $0) })
+        for store in preferred {
+            mergedById[store.id] = store
+        }
+
+        return mergedById.values.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    private func fetchManagerCanonicalStoreRecord(storeId: String, expectedManagerId: String) async throws -> CKRecord {
+        let recordID = CloudKitService.storeRecordID(storeId: storeId)
+
+        if let privateRecord = try await service.fetchRecord(with: recordID, in: service.privateDB) {
+            guard privateRecord.string(CKSchema.StoreField.managerUserId) == expectedManagerId else {
+                throw CloudKitClientError.unauthorized
+            }
+            return privateRecord
+        }
+
+        do {
+            if let publicRecord = try await service.fetchRecord(with: recordID) {
+                guard publicRecord.string(CKSchema.StoreField.managerUserId) == expectedManagerId else {
+                    throw CloudKitClientError.unauthorized
+                }
+
+                let privateRecord = cloneStoreRecord(publicRecord, includeManagerReference: false, managerPublicRecordID: nil)
+                _ = try await service.save(record: privateRecord, in: service.privateDB)
+                return privateRecord
+            }
+        } catch {
+            guard isRecoverableManagerStoreError(error) else {
+                throw error
+            }
+            AppLog.warning("Public canonical store fetch failed for store=\(storeId): \(AppLog.sanitize(error.localizedDescription))")
+        }
+
+        throw CloudKitClientError.missingRecord("Store not found.")
+    }
+
+    private func populateStoreRecord(
+        _ record: CKRecord,
+        store: Store,
+        joinCode: String?,
+        joinCodeHash: String?,
+        managerPublicRecordID: CKRecord.ID?
+    ) {
+        record[CKSchema.StoreField.storeId] = store.id as CKRecordValue
+        if let managerId = store.managerId {
+            record[CKSchema.StoreField.managerUserId] = managerId as CKRecordValue
+        }
+
+        if let managerPublicRecordID {
+            record[CKSchema.StoreField.managerUserRef] = CKRecord.Reference(recordID: managerPublicRecordID, action: .none)
+        } else {
+            record[CKSchema.StoreField.managerUserRef] = nil
+        }
+
+        record[CKSchema.StoreField.name] = store.name.trimmingCharacters(in: .whitespacesAndNewlines) as CKRecordValue
+        record[CKSchema.StoreField.address] = store.address.trimmingCharacters(in: .whitespacesAndNewlines) as CKRecordValue
+        record[CKSchema.StoreField.latitude] = NSNumber(value: store.latitude)
+        record[CKSchema.StoreField.longitude] = NSNumber(value: store.longitude)
+        record[CKSchema.StoreField.radiusMeters] = NSNumber(value: store.radiusMeters)
+        record[CKSchema.StoreField.isActive] = NSNumber(value: store.isActive)
+        if let joinCode, !joinCode.isEmpty {
+            record[CKSchema.StoreField.joinCode] = joinCode as CKRecordValue
+            record[CKSchema.StoreField.joinCodeLast4] = String(joinCode.suffix(4)) as CKRecordValue
+        }
+        if let joinCodeHash, !joinCodeHash.isEmpty {
+            record[CKSchema.StoreField.joinCodeHash] = joinCodeHash as CKRecordValue
+        }
+        if let createdAt = store.createdAt ?? record.date(CKSchema.StoreField.createdAt) {
+            record[CKSchema.StoreField.createdAt] = createdAt as CKRecordValue
+        }
+        record[CKSchema.StoreField.updatedAt] = (store.updatedAt ?? Date()) as CKRecordValue
+        if store.isActive {
+            record[CKSchema.StoreField.deletedAt] = nil
+        }
+    }
+
+    private func cloneStoreRecord(
+        _ record: CKRecord,
+        includeManagerReference: Bool,
+        managerPublicRecordID: CKRecord.ID?
+    ) -> CKRecord {
+        let copy = CKRecord(recordType: CKSchema.RecordType.store, recordID: record.recordID)
+        for key in [
+            CKSchema.StoreField.storeId,
+            CKSchema.StoreField.managerUserId,
+            CKSchema.StoreField.name,
+            CKSchema.StoreField.address,
+            CKSchema.StoreField.latitude,
+            CKSchema.StoreField.longitude,
+            CKSchema.StoreField.radiusMeters,
+            CKSchema.StoreField.joinCodeHash,
+            CKSchema.StoreField.joinCode,
+            CKSchema.StoreField.joinCodeLast4,
+            CKSchema.StoreField.isActive,
+            CKSchema.StoreField.createdAt,
+            CKSchema.StoreField.updatedAt,
+            CKSchema.StoreField.deletedAt
+        ] {
+            copy[key] = record[key]
+        }
+        if includeManagerReference, let managerPublicRecordID {
+            copy[CKSchema.StoreField.managerUserRef] = CKRecord.Reference(recordID: managerPublicRecordID, action: .none)
+        } else {
+            copy[CKSchema.StoreField.managerUserRef] = nil
+        }
+        return copy
+    }
+
+    private func seedPrivateStoresBestEffort(_ stores: [Store]) async {
+        guard !stores.isEmpty else { return }
+
+        for store in stores {
+            let record = CKRecord(recordType: CKSchema.RecordType.store, recordID: CloudKitService.storeRecordID(storeId: store.id))
+            populateStoreRecord(
+                record,
+                store: store,
+                joinCode: store.resolvedJoinCode,
+                joinCodeHash: store.resolvedJoinCode.map { CloudKitService.stableHash(normalizeJoinCode($0)) },
+                managerPublicRecordID: nil
+            )
+
+            do {
+                _ = try await service.save(record: record, in: service.privateDB)
+            } catch {
+                AppLog.warning("Private manager store seed skipped for store=\(store.id): \(AppLog.sanitize(error.localizedDescription))")
+            }
+        }
+    }
+
+    private func mirrorStoreRecordBestEffort(_ record: CKRecord, context: String) async {
+        let managerPublicRecordID: CKRecord.ID?
+        if let managerUserId = record.string(CKSchema.StoreField.managerUserId) {
+            managerPublicRecordID = await userProfileStore.resolvePublicUserRecordID(userId: managerUserId)
+        } else {
+            managerPublicRecordID = nil
+        }
+
+        let publicRecord = cloneStoreRecord(
+            record,
+            includeManagerReference: managerPublicRecordID != nil,
+            managerPublicRecordID: managerPublicRecordID
+        )
+        do {
+            _ = try await service.save(record: publicRecord, in: service.publicDB)
+        } catch {
+            AppLog.warning("Public store mirror skipped context=\(context) store=\(record.recordID.recordName): \(AppLog.sanitize(error.localizedDescription))")
+        }
+    }
+
+    private func isRecoverableManagerStoreError(_ error: Error) -> Bool {
+        if let clientError = error as? CloudKitClientError,
+           case .unauthorized = clientError {
+            return true
+        }
+
+        if let ckError = error as? CKError {
+            switch ckError.code {
+            case .permissionFailure, .unknownItem, .invalidArguments, .serverRejectedRequest, .partialFailure:
+                return true
+            default:
+                break
+            }
+        }
+
+        let description = error.localizedDescription.lowercased()
+        return description.contains("record type") ||
+            description.contains("schema") ||
+            description.contains("unknown field")
     }
 
     private func validateStore(name: String, address: String, latitude: Double, longitude: Double, radiusMeters: Int) throws {
@@ -388,8 +692,46 @@ final class CloudKitStoreRepository: StoreRepositoryProtocol {
             .uppercased()
     }
 
+    private func syncManagerOwnedStoreIdsBestEffort(managerId: String, storeId: String, isAdding: Bool, context: String) async {
+        do {
+            guard var profile = try await currentUserProfile(userId: managerId) else {
+                return
+            }
+
+            var ownedStoreIds = Set(profile.assignedStoreIds)
+            if isAdding {
+                ownedStoreIds.insert(storeId)
+            } else {
+                ownedStoreIds.remove(storeId)
+            }
+
+            profile.assignedStoreIds = ownedStoreIds.sorted()
+            profile.lastLoginAt = Date()
+
+            try await persistCanonicalProfile(profile, deletedAt: nil, context: context)
+        } catch {
+            AppLog.warning("Manager owned store sync skipped context=\(context) manager=\(AppLog.redactIdentifier(managerId)): \(AppLog.sanitize(error.localizedDescription))")
+        }
+    }
+
+    private func persistCanonicalProfile(_ profile: UserProfile, deletedAt: Date?, context: String) async throws {
+        let savedProfile = try await userProfileStore.upsertCanonicalProfile(profile, deletedAt: deletedAt)
+        if authService.currentUser?.id == savedProfile.id {
+            authService.setCurrentUser(savedProfile)
+        }
+        await userProfileStore.upsertPublicProfileBestEffort(savedProfile, deletedAt: deletedAt)
+        AppLog.info("Canonical profile persisted context=\(context) user=\(AppLog.redactIdentifier(savedProfile.id))")
+    }
+
     private static func generateJoinCode() -> String {
         let alphabet = Array("ABCDEFGHJKLMNPQRSTUVWXYZ23456789")
         return String((0..<8).map { _ in alphabet.randomElement()! })
+    }
+}
+
+private extension Optional where Wrapped == String {
+    func flatMapAsync<T>(_ transform: (String) async -> T?) async -> T? {
+        guard let value = self else { return nil }
+        return await transform(value)
     }
 }

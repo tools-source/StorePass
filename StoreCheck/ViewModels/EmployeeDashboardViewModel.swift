@@ -81,7 +81,8 @@ final class EmployeeDashboardViewModel: ObservableObject {
         guard let user = authService.currentUser else { return }
 
         do {
-            stores = try await storeRepository.fetchStores(ids: user.assignedStoreIds)
+            let preferredStoreIds = user.assignedStoreIds.isEmpty ? nil : user.assignedStoreIds
+            stores = try await storeRepository.fetchStores(ids: preferredStoreIds)
             if let current = selectedStore, stores.contains(where: { $0.id == current.id }) {
                 selectedStore = current
             } else {

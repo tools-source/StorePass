@@ -17,7 +17,6 @@ final class CheckInService: CheckInServiceProtocol {
     func evaluateLocation(for store: Store, user: UserProfile?) -> LocationCheckState {
         guard let user else { return .unknown }
         guard user.isActive else { return .permissionDenied }
-        guard !user.assignedStoreIds.isEmpty else { return .locationUnavailable }
 
         let auth = locationService.authorizationStatus
         guard auth == .authorizedWhenInUse || auth == .authorizedAlways else { return .permissionDenied }

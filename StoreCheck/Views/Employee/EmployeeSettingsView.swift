@@ -3,12 +3,15 @@ import SwiftUI
 
 struct AccountSettingsView: View {
     @EnvironmentObject private var authViewModel: AuthViewModel
+    @EnvironmentObject private var appContainer: AppContainer
 
     @State private var editedName = ""
     @State private var isSavingName = false
     @State private var showDeleteConfirmation = false
     @State private var isDeletingAccount = false
     @State private var cloudStatusMessage = "Checking iCloud status..."
+    @State private var diagnosticsMessage = ""
+    @State private var isRunningDiagnostics = false
 
     var body: some View {
         NavigationStack {
@@ -92,6 +95,32 @@ struct AccountSettingsView: View {
                     .font(DS.Typography.caption)
                     .foregroundStyle(DS.Colors.textSecondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
+
+                #if DEBUG
+                Divider()
+
+                Text("CloudKit Diagnostics")
+                    .font(DS.Typography.headline)
+                    .foregroundStyle(DS.Colors.textPrimary)
+
+                Text("Container: \(appContainer.cloudKitService.container.containerIdentifier ?? "default")")
+                    .font(DS.Typography.caption)
+                    .foregroundStyle(DS.Colors.textSecondary)
+
+                Button(isRunningDiagnostics ? "Running diagnostics..." : "Run Diagnostics") {
+                    Task { await runDiagnostics() }
+                }
+                .buttonStyle(PrimaryButtonStyle())
+                .disabled(isRunningDiagnostics)
+
+                if !diagnosticsMessage.isEmpty {
+                    Text(diagnosticsMessage)
+                        .font(.system(size: 12, weight: .regular, design: .monospaced))
+                        .foregroundStyle(DS.Colors.textSecondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
+                }
+                #endif
             }
         }
     }
@@ -166,6 +195,82 @@ struct AccountSettingsView: View {
             }
         } catch {
             cloudStatusMessage = "Unable to check iCloud status right now."
+        }
+    }
+
+    private func runDiagnostics() async {
+        #if DEBUG
+        guard let user = authViewModel.currentUser else {
+            diagnosticsMessage = "No signed-in user."
+            return
+        }
+
+        isRunningDiagnostics = true
+        defer { isRunningDiagnostics = false }
+
+        var lines: [String] = []
+        lines.append("Container: \(appContainer.cloudKitService.container.containerIdentifier ?? "default")")
+        lines.append("User: \(AppLog.redactIdentifier(user.id))")
+
+        do {
+            let accountStatus = try await appContainer.cloudKitService.accountStatus()
+            lines.append("Account: \(accountStatusText(accountStatus))")
+        } catch {
+            lines.append("Account: FAIL (\(AppLog.sanitize(error.localizedDescription)))")
+        }
+
+        do {
+            let canonical = try await appContainer.userProfileStore.fetchCanonicalProfile(userId: user.id)
+            lines.append("Private read: \(canonical != nil ? "OK" : "MISSING")")
+
+            let probeProfile = canonical ?? user
+            _ = try await appContainer.userProfileStore.upsertCanonicalProfile(
+                probeProfile,
+                deletedAt: probeProfile.isActive ? nil : Date()
+            )
+            lines.append("Private write: OK")
+        } catch {
+            lines.append("Private write: FAIL (\(AppLog.sanitize(error.localizedDescription)))")
+        }
+
+        do {
+            let publicProfile = try await appContainer.userProfileStore.fetchPublicProfile(userId: user.id)
+            lines.append("Public read: \(publicProfile != nil ? "OK" : "UNAVAILABLE")")
+        } catch {
+            lines.append("Public read: FAIL (\(AppLog.sanitize(error.localizedDescription)))")
+        }
+
+        do {
+            _ = try await appContainer.userProfileStore.upsertPublicProfile(
+                user,
+                deletedAt: user.isActive ? nil : Date()
+            )
+            lines.append("Public write: OK")
+        } catch {
+            lines.append("Public write: FAIL (\(AppLog.sanitize(error.localizedDescription)))")
+        }
+
+        let publicRecordID = await appContainer.userProfileStore.resolvePublicUserRecordID(userId: user.id)
+        lines.append("Public user ref: \(publicRecordID == nil ? "UNAVAILABLE" : "AVAILABLE")")
+
+        diagnosticsMessage = lines.joined(separator: "\n")
+        #endif
+    }
+
+    private func accountStatusText(_ status: CKAccountStatus) -> String {
+        switch status {
+        case .available:
+            return "available"
+        case .noAccount:
+            return "noAccount"
+        case .restricted:
+            return "restricted"
+        case .couldNotDetermine:
+            return "couldNotDetermine"
+        case .temporarilyUnavailable:
+            return "temporarilyUnavailable"
+        @unknown default:
+            return "unknown"
         }
     }
 }

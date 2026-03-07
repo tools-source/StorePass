@@ -48,6 +48,7 @@ final class StoreManagementViewModel: ObservableObject {
                 longitude: longitude,
                 radiusMeters: radiusMeters
             )
+            upsertLocalStore(result.store)
             latestJoinCodesByStoreId[result.store.id] = result.joinCode
             showToast("Store created. Join code: \(result.joinCode)")
             storeError = nil
@@ -144,6 +145,15 @@ final class StoreManagementViewModel: ObservableObject {
 
     func clearStoreError() {
         storeError = nil
+    }
+
+    private func upsertLocalStore(_ store: Store) {
+        if let index = stores.firstIndex(where: { $0.id == store.id }) {
+            stores[index] = store
+        } else {
+            stores.append(store)
+        }
+        stores.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
     func showToast(_ message: String) {

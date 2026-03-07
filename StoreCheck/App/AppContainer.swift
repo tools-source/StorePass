@@ -4,6 +4,7 @@ import Foundation
 final class AppContainer: ObservableObject {
     let authService: AuthService
     let cloudKitService: CloudKitService
+    let userProfileStore: UserProfileStoreProtocol
 
     let authRepository: AuthRepositoryProtocol
     let userRepository: UserRepositoryProtocol
@@ -20,16 +21,18 @@ final class AppContainer: ObservableObject {
     init() {
         let authService = AuthService()
         let cloudKitService = CloudKitService(authService: authService)
-        let userRepository = CloudKitUserRepository(service: cloudKitService)
+        let userProfileStore = CloudKitUserProfileStore(service: cloudKitService)
+        let userRepository = CloudKitUserRepository(service: cloudKitService, profileStore: userProfileStore)
 
         self.authService = authService
         self.cloudKitService = cloudKitService
+        self.userProfileStore = userProfileStore
         self.authRepository = CloudKitAuthRepository(authService: authService)
         self.userRepository = userRepository
-        self.roleProfileRepository = CloudKitRoleProfileRepository(service: cloudKitService)
-        self.employeeManagementRepository = CloudKitEmployeeManagementRepository(service: cloudKitService)
-        self.storeRepository = CloudKitStoreRepository(service: cloudKitService)
-        self.checkInRepository = CloudKitCheckInRepository(service: cloudKitService)
+        self.roleProfileRepository = CloudKitRoleProfileRepository(service: cloudKitService, profileStore: userProfileStore)
+        self.employeeManagementRepository = CloudKitEmployeeManagementRepository(service: cloudKitService, profileStore: userProfileStore)
+        self.storeRepository = CloudKitStoreRepository(service: cloudKitService, authService: authService, userProfileStore: userProfileStore)
+        self.checkInRepository = CloudKitCheckInRepository(service: cloudKitService, userProfileStore: userProfileStore)
 
         let locationService = LocationService()
         self.locationService = locationService

@@ -556,7 +556,7 @@
 				BEEFABCD1234000000000065 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
-			defaultConfigurationName = Release;
+			defaultConfigurationName = Debug;
 		};
 		BEEFABCD1234000000000061 /* Build configuration list for PBXNativeTarget "StoreCheck" */ = {
 			isa = XCConfigurationList;
@@ -565,10 +565,9 @@
 				BEEFABCD1234000000000063 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
-			defaultConfigurationName = Release;
+			defaultConfigurationName = Debug;
 		};
 /* End XCConfigurationList section */
-
 	};
 	rootObject = BEEFABCD123400000000004F /* Project object */;
 }

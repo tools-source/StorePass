@@ -184,6 +184,7 @@ final class CloudKitService {
 
     func ensureCloudKitAvailable() async throws {
         let status = try await accountStatus()
+        AppLog.info("CloudKit account status=\(accountStatusName(status))")
         guard status == .available else {
             throw CloudKitClientError.iCloudUnavailable
         }
@@ -203,16 +204,25 @@ final class CloudKitService {
 
     func fetchRecord(with id: CKRecord.ID, in database: CKDatabase? = nil) async throws -> CKRecord? {
         let db = database ?? publicDB
+        let scope = databaseScopeName(db)
+        AppLog.info("CloudKit fetchRecord started scope=\(scope) recordID=\(id.recordName)")
         return try await withCheckedThrowingContinuation { continuation in
             db.fetch(withRecordID: id) { record, error in
                 if let ckError = error as? CKError, ckError.code == .unknownItem {
+                    AppLog.info("CloudKit fetchRecord missing item scope=\(scope) recordID=\(id.recordName)")
                     continuation.resume(returning: nil)
                     return
                 }
                 if let error {
-                    continuation.resume(throwing: self.mapCloudKitError(error))
+                    continuation.resume(
+                        throwing: self.mapCloudKitError(
+                            error,
+                            context: "fetchRecord scope=\(scope) recordID=\(id.recordName)"
+                        )
+                    )
                     return
                 }
+                AppLog.info("CloudKit fetchRecord success scope=\(scope) recordID=\(id.recordName)")
                 continuation.resume(returning: record)
             }
         }
@@ -220,16 +230,28 @@ final class CloudKitService {
 
     func save(record: CKRecord, in database: CKDatabase? = nil) async throws -> CKRecord {
         let db = database ?? publicDB
+        let scope = databaseScopeName(db)
+        AppLog.info(
+            "CloudKit save started scope=\(scope) type=\(record.recordType) recordID=\(record.recordID.recordName)"
+        )
         return try await withCheckedThrowingContinuation { continuation in
             db.save(record) { saved, error in
                 if let error {
-                    continuation.resume(throwing: self.mapCloudKitError(error))
+                    continuation.resume(
+                        throwing: self.mapCloudKitError(
+                            error,
+                            context: "save scope=\(scope) type=\(record.recordType) recordID=\(record.recordID.recordName)"
+                        )
+                    )
                     return
                 }
                 guard let saved else {
                     continuation.resume(throwing: CloudKitClientError.invalidData("CloudKit did not return a saved record."))
                     return
                 }
+                AppLog.info(
+                    "CloudKit save success scope=\(scope) type=\(saved.recordType) recordID=\(saved.recordID.recordName)"
+                )
                 continuation.resume(returning: saved)
             }
         }
@@ -237,16 +259,25 @@ final class CloudKitService {
 
     func deleteRecord(with id: CKRecord.ID, in database: CKDatabase? = nil) async throws {
         let db = database ?? publicDB
+        let scope = databaseScopeName(db)
+        AppLog.info("CloudKit delete started scope=\(scope) recordID=\(id.recordName)")
         _ = try await withCheckedThrowingContinuation { continuation in
             db.delete(withRecordID: id) { _, error in
                 if let ckError = error as? CKError, ckError.code == .unknownItem {
+                    AppLog.info("CloudKit delete ignored unknown item scope=\(scope) recordID=\(id.recordName)")
                     continuation.resume(returning: ())
                     return
                 }
                 if let error {
-                    continuation.resume(throwing: self.mapCloudKitError(error))
+                    continuation.resume(
+                        throwing: self.mapCloudKitError(
+                            error,
+                            context: "deleteRecord scope=\(scope) recordID=\(id.recordName)"
+                        )
+                    )
                     return
                 }
+                AppLog.info("CloudKit delete success scope=\(scope) recordID=\(id.recordName)")
                 continuation.resume(returning: ())
             }
         }
@@ -260,15 +291,27 @@ final class CloudKitService {
         in database: CKDatabase? = nil
     ) async throws -> ([CKRecord], [CKRecord.ID]) {
         let db = database ?? publicDB
+        let scope = databaseScopeName(db)
+        AppLog.info(
+            "CloudKit modify started scope=\(scope) saves=\(recordsToSave.count) deletes=\(recordIDsToDelete.count) atomic=\(atomic)"
+        )
         return try await withCheckedThrowingContinuation { continuation in
             let operation = CKModifyRecordsOperation(recordsToSave: recordsToSave, recordIDsToDelete: recordIDsToDelete)
             operation.savePolicy = savePolicy
             operation.isAtomic = atomic
             operation.modifyRecordsCompletionBlock = { savedRecords, deletedRecordIDs, error in
                 if let error {
-                    continuation.resume(throwing: self.mapCloudKitError(error))
+                    continuation.resume(
+                        throwing: self.mapCloudKitError(
+                            error,
+                            context: "modify scope=\(scope) saves=\(recordsToSave.count) deletes=\(recordIDsToDelete.count) atomic=\(atomic)"
+                        )
+                    )
                     return
                 }
+                AppLog.info(
+                    "CloudKit modify success scope=\(scope) saved=\(savedRecords?.count ?? 0) deleted=\(deletedRecordIDs?.count ?? 0)"
+                )
                 continuation.resume(returning: (savedRecords ?? [], deletedRecordIDs ?? []))
             }
             db.add(operation)
@@ -285,6 +328,9 @@ final class CloudKitService {
         let query = CKQuery(recordType: recordType, predicate: predicate)
         query.sortDescriptors = sortDescriptors
         let db = database ?? publicDB
+        AppLog.info(
+            "CloudKit query started scope=\(databaseScopeName(db)) type=\(recordType) limit=\(resultsLimit) predicate=\(AppLog.sanitize(predicate.predicateFormat))"
+        )
         return try await queryRecords(query: query, resultsLimit: resultsLimit, in: db)
     }
 
@@ -295,6 +341,9 @@ final class CloudKitService {
     ) async throws -> [CKRecord] {
         var allRecords: [CKRecord] = []
         var nextCursor: CKQueryOperation.Cursor?
+        AppLog.info(
+            "CloudKit queryRecords paging started scope=\(databaseScopeName(database)) type=\(query.recordType)"
+        )
 
         repeat {
             let (records, cursor) = try await fetchBatch(query: query, cursor: nextCursor, resultsLimit: resultsLimit, in: database)
@@ -302,6 +351,9 @@ final class CloudKitService {
             nextCursor = cursor
         } while nextCursor != nil
 
+        AppLog.info(
+            "CloudKit queryRecords paging finished scope=\(databaseScopeName(database)) type=\(query.recordType) total=\(allRecords.count)"
+        )
         return allRecords
     }
 
@@ -311,7 +363,8 @@ final class CloudKitService {
         resultsLimit: Int,
         in database: CKDatabase
     ) async throws -> ([CKRecord], CKQueryOperation.Cursor?) {
-        try await withCheckedThrowingContinuation { continuation in
+        let scope = databaseScopeName(database)
+        return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<([CKRecord], CKQueryOperation.Cursor?), Error>) in
             let operation: CKQueryOperation
             if let cursor {
                 operation = CKQueryOperation(cursor: cursor)
@@ -328,9 +381,17 @@ final class CloudKitService {
 
             operation.queryCompletionBlock = { nextCursor, error in
                 if let error {
-                    continuation.resume(throwing: self.mapCloudKitError(error))
+                    continuation.resume(
+                        throwing: self.mapCloudKitError(
+                            error,
+                            context: "queryBatch scope=\(scope) type=\(query.recordType) limit=\(resultsLimit)"
+                        )
+                    )
                     return
                 }
+                AppLog.info(
+                    "CloudKit query batch success scope=\(scope) type=\(query.recordType) fetched=\(fetchedRecords.count) hasMore=\(nextCursor != nil)"
+                )
                 continuation.resume(returning: (fetchedRecords, nextCursor))
             }
 
@@ -339,18 +400,26 @@ final class CloudKitService {
     }
 
     func saveSubscription(_ subscription: CKSubscription) async throws {
-        _ = try await withCheckedThrowingContinuation { continuation in
-            publicDB.save(subscription) { saved, error in
+        AppLog.info("CloudKit saveSubscription started id=\(subscription.subscriptionID)")
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            publicDB.save(subscription) { _, error in
                 if let ckError = error as? CKError, ckError.code == .serverRejectedRequest {
                     // Existing subscription IDs can return server-rejected on duplicate create; treat as success.
-                    continuation.resume(returning: saved as Any)
+                    AppLog.warning("CloudKit saveSubscription serverRejectedRequest treated as success id=\(subscription.subscriptionID)")
+                    continuation.resume(returning: ())
                     return
                 }
                 if let error {
-                    continuation.resume(throwing: self.mapCloudKitError(error))
+                    continuation.resume(
+                        throwing: self.mapCloudKitError(
+                            error,
+                            context: "saveSubscription id=\(subscription.subscriptionID)"
+                        )
+                    )
                     return
                 }
-                continuation.resume(returning: saved as Any)
+                AppLog.info("CloudKit saveSubscription success id=\(subscription.subscriptionID)")
+                continuation.resume(returning: ())
             }
         }
     }
@@ -387,8 +456,33 @@ final class CloudKitService {
         }
     }
 
-    func mapCloudKitError(_ error: Error) -> Error {
+    nonisolated func mapCloudKitError(_ error: Error) -> Error {
+        mapCloudKitError(error, context: nil)
+    }
+
+    nonisolated func mapCloudKitError(_ error: Error, context: String?) -> Error {
         guard let ckError = error as? CKError else { return error }
+
+        let nsError = ckError as NSError
+        var message = "CloudKit error mapped"
+        if let context {
+            message += " [\(context)]"
+        }
+        message += " code=\(ckError.code.rawValue) (\(ckError.code))"
+        message += " domain=\(nsError.domain)"
+        message += " message=\(AppLog.sanitize(ckError.localizedDescription))"
+        if let retryAfter = ckError.userInfo[CKErrorRetryAfterKey] as? TimeInterval {
+            message += " retryAfter=\(retryAfter)"
+        }
+        if ckError.code == .partialFailure,
+           let partial = ckError.userInfo[CKPartialErrorsByItemIDKey] as? [AnyHashable: Error] {
+            let partialCodes = partial.values.compactMap { ($0 as? CKError)?.code.rawValue }
+            message += " partialCount=\(partial.count)"
+            if !partialCodes.isEmpty {
+                message += " partialCodes=\(partialCodes)"
+            }
+        }
+        AppLog.warning(message)
 
         switch ckError.code {
         case .notAuthenticated:
@@ -401,6 +495,29 @@ final class CloudKitService {
             return NSError(domain: "StorePass", code: 9202, userInfo: [NSLocalizedDescriptionKey: "CloudKit is temporarily unavailable. Please retry."])
         default:
             return ckError
+        }
+    }
+
+    private func databaseScopeName(_ database: CKDatabase) -> String {
+        if database === privateDB { return "private" }
+        if database === publicDB { return "public" }
+        return "custom"
+    }
+
+    private func accountStatusName(_ status: CKAccountStatus) -> String {
+        switch status {
+        case .available:
+            return "available"
+        case .noAccount:
+            return "noAccount"
+        case .restricted:
+            return "restricted"
+        case .couldNotDetermine:
+            return "couldNotDetermine"
+        case .temporarilyUnavailable:
+            return "temporarilyUnavailable"
+        @unknown default:
+            return "unknown"
         }
     }
 
@@ -426,67 +543,519 @@ final class CloudKitService {
     }
 }
 
-final class CloudKitUserRepository: UserRepositoryProtocol {
+@MainActor
+protocol UserProfileStoreProtocol {
+    func fetchCanonicalProfile(userId: String) async throws -> UserProfile?
+    func fetchPublicProfile(userId: String) async throws -> UserProfile?
+    @discardableResult
+    func upsertCanonicalProfile(_ profile: UserProfile, deletedAt: Date?) async throws -> UserProfile
+    @discardableResult
+    func upsertPublicProfile(_ profile: UserProfile, deletedAt: Date?) async throws -> UserProfile
+    func upsertPublicProfileBestEffort(_ profile: UserProfile, deletedAt: Date?) async
+    func resolvePublicUserRecordID(userId: String) async -> CKRecord.ID?
+    func canonicalProfileEnsuringSeed(
+        userId: String,
+        role: UserRole,
+        provider: String,
+        fallbackName: String,
+        fallbackEmail: String?
+    ) async throws -> UserProfile
+}
+
+@MainActor
+final class CloudKitUserProfileStore: UserProfileStoreProtocol {
     private let service: CloudKitService
 
     init(service: CloudKitService) {
         self.service = service
     }
 
-    func fetchUser(id: String) async throws -> UserProfile? {
+    func fetchCanonicalProfile(userId: String) async throws -> UserProfile? {
         try await service.ensureCloudKitAvailable()
-        let recordID = CloudKitService.userRecordID(userId: id)
-        guard let record = try await service.fetchRecord(with: recordID) else {
+        AppLog.info("ProfileStore fetchCanonicalProfile started user=\(AppLog.redactIdentifier(userId))")
+        guard let record = try await fetchAnyUserRecord(
+            userId: userId,
+            in: service.privateDB,
+            tolerateLookupErrors: true,
+            suppressPermissionErrors: true
+        ) else {
+            AppLog.info("ProfileStore fetchCanonicalProfile result=missing user=\(AppLog.redactIdentifier(userId))")
             return nil
         }
+        let decoded = decodeUserProfile(record: record)
+        AppLog.info(
+            "ProfileStore fetchCanonicalProfile result=\(decoded == nil ? "decode_failed" : "found") user=\(AppLog.redactIdentifier(userId)) type=\(record.recordType)"
+        )
+        return decoded
+    }
 
-        return decodeUserProfile(record: record)
+    func fetchPublicProfile(userId: String) async throws -> UserProfile? {
+        try await service.ensureCloudKitAvailable()
+        AppLog.info("ProfileStore fetchPublicProfile started user=\(AppLog.redactIdentifier(userId))")
+        guard let record = try await fetchAnyUserRecord(
+            userId: userId,
+            in: service.publicDB,
+            tolerateLookupErrors: true,
+            suppressPermissionErrors: true
+        ) else {
+            AppLog.info("ProfileStore fetchPublicProfile result=missing user=\(AppLog.redactIdentifier(userId))")
+            return nil
+        }
+        let decoded = decodeUserProfile(record: record)
+        AppLog.info(
+            "ProfileStore fetchPublicProfile result=\(decoded == nil ? "decode_failed" : "found") user=\(AppLog.redactIdentifier(userId)) type=\(record.recordType)"
+        )
+        return decoded
+    }
+
+    @discardableResult
+    func upsertCanonicalProfile(_ profile: UserProfile, deletedAt: Date?) async throws -> UserProfile {
+        try await service.ensureCloudKitAvailable()
+        AppLog.info(
+            "ProfileStore upsertCanonicalProfile started user=\(AppLog.redactIdentifier(profile.id)) role=\(profile.role.rawValue) active=\(profile.isActive)"
+        )
+        let savedRecord = try await upsertProfile(
+            profile,
+            deletedAt: deletedAt,
+            in: service.privateDB,
+            preferredRecordType: CKSchema.RecordType.user,
+            fallbackToLegacyType: true
+        )
+        guard let savedProfile = decodeUserProfile(record: savedRecord) else {
+            throw CloudKitClientError.invalidData("Failed to decode canonical user profile.")
+        }
+        AppLog.info(
+            "ProfileStore upsertCanonicalProfile success user=\(AppLog.redactIdentifier(profile.id)) type=\(savedRecord.recordType)"
+        )
+        return savedProfile
+    }
+
+    @discardableResult
+    func upsertPublicProfile(_ profile: UserProfile, deletedAt: Date?) async throws -> UserProfile {
+        try await service.ensureCloudKitAvailable()
+        AppLog.info(
+            "ProfileStore upsertPublicProfile started user=\(AppLog.redactIdentifier(profile.id)) role=\(profile.role.rawValue) active=\(profile.isActive)"
+        )
+        let savedRecord = try await upsertProfile(
+            profile,
+            deletedAt: deletedAt,
+            in: service.publicDB,
+            preferredRecordType: CKSchema.RecordType.user,
+            fallbackToLegacyType: true
+        )
+        guard let savedProfile = decodeUserProfile(record: savedRecord) else {
+            throw CloudKitClientError.invalidData("Failed to decode mirrored public user profile.")
+        }
+        AppLog.info(
+            "ProfileStore upsertPublicProfile success user=\(AppLog.redactIdentifier(profile.id)) type=\(savedRecord.recordType)"
+        )
+        return savedProfile
+    }
+
+    func upsertPublicProfileBestEffort(_ profile: UserProfile, deletedAt: Date?) async {
+        AppLog.info("ProfileStore upsertPublicProfileBestEffort started user=\(AppLog.redactIdentifier(profile.id))")
+        do {
+            _ = try await upsertPublicProfile(profile, deletedAt: deletedAt)
+            AppLog.info("ProfileStore upsertPublicProfileBestEffort success user=\(AppLog.redactIdentifier(profile.id))")
+        } catch {
+            AppLog.warning(
+                "Public profile mirror skipped for user=\(AppLog.redactIdentifier(profile.id)): \(AppLog.sanitize(error.localizedDescription))"
+            )
+        }
+    }
+
+    func resolvePublicUserRecordID(userId: String) async -> CKRecord.ID? {
+        AppLog.info("ProfileStore resolvePublicUserRecordID started user=\(AppLog.redactIdentifier(userId))")
+        do {
+            guard let record = try await fetchAnyUserRecord(
+                userId: userId,
+                in: service.publicDB,
+                tolerateLookupErrors: true,
+                suppressPermissionErrors: true
+            ) else {
+                AppLog.info("ProfileStore resolvePublicUserRecordID result=missing user=\(AppLog.redactIdentifier(userId))")
+                return nil
+            }
+            AppLog.info("ProfileStore resolvePublicUserRecordID success user=\(AppLog.redactIdentifier(userId)) id=\(record.recordID.recordName)")
+            return record.recordID
+        } catch {
+            AppLog.warning(
+                "Unable to resolve public user record id for user=\(AppLog.redactIdentifier(userId)): \(AppLog.sanitize(error.localizedDescription))"
+            )
+            return nil
+        }
+    }
+
+    func canonicalProfileEnsuringSeed(
+        userId: String,
+        role: UserRole,
+        provider: String,
+        fallbackName: String,
+        fallbackEmail: String?
+    ) async throws -> UserProfile {
+        AppLog.info(
+            "ProfileStore canonicalProfileEnsuringSeed started user=\(AppLog.redactIdentifier(userId)) role=\(role.rawValue)"
+        )
+        if let canonical = try await fetchCanonicalProfile(userId: userId) {
+            AppLog.info("ProfileStore canonicalProfileEnsuringSeed used canonical profile for user=\(AppLog.redactIdentifier(userId))")
+            return canonical
+        }
+
+        if let publicProfile = try await fetchPublicProfile(userId: userId) {
+            AppLog.info("ProfileStore canonicalProfileEnsuringSeed backfilling from public profile for user=\(AppLog.redactIdentifier(userId))")
+            return try await upsertCanonicalProfile(publicProfile, deletedAt: nil)
+        }
+
+        let now = Date()
+        let seededProfile = UserProfile(
+            id: userId,
+            name: fallbackName,
+            email: normalizeEmail(fallbackEmail),
+            role: role,
+            createdAt: now,
+            lastLoginAt: now,
+            provider: provider,
+            assignedStoreIds: [],
+            isActive: true
+        )
+
+        AppLog.info("ProfileStore canonicalProfileEnsuringSeed creating new canonical seed for user=\(AppLog.redactIdentifier(userId))")
+        return try await upsertCanonicalProfile(seededProfile, deletedAt: nil)
+    }
+
+    private func upsertProfile(
+        _ profile: UserProfile,
+        deletedAt: Date?,
+        in database: CKDatabase,
+        preferredRecordType: String,
+        fallbackToLegacyType: Bool
+    ) async throws -> CKRecord {
+        let scope = databaseScopeName(database)
+        AppLog.info(
+            "ProfileStore upsertProfile started scope=\(scope) user=\(AppLog.redactIdentifier(profile.id)) preferredType=\(preferredRecordType)"
+        )
+        let existing = try await fetchAnyUserRecord(
+            userId: profile.id,
+            in: database,
+            tolerateLookupErrors: true,
+            suppressPermissionErrors: true
+        )
+
+        let recordID = CloudKitService.userRecordID(userId: profile.id)
+        if let existing {
+            AppLog.info(
+                "ProfileStore upsertProfile updating existing record scope=\(scope) type=\(existing.recordType) id=\(existing.recordID.recordName)"
+            )
+            let record = populate(record: existing, with: profile, deletedAt: deletedAt)
+            return try await service.save(record: record, in: database)
+        }
+
+        let primary = populate(
+            record: CKRecord(recordType: preferredRecordType, recordID: recordID),
+            with: profile,
+            deletedAt: deletedAt
+        )
+
+        do {
+            AppLog.info("ProfileStore upsertProfile creating primary type=\(preferredRecordType) scope=\(scope)")
+            return try await service.save(record: primary, in: database)
+        } catch let primaryError {
+            guard fallbackToLegacyType,
+                  preferredRecordType == CKSchema.RecordType.user,
+                  shouldFallbackToLegacyAfterPrimarySaveFailure(primaryError) else {
+                AppLog.error(
+                    "ProfileStore upsertProfile primary save failed without legacy fallback scope=\(scope)",
+                    error: primaryError
+                )
+                throw primaryError
+            }
+
+            AppLog.warning("ProfileStore upsertProfile primary save failed, attempting legacy Users fallback scope=\(scope)")
+            let legacy = populate(
+                record: CKRecord(recordType: CKSchema.RecordType.legacyUsers, recordID: recordID),
+                with: profile,
+                deletedAt: deletedAt
+            )
+            do {
+                return try await service.save(record: legacy, in: database)
+            } catch let legacyError {
+                // Do not let protected or unavailable legacy `Users` writes mask the primary failure.
+                if shouldSuppress(legacyError, tolerateLookupErrors: true, suppressPermissionErrors: true) {
+                    AppLog.warning("ProfileStore upsertProfile suppressing legacy fallback error and rethrowing primary error scope=\(scope)")
+                    throw primaryError
+                }
+                throw legacyError
+            }
+        }
+    }
+
+    private func populate(record: CKRecord, with profile: UserProfile, deletedAt: Date?) -> CKRecord {
+        let now = Date()
+
+        record[CKSchema.UserField.userId] = profile.id as CKRecordValue
+        record[CKSchema.UserField.role] = profile.role.rawValue as CKRecordValue
+        record[CKSchema.UserField.name] = profile.name as CKRecordValue
+
+        if let normalizedEmail = normalizeEmail(profile.email) {
+            record[CKSchema.UserField.email] = normalizedEmail as CKRecordValue
+        } else {
+            record[CKSchema.UserField.email] = nil
+        }
+
+        record[CKSchema.UserField.isActive] = NSNumber(value: profile.isActive)
+        record[CKSchema.UserField.provider] = profile.provider as CKRecordValue
+        record[CKSchema.UserField.assignedStoreIds] = profile.assignedStoreIds.sorted() as CKRecordValue
+
+        let createdAt = record.date(CKSchema.UserField.createdAt) ?? profile.createdAt
+        record[CKSchema.UserField.createdAt] = createdAt as CKRecordValue
+        record[CKSchema.UserField.updatedAt] = now as CKRecordValue
+
+        if let deletedAt {
+            record[CKSchema.UserField.deletedAt] = deletedAt as CKRecordValue
+        } else if profile.isActive {
+            record[CKSchema.UserField.deletedAt] = nil
+        }
+
+        return record
+    }
+
+    private func fetchAnyUserRecord(
+        userId: String,
+        in database: CKDatabase,
+        tolerateLookupErrors: Bool,
+        suppressPermissionErrors: Bool
+    ) async throws -> CKRecord? {
+        let recordID = CloudKitService.userRecordID(userId: userId)
+        let scope = databaseScopeName(database)
+        AppLog.info("ProfileStore fetchAnyUserRecord started scope=\(scope) user=\(AppLog.redactIdentifier(userId)) recordID=\(recordID.recordName)")
+
+        do {
+            if let direct = try await service.fetchRecord(with: recordID, in: database) {
+                AppLog.info("ProfileStore fetchAnyUserRecord hit direct record scope=\(scope) type=\(direct.recordType)")
+                return direct
+            }
+        } catch {
+            if shouldSuppress(error, tolerateLookupErrors: tolerateLookupErrors, suppressPermissionErrors: suppressPermissionErrors) {
+                AppLog.warning("ProfileStore fetchAnyUserRecord suppressed direct lookup error scope=\(scope): \(AppLog.sanitize(error.localizedDescription))")
+                return nil
+            }
+            throw error
+        }
+
+        if let userRecord = try await queryFirst(
+            recordType: CKSchema.RecordType.user,
+            userId: userId,
+            in: database,
+            tolerateLookupErrors: tolerateLookupErrors,
+            suppressPermissionErrors: suppressPermissionErrors
+        ) {
+            AppLog.info("ProfileStore fetchAnyUserRecord hit query record type=User scope=\(scope)")
+            return userRecord
+        }
+
+        if let legacyUserRecord = try await queryFirst(
+            recordType: CKSchema.RecordType.legacyUsers,
+            userId: userId,
+            in: database,
+            tolerateLookupErrors: tolerateLookupErrors,
+            suppressPermissionErrors: suppressPermissionErrors
+        ) {
+            AppLog.info("ProfileStore fetchAnyUserRecord hit query record type=Users scope=\(scope)")
+            return legacyUserRecord
+        }
+
+        AppLog.info("ProfileStore fetchAnyUserRecord result=missing scope=\(scope) user=\(AppLog.redactIdentifier(userId))")
+        return nil
+    }
+
+    private func queryFirst(
+        recordType: String,
+        userId: String,
+        in database: CKDatabase,
+        tolerateLookupErrors: Bool,
+        suppressPermissionErrors: Bool
+    ) async throws -> CKRecord? {
+        let scope = databaseScopeName(database)
+        AppLog.info("ProfileStore queryFirst started scope=\(scope) type=\(recordType) user=\(AppLog.redactIdentifier(userId))")
+        do {
+            let records = try await service.queryRecords(
+                recordType: recordType,
+                predicate: NSPredicate(format: "%K == %@", CKSchema.UserField.userId, userId),
+                sortDescriptors: [NSSortDescriptor(key: CKSchema.UserField.updatedAt, ascending: false)],
+                resultsLimit: 1,
+                in: database
+            )
+            AppLog.info("ProfileStore queryFirst finished scope=\(scope) type=\(recordType) count=\(records.count)")
+            return records.first
+        } catch {
+            if shouldSuppress(error, tolerateLookupErrors: tolerateLookupErrors, suppressPermissionErrors: suppressPermissionErrors) {
+                AppLog.warning(
+                    "ProfileStore queryFirst suppressed error scope=\(scope) type=\(recordType): \(AppLog.sanitize(error.localizedDescription))"
+                )
+                return nil
+            }
+            throw error
+        }
+    }
+
+    private func shouldSuppress(
+        _ error: Error,
+        tolerateLookupErrors: Bool,
+        suppressPermissionErrors: Bool
+    ) -> Bool {
+        if suppressPermissionErrors,
+           let clientError = error as? CloudKitClientError {
+            if case .unauthorized = clientError {
+                AppLog.warning("ProfileStore shouldSuppress=true for CloudKitClientError.unauthorized")
+                return true
+            }
+        }
+
+        if suppressPermissionErrors,
+           let ckError = error as? CKError,
+           ckError.code == .permissionFailure {
+            AppLog.warning("ProfileStore shouldSuppress=true for CKError.permissionFailure")
+            return true
+        }
+
+        if tolerateLookupErrors && isSchemaMismatch(error) {
+            AppLog.warning("ProfileStore shouldSuppress=true for schema mismatch")
+            return true
+        }
+
+        if tolerateLookupErrors,
+           let ckError = error as? CKError,
+           ckError.code == .unknownItem {
+            AppLog.warning("ProfileStore shouldSuppress=true for CKError.unknownItem")
+            return true
+        }
+
+        return false
+    }
+
+    private func shouldFallbackToLegacyAfterPrimarySaveFailure(_ error: Error) -> Bool {
+        if isSchemaMismatch(error) {
+            AppLog.warning("ProfileStore shouldFallbackToLegacyAfterPrimarySaveFailure=true due to schema mismatch")
+            return true
+        }
+
+        if let clientError = error as? CloudKitClientError,
+           case .unauthorized = clientError {
+            AppLog.warning("ProfileStore shouldFallbackToLegacyAfterPrimarySaveFailure=true due to unauthorized")
+            return true
+        }
+
+        if let ckError = error as? CKError,
+           ckError.code == .permissionFailure {
+            AppLog.warning("ProfileStore shouldFallbackToLegacyAfterPrimarySaveFailure=true due to CKError.permissionFailure")
+            return true
+        }
+
+        return false
+    }
+
+    private func isSchemaMismatch(_ error: Error) -> Bool {
+        if let ckError = error as? CKError {
+            switch ckError.code {
+            case .invalidArguments, .serverRejectedRequest, .unknownItem:
+                return true
+            case .partialFailure:
+                if let partial = ckError.userInfo[CKPartialErrorsByItemIDKey] as? [AnyHashable: Error],
+                   !partial.isEmpty {
+                    return partial.values.allSatisfy { isSchemaMismatch($0) }
+                }
+                return true
+            default:
+                break
+            }
+        }
+
+        let description = error.localizedDescription.lowercased()
+        return description.contains("record type") ||
+            description.contains("schema") ||
+            description.contains("unknown field")
+    }
+
+    private func normalizeEmail(_ value: String?) -> String? {
+        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let trimmed, !trimmed.isEmpty else {
+            return nil
+        }
+        return trimmed.lowercased()
+    }
+
+    private func databaseScopeName(_ database: CKDatabase) -> String {
+        if database === service.privateDB { return "private" }
+        if database === service.publicDB { return "public" }
+        return "custom"
+    }
+}
+
+final class CloudKitUserRepository: UserRepositoryProtocol {
+    private let service: CloudKitService
+    private let profileStore: UserProfileStoreProtocol
+
+    init(service: CloudKitService, profileStore: UserProfileStoreProtocol) {
+        self.service = service
+        self.profileStore = profileStore
+    }
+
+    func fetchUser(id: String) async throws -> UserProfile? {
+        try await service.ensureCloudKitAvailable()
+
+        if let canonical = try await profileStore.fetchCanonicalProfile(userId: id) {
+            return canonical
+        }
+
+        if let publicProfile = try await profileStore.fetchPublicProfile(userId: id) {
+            _ = try? await profileStore.upsertCanonicalProfile(publicProfile, deletedAt: nil)
+            return publicProfile
+        }
+
+        return nil
     }
 
     func upsertUser(_ user: UserProfile) async throws {
         try await service.ensureCloudKitAvailable()
-
-        let recordID = CloudKitService.userRecordID(userId: user.id)
-        let record = try await service.fetchRecord(with: recordID) ?? CKRecord(recordType: CKSchema.RecordType.user, recordID: recordID)
-
-        record[CKSchema.UserField.userId] = user.id as CKRecordValue
-        record[CKSchema.UserField.role] = user.role.rawValue as CKRecordValue
-        record[CKSchema.UserField.name] = user.name as CKRecordValue
-        if let email = user.email, !email.isEmpty {
-            record[CKSchema.UserField.email] = email as CKRecordValue
-        }
-        record[CKSchema.UserField.isActive] = NSNumber(value: user.isActive)
-        record[CKSchema.UserField.provider] = user.provider as CKRecordValue
-        record[CKSchema.UserField.assignedStoreIds] = user.assignedStoreIds as CKRecordValue
-        record[CKSchema.UserField.createdAt] = (record.date(CKSchema.UserField.createdAt) ?? user.createdAt) as CKRecordValue
-        record[CKSchema.UserField.updatedAt] = Date() as CKRecordValue
-
-        _ = try await service.save(record: record)
+        let saved = try await profileStore.upsertCanonicalProfile(user, deletedAt: user.isActive ? nil : Date())
+        await profileStore.upsertPublicProfileBestEffort(saved, deletedAt: saved.isActive ? nil : Date())
     }
 }
 
 final class CloudKitEmployeeManagementRepository: EmployeeManagementRepositoryProtocol {
     private let service: CloudKitService
+    private let profileStore: UserProfileStoreProtocol
 
-    init(service: CloudKitService) {
+    init(service: CloudKitService, profileStore: UserProfileStoreProtocol) {
         self.service = service
+        self.profileStore = profileStore
     }
 
     func fetchManagerStores(managerId: String) async throws -> [Store] {
         try await service.ensureCloudKitAvailable()
+        var publicStores: [Store] = []
 
-        let predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [
-            NSPredicate(format: "%K == %@", CKSchema.StoreField.managerUserId, managerId),
-            NSPredicate(format: "%K == %@", CKSchema.StoreField.isActive, NSNumber(value: true))
-        ])
+        do {
+            publicStores = try await queryManagerStores(managerId: managerId, in: service.publicDB)
+        } catch {
+            guard isRecoverableManagerStoreError(error) else {
+                throw error
+            }
+            AppLog.warning("Public manager store fetch failed in employee management: \(AppLog.sanitize(error.localizedDescription))")
+        }
 
-        let records = try await service.queryRecords(
-            recordType: CKSchema.RecordType.store,
-            predicate: predicate,
-            sortDescriptors: [NSSortDescriptor(key: CKSchema.StoreField.name, ascending: true)]
-        )
+        let privateStores: [Store]
+        do {
+            privateStores = try await queryManagerStores(managerId: managerId, in: service.privateDB)
+        } catch {
+            guard !publicStores.isEmpty, isRecoverableManagerStoreError(error) else {
+                throw error
+            }
+            AppLog.warning("Private manager store fetch failed in employee management after public success: \(AppLog.sanitize(error.localizedDescription))")
+            return publicStores
+        }
 
-        return records.compactMap(decodeStore(record:))
+        return mergeStores(preferred: privateStores, fallback: publicStores)
     }
 
     func fetchEmployeesForManagerStores(managerStores: [Store]) async throws -> [EmployeeSummary] {
@@ -495,6 +1064,7 @@ final class CloudKitEmployeeManagementRepository: EmployeeManagementRepositoryPr
 
         let storesById = Dictionary(uniqueKeysWithValues: managerStores.map { ($0.id, $0) })
         var storeIdsByEmployee: [String: Set<String>] = [:]
+        var membershipIdentityHints: [String: (name: String?, email: String?)] = [:]
 
         for store in managerStores {
             let predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [
@@ -506,27 +1076,43 @@ final class CloudKitEmployeeManagementRepository: EmployeeManagementRepositoryPr
             for record in membershipRecords {
                 guard let employeeId = record.string(CKSchema.StoreMemberField.employeeUserId) else { continue }
                 storeIdsByEmployee[employeeId, default: []].insert(store.id)
+
+                let existingHint = membershipIdentityHints[employeeId]
+                membershipIdentityHints[employeeId] = (
+                    name: existingHint?.name ?? record.string(CKSchema.StoreMemberField.employeeName),
+                    email: existingHint?.email ?? record.string(CKSchema.StoreMemberField.employeeEmail)
+                )
             }
         }
 
         var summaries: [EmployeeSummary] = []
         for (employeeId, memberships) in storeIdsByEmployee {
-            guard let userRecord = try await service.fetchRecord(with: CloudKitService.userRecordID(userId: employeeId)),
-                  let user = decodeUserProfile(record: userRecord),
-                  user.role == .employee else {
+            let fallback = membershipIdentityHints[employeeId]
+            let resolvedProfile: UserProfile?
+            do {
+                resolvedProfile = try await resolveAnyProfile(userId: employeeId)
+            } catch {
+                AppLog.warning("Employee profile lookup failed for user=\(AppLog.redactIdentifier(employeeId)): \(AppLog.sanitize(error.localizedDescription))")
+                resolvedProfile = nil
+            }
+
+            if let resolvedProfile, resolvedProfile.role == .manager {
                 continue
             }
 
             let sortedIds = memberships.sorted()
             let storeNames = sortedIds.compactMap { storesById[$0]?.name }
+            let displayName = resolvedProfile?.name ?? fallback?.name ?? "Employee"
+            let displayEmail = resolvedProfile?.email ?? fallback?.email
+
             summaries.append(
                 EmployeeSummary(
                     id: employeeId,
-                    name: user.name,
-                    email: user.email,
+                    name: displayName,
+                    email: displayEmail,
                     storeIds: sortedIds,
                     storeNames: storeNames,
-                    userIsActive: user.isActive,
+                    userIsActive: resolvedProfile?.isActive ?? true,
                     hasInactiveMembership: false
                 )
             )
@@ -555,7 +1141,7 @@ final class CloudKitEmployeeManagementRepository: EmployeeManagementRepositoryPr
         membership[CKSchema.StoreMemberField.updatedAt] = Date() as CKRecordValue
         _ = try await service.save(record: membership)
 
-        try await recomputeAssignedStores(for: employeeId)
+        await recomputeAssignedStoresBestEffort(for: employeeId, context: "removeEmployeeFromStore")
     }
 
     func removeEmployeeFromAllManagerStores(employeeId: String, managerId: String) async throws {
@@ -573,6 +1159,8 @@ final class CloudKitEmployeeManagementRepository: EmployeeManagementRepositoryPr
         let managerStoreIds = Set(managerStores.map(\.id))
         let targetStoreIds = Set(storeIds)
 
+        let existingProfile = try await resolveAnyProfile(userId: employeeId)
+        let publicEmployeeRecordID = await profileStore.resolvePublicUserRecordID(userId: employeeId)
         var recordsToSave: [CKRecord] = []
 
         for managedStoreId in managerStoreIds {
@@ -586,10 +1174,16 @@ final class CloudKitEmployeeManagementRepository: EmployeeManagementRepositoryPr
             if let storeRecord = try await service.fetchRecord(with: CloudKitService.storeRecordID(storeId: managedStoreId)) {
                 membership[CKSchema.StoreMemberField.storeRef] = CKRecord.Reference(recordID: storeRecord.recordID, action: .none)
             }
-            if let employeeRecord = try await service.fetchRecord(with: CloudKitService.userRecordID(userId: employeeId)) {
-                membership[CKSchema.StoreMemberField.employeeUserRef] = CKRecord.Reference(recordID: employeeRecord.recordID, action: .none)
-                membership[CKSchema.StoreMemberField.employeeName] = (employeeRecord.string(CKSchema.UserField.name) ?? "Employee") as CKRecordValue
-                if let email = employeeRecord.string(CKSchema.UserField.email), !email.isEmpty {
+
+            if let publicEmployeeRecordID {
+                membership[CKSchema.StoreMemberField.employeeUserRef] = CKRecord.Reference(recordID: publicEmployeeRecordID, action: .none)
+            } else {
+                membership[CKSchema.StoreMemberField.employeeUserRef] = nil
+            }
+
+            if let existingProfile {
+                membership[CKSchema.StoreMemberField.employeeName] = existingProfile.name as CKRecordValue
+                if let email = existingProfile.email, !email.isEmpty {
                     membership[CKSchema.StoreMemberField.employeeEmail] = email as CKRecordValue
                 }
             }
@@ -604,25 +1198,41 @@ final class CloudKitEmployeeManagementRepository: EmployeeManagementRepositoryPr
         }
 
         _ = try await service.modify(recordsToSave: recordsToSave)
-        try await recomputeAssignedStores(for: employeeId)
+        await recomputeAssignedStoresBestEffort(for: employeeId, context: "setEmployeeStoresForManager")
     }
 
     func setEmployeeActive(employeeId: String, isActive: Bool) async throws {
         try await service.ensureCloudKitAvailable()
 
-        let userRecordID = CloudKitService.userRecordID(userId: employeeId)
-        guard let userRecord = try await service.fetchRecord(with: userRecordID) else {
-            throw CloudKitClientError.missingRecord("Employee account was not found.")
+        let existingProfile = try? await resolveAnyProfile(userId: employeeId)
+        let fallbackName = existingProfile?.name ?? "Employee"
+        let fallbackEmail = existingProfile?.email
+        let fallbackRole = existingProfile?.role ?? .employee
+        let deletedAt = isActive ? nil : Date()
+
+        do {
+            var profile = try await profileStore.canonicalProfileEnsuringSeed(
+                userId: employeeId,
+                role: fallbackRole,
+                provider: existingProfile?.provider ?? "apple",
+                fallbackName: fallbackName,
+                fallbackEmail: fallbackEmail
+            )
+
+            profile.isActive = isActive
+            profile.lastLoginAt = Date()
+            if !isActive {
+                profile.assignedStoreIds = []
+            }
+
+            await persistProfileBestEffort(profile, deletedAt: deletedAt, context: "setEmployeeActive")
+        } catch {
+            AppLog.warning(
+                "Employee profile activation sync skipped user=\(AppLog.redactIdentifier(employeeId)): \(AppLog.sanitize(error.localizedDescription))"
+            )
         }
 
-        userRecord[CKSchema.UserField.isActive] = NSNumber(value: isActive)
-        userRecord[CKSchema.UserField.updatedAt] = Date() as CKRecordValue
-        if !isActive {
-            userRecord[CKSchema.UserField.assignedStoreIds] = [] as CKRecordValue
-        }
-
-        var recordsToSave: [CKRecord] = [userRecord]
-
+        var recordsToSave: [CKRecord] = []
         if !isActive {
             let membershipRecords = try await service.queryRecords(
                 recordType: CKSchema.RecordType.storeMember,
@@ -636,21 +1246,85 @@ final class CloudKitEmployeeManagementRepository: EmployeeManagementRepositoryPr
             }
         }
 
-        _ = try await service.modify(recordsToSave: recordsToSave)
+        if !recordsToSave.isEmpty {
+            _ = try await service.modify(recordsToSave: recordsToSave)
+        }
+
         if isActive {
-            try await recomputeAssignedStores(for: employeeId)
+            await recomputeAssignedStoresBestEffort(for: employeeId, context: "setEmployeeActive")
         }
     }
 
     private func assertStoreManagedByCurrentUser(storeId: String, expectedManagerId: String) async throws {
-        guard let storeRecord = try await service.fetchRecord(with: CloudKitService.storeRecordID(storeId: storeId)) else {
-            throw CloudKitClientError.missingRecord("Store could not be found.")
+        let recordID = CloudKitService.storeRecordID(storeId: storeId)
+
+        if let privateRecord = try await service.fetchRecord(with: recordID, in: service.privateDB) {
+            guard privateRecord.string(CKSchema.StoreField.managerUserId) == expectedManagerId else {
+                throw CloudKitClientError.unauthorized
+            }
+            return
         }
 
-        let managerId = storeRecord.string(CKSchema.StoreField.managerUserId)
-        guard managerId == expectedManagerId else {
-            throw CloudKitClientError.unauthorized
+        do {
+            if let publicRecord = try await service.fetchRecord(with: recordID) {
+                guard publicRecord.string(CKSchema.StoreField.managerUserId) == expectedManagerId else {
+                    throw CloudKitClientError.unauthorized
+                }
+                return
+            }
+        } catch {
+            guard isRecoverableManagerStoreError(error) else {
+                throw error
+            }
+            AppLog.warning("Public store ownership check skipped: \(AppLog.sanitize(error.localizedDescription))")
         }
+
+        throw CloudKitClientError.missingRecord("Store could not be found.")
+    }
+
+    private func queryManagerStores(managerId: String, in database: CKDatabase) async throws -> [Store] {
+        let predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [
+            NSPredicate(format: "%K == %@", CKSchema.StoreField.managerUserId, managerId),
+            NSPredicate(format: "%K == %@", CKSchema.StoreField.isActive, NSNumber(value: true))
+        ])
+
+        let records = try await service.queryRecords(
+            recordType: CKSchema.RecordType.store,
+            predicate: predicate,
+            sortDescriptors: [NSSortDescriptor(key: CKSchema.StoreField.name, ascending: true)],
+            in: database
+        )
+
+        return records.compactMap(decodeStore(record:))
+    }
+
+    private func mergeStores(preferred: [Store], fallback: [Store]) -> [Store] {
+        var mergedById = Dictionary(uniqueKeysWithValues: fallback.map { ($0.id, $0) })
+        for store in preferred {
+            mergedById[store.id] = store
+        }
+        return mergedById.values.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    private func isRecoverableManagerStoreError(_ error: Error) -> Bool {
+        if let clientError = error as? CloudKitClientError,
+           case .unauthorized = clientError {
+            return true
+        }
+
+        if let ckError = error as? CKError {
+            switch ckError.code {
+            case .permissionFailure, .unknownItem, .invalidArguments, .serverRejectedRequest, .partialFailure:
+                return true
+            default:
+                break
+            }
+        }
+
+        let description = error.localizedDescription.lowercased()
+        return description.contains("record type") ||
+            description.contains("schema") ||
+            description.contains("unknown field")
     }
 
     private func recomputeAssignedStores(for employeeId: String) async throws {
@@ -672,13 +1346,51 @@ final class CloudKitEmployeeManagementRepository: EmployeeManagementRepositoryPr
             activeStoreIds.append(storeId)
         }
 
-        let userRecordID = CloudKitService.userRecordID(userId: employeeId)
-        guard let userRecord = try await service.fetchRecord(with: userRecordID) else {
-            return
-        }
+        let existingProfile = try await resolveAnyProfile(userId: employeeId)
+        let fallbackName = existingProfile?.name ?? "Employee"
+        let fallbackEmail = existingProfile?.email
+        let fallbackRole = existingProfile?.role ?? .employee
 
-        userRecord[CKSchema.UserField.assignedStoreIds] = Array(Set(activeStoreIds)).sorted() as CKRecordValue
-        userRecord[CKSchema.UserField.updatedAt] = Date() as CKRecordValue
-        _ = try await service.save(record: userRecord)
+        var profile = try await profileStore.canonicalProfileEnsuringSeed(
+            userId: employeeId,
+            role: fallbackRole,
+            provider: existingProfile?.provider ?? "apple",
+            fallbackName: fallbackName,
+            fallbackEmail: fallbackEmail
+        )
+
+        profile.assignedStoreIds = Array(Set(activeStoreIds)).sorted()
+        profile.lastLoginAt = Date()
+
+        _ = try await profileStore.upsertCanonicalProfile(profile, deletedAt: nil)
+        await profileStore.upsertPublicProfileBestEffort(profile, deletedAt: nil)
+    }
+
+    private func recomputeAssignedStoresBestEffort(for employeeId: String, context: String) async {
+        do {
+            try await recomputeAssignedStores(for: employeeId)
+        } catch {
+            AppLog.warning(
+                "Assigned store sync skipped context=\(context) user=\(AppLog.redactIdentifier(employeeId)): \(AppLog.sanitize(error.localizedDescription))"
+            )
+        }
+    }
+
+    private func persistProfileBestEffort(_ profile: UserProfile, deletedAt: Date?, context: String) async {
+        do {
+            _ = try await profileStore.upsertCanonicalProfile(profile, deletedAt: deletedAt)
+        } catch {
+            AppLog.warning(
+                "Canonical profile sync skipped context=\(context) user=\(AppLog.redactIdentifier(profile.id)): \(AppLog.sanitize(error.localizedDescription))"
+            )
+        }
+        await profileStore.upsertPublicProfileBestEffort(profile, deletedAt: deletedAt)
+    }
+
+    private func resolveAnyProfile(userId: String) async throws -> UserProfile? {
+        if let canonical = try await profileStore.fetchCanonicalProfile(userId: userId) {
+            return canonical
+        }
+        return try await profileStore.fetchPublicProfile(userId: userId)
     }
 }

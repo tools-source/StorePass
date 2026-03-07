@@ -3,7 +3,10 @@ import SwiftUI
 
 struct LoginView: View {
     @EnvironmentObject private var viewModel: AuthViewModel
+    @Environment(\.colorScheme) private var colorScheme
     @State private var showError = false
+    @State private var employeeName = ""
+    @State private var employeeEmail = ""
 
     var body: some View {
         ZStack {
@@ -88,22 +91,75 @@ struct LoginView: View {
                     roleTile(.employee, title: "Employee", detail: "Check in/out and view history")
                 }
 
-                SignInWithAppleButton(.signIn) { request in
-                    request.requestedScopes = [.fullName, .email]
-                } onCompletion: { _ in
-                    guard let role = viewModel.requestedRole else { return }
-                    Task { await viewModel.signInWithApple(requestedRole: role) }
+                if (viewModel.requestedRole ?? .employee) == .manager {
+                    managerAuthSection
+                } else {
+                    employeeAuthSection
                 }
-                .signInWithAppleButtonStyle(.black)
-                .frame(height: 52)
-                .clipShape(RoundedRectangle(cornerRadius: DS.Radius.button, style: .continuous))
-                .disabled(viewModel.isLoading)
-
-                Text("Google sign-in has been removed. Apple sign-in is required for all accounts.")
-                    .font(DS.Typography.micro)
-                    .foregroundStyle(DS.Colors.textSecondary)
             }
         }
+    }
+
+    private var managerAuthSection: some View {
+        VStack(alignment: .leading, spacing: DS.Spacing.s) {
+            Text("Managers sign in with Apple.")
+                .font(DS.Typography.caption)
+                .foregroundStyle(DS.Colors.textSecondary)
+
+            appleButton(role: .manager)
+        }
+    }
+
+    private var employeeAuthSection: some View {
+        VStack(alignment: .leading, spacing: DS.Spacing.s) {
+            Text("Employees can use Apple Sign-In or quick email access.")
+                .font(DS.Typography.caption)
+                .foregroundStyle(DS.Colors.textSecondary)
+
+            VStack(alignment: .leading, spacing: DS.Spacing.s) {
+                entryField(title: "Employee name", placeholder: "Jane Doe", text: $employeeName, autocapitalization: .words, keyboard: .default)
+                entryField(title: "Employee email", placeholder: "jane@storepass.app", text: $employeeEmail, autocapitalization: .never, keyboard: .emailAddress)
+
+                Button(viewModel.isLoading ? "Signing In..." : "Continue as Employee") {
+                    Task {
+                        await viewModel.signInManuallyAsEmployee(name: employeeName, email: employeeEmail)
+                    }
+                }
+                .buttonStyle(PrimaryButtonStyle())
+                .disabled(viewModel.isLoading)
+            }
+
+            HStack {
+                Rectangle()
+                    .fill(DS.Colors.separator)
+                    .frame(height: 1)
+                Text("or")
+                    .font(DS.Typography.micro)
+                    .foregroundStyle(DS.Colors.textSecondary)
+                Rectangle()
+                    .fill(DS.Colors.separator)
+                    .frame(height: 1)
+            }
+
+            appleButton(role: .employee)
+        }
+    }
+
+    private func appleButton(role: UserRole) -> some View {
+        SignInWithAppleButton(.signIn) { request in
+            request.requestedScopes = [.fullName, .email]
+        } onCompletion: { authorizationResult in
+            Task {
+                await viewModel.signInWithApple(
+                    authorizationResult: authorizationResult,
+                    requestedRole: role
+                )
+            }
+        }
+        .signInWithAppleButtonStyle(colorScheme == .dark ? .white : .black)
+        .frame(height: 52)
+        .clipShape(RoundedRectangle(cornerRadius: DS.Radius.button, style: .continuous))
+        .disabled(viewModel.isLoading)
     }
 
     private var valuePropsCard: some View {
@@ -151,6 +207,29 @@ struct LoginView: View {
             }
         }
         .buttonStyle(.plain)
+    }
+
+    private func entryField(
+        title: String,
+        placeholder: String,
+        text: Binding<String>,
+        autocapitalization: TextInputAutocapitalization,
+        keyboard: UIKeyboardType
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(DS.Typography.micro)
+                .foregroundStyle(DS.Colors.textSecondary)
+
+            TextField(placeholder, text: text)
+                .textInputAutocapitalization(autocapitalization)
+                .autocorrectionDisabled()
+                .keyboardType(keyboard)
+                .padding(.horizontal, DS.Spacing.s)
+                .frame(height: DS.Metrics.rowHeight)
+                .background(DS.Colors.elevated.opacity(0.75), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .foregroundStyle(DS.Colors.textPrimary)
+        }
     }
 
     private func valuePropRow(icon: String, text: String) -> some View {
