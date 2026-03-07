@@ -63,6 +63,15 @@
 		C0DE00000000000000000011 /* AppLockManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE00000000000000000001 /* AppLockManager.swift */; };
 		C0DE00000000000000000012 /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE00000000000000000002 /* KeychainStore.swift */; };
 		C0DE00000000000000000013 /* AppLockOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE00000000000000000003 /* AppLockOverlay.swift */; };
+		D0C0DE000000000000001101 /* CloudKitSanityChecker.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0C0DE000000000000000101 /* CloudKitSanityChecker.swift */; };
+		D0C0DE000000000000001102 /* UITestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0C0DE000000000000000102 /* UITestSupport.swift */; };
+		D0C0DE000000000000001103 /* SigningDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0C0DE000000000000000103 /* SigningDiagnostics.swift */; };
+		D0C0DE000000000000001201 /* CloudKitMigrationPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0C0DE000000000000000202 /* CloudKitMigrationPolicyTests.swift */; };
+		D0C0DE000000000000001202 /* AuthViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0C0DE000000000000000203 /* AuthViewModelTests.swift */; };
+		D0C0DE000000000000001203 /* EmployeeDashboardViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0C0DE000000000000000204 /* EmployeeDashboardViewModelTests.swift */; };
+		D0C0DE000000000000001301 /* StoreCheckUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0C0DE000000000000000302 /* StoreCheckUITests.swift */; };
+		D0C0DE000000000000001401 /* StoreCheck.app in Frameworks */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000028 /* StoreCheck.app */; };
+		D0C0DE000000000000001402 /* StoreCheck.app in Frameworks */ = {isa = PBXBuildFile; fileRef = BEEFABCD1234000000000028 /* StoreCheck.app */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -125,6 +134,15 @@
 		C0DE00000000000000000001 /* AppLockManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLockManager.swift; sourceTree = "<group>"; };
 		C0DE00000000000000000002 /* KeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainStore.swift; sourceTree = "<group>"; };
 		C0DE00000000000000000003 /* AppLockOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLockOverlay.swift; sourceTree = "<group>"; };
+		D0C0DE000000000000000101 /* CloudKitSanityChecker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudKitSanityChecker.swift; sourceTree = "<group>"; };
+		D0C0DE000000000000000102 /* UITestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UITestSupport.swift; sourceTree = "<group>"; };
+		D0C0DE000000000000000103 /* SigningDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SigningDiagnostics.swift; sourceTree = "<group>"; };
+		D0C0DE000000000000000202 /* CloudKitMigrationPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudKitMigrationPolicyTests.swift; sourceTree = "<group>"; };
+		D0C0DE000000000000000203 /* AuthViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthViewModelTests.swift; sourceTree = "<group>"; };
+		D0C0DE000000000000000204 /* EmployeeDashboardViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmployeeDashboardViewModelTests.swift; sourceTree = "<group>"; };
+		D0C0DE000000000000000302 /* StoreCheckUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoreCheckUITests.swift; sourceTree = "<group>"; };
+		D0C0DE000000000000000401 /* StoreCheckTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = StoreCheckTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		D0C0DE000000000000000402 /* StoreCheckUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = StoreCheckUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -132,6 +150,22 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D0C0DE000000000000002202 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				D0C0DE000000000000001401 /* StoreCheck.app in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D0C0DE000000000000002302 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				D0C0DE000000000000001402 /* StoreCheck.app in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -149,6 +183,8 @@
 			isa = PBXGroup;
 			children = (
 				BEEFABCD1234000000000053 /* StoreCheck */,
+				D0C0DE000000000000000201 /* StoreCheckTests */,
+				D0C0DE000000000000000301 /* StoreCheckUITests */,
 				0B885E2A2F418FF30011D606 /* Frameworks */,
 				BEEFABCD1234000000000052,
 			);
@@ -158,6 +194,8 @@
 			isa = PBXGroup;
 			children = (
 				BEEFABCD1234000000000028 /* StoreCheck.app */,
+				D0C0DE000000000000000401 /* StoreCheckTests.xctest */,
+				D0C0DE000000000000000402 /* StoreCheckUITests.xctest */,
 			);
 			sourceTree = "<group>";
 		};
@@ -199,6 +237,9 @@
 				BEEFABCD1234000000000003 /* StoreCheckApp.swift */,
 				BEEFABCD123400000000007A /* CloudKitBootstrap.swift */,
 				BEEFABCD123400000000007C /* DebugOptions.swift */,
+				D0C0DE000000000000000101 /* CloudKitSanityChecker.swift */,
+				D0C0DE000000000000000102 /* UITestSupport.swift */,
+				D0C0DE000000000000000103 /* SigningDiagnostics.swift */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -330,6 +371,24 @@
 			path = Security;
 			sourceTree = "<group>";
 		};
+		D0C0DE000000000000000201 /* StoreCheckTests */ = {
+			isa = PBXGroup;
+			children = (
+				D0C0DE000000000000000202 /* CloudKitMigrationPolicyTests.swift */,
+				D0C0DE000000000000000203 /* AuthViewModelTests.swift */,
+				D0C0DE000000000000000204 /* EmployeeDashboardViewModelTests.swift */,
+			);
+			path = StoreCheckTests;
+			sourceTree = "<group>";
+		};
+		D0C0DE000000000000000301 /* StoreCheckUITests */ = {
+			isa = PBXGroup;
+			children = (
+				D0C0DE000000000000000302 /* StoreCheckUITests.swift */,
+			);
+			path = StoreCheckUITests;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -352,7 +411,75 @@
 			productReference = BEEFABCD1234000000000028 /* StoreCheck.app */;
 			productType = "com.apple.product-type.application";
 		};
+		D0C0DE000000000000003201 /* StoreCheckTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = D0C0DE000000000000004201 /* Build configuration list for PBXNativeTarget "StoreCheckTests" */;
+			buildPhases = (
+				D0C0DE000000000000002201 /* Sources */,
+				D0C0DE000000000000002202 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				D0C0DE000000000000005201 /* PBXTargetDependency */,
+			);
+			name = StoreCheckTests;
+			packageProductDependencies = (
+			);
+			productName = StoreCheckTests;
+			productReference = D0C0DE000000000000000401 /* StoreCheckTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		D0C0DE000000000000003202 /* StoreCheckUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = D0C0DE000000000000004202 /* Build configuration list for PBXNativeTarget "StoreCheckUITests" */;
+			buildPhases = (
+				D0C0DE000000000000002301 /* Sources */,
+				D0C0DE000000000000002302 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				D0C0DE000000000000005202 /* PBXTargetDependency */,
+			);
+			name = StoreCheckUITests;
+			packageProductDependencies = (
+			);
+			productName = StoreCheckUITests;
+			productReference = D0C0DE000000000000000402 /* StoreCheckUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
 /* End PBXNativeTarget section */
+
+/* Begin PBXContainerItemProxy section */
+		D0C0DE000000000000005301 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = BEEFABCD123400000000004F /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = BEEFABCD1234000000000050;
+			remoteInfo = StoreCheck;
+		};
+		D0C0DE000000000000005302 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = BEEFABCD123400000000004F /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = BEEFABCD1234000000000050;
+			remoteInfo = StoreCheck;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXTargetDependency section */
+		D0C0DE000000000000005201 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = BEEFABCD1234000000000050 /* StoreCheck */;
+			targetProxy = D0C0DE000000000000005301 /* PBXContainerItemProxy */;
+		};
+		D0C0DE000000000000005202 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = BEEFABCD1234000000000050 /* StoreCheck */;
+			targetProxy = D0C0DE000000000000005302 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin PBXProject section */
 		BEEFABCD123400000000004F /* Project object */ = {
@@ -364,6 +491,14 @@
 				TargetAttributes = {
 					BEEFABCD1234000000000050 = {
 						CreatedOnToolsVersion = 16.0;
+					};
+					D0C0DE000000000000003201 = {
+						CreatedOnToolsVersion = 16.0;
+						TestTargetID = BEEFABCD1234000000000050;
+					};
+					D0C0DE000000000000003202 = {
+						CreatedOnToolsVersion = 16.0;
+						TestTargetID = BEEFABCD1234000000000050;
 					};
 				};
 			};
@@ -381,6 +516,8 @@
 			projectRoot = "";
 			targets = (
 				BEEFABCD1234000000000050 /* StoreCheck */,
+				D0C0DE000000000000003201 /* StoreCheckTests */,
+				D0C0DE000000000000003202 /* StoreCheckUITests */,
 			);
 		};
 /* End PBXProject section */
@@ -408,6 +545,9 @@
 				BEEFABCD123400000000002B /* StoreCheckApp.swift in Sources */,
 				BEEFABCD123400000000007B /* CloudKitBootstrap.swift in Sources */,
 				BEEFABCD123400000000007D /* DebugOptions.swift in Sources */,
+				D0C0DE000000000000001101 /* CloudKitSanityChecker.swift in Sources */,
+				D0C0DE000000000000001102 /* UITestSupport.swift in Sources */,
+				D0C0DE000000000000001103 /* SigningDiagnostics.swift in Sources */,
 				BEEFABCD123400000000002C /* LoginView.swift in Sources */,
 				BEEFABCD123400000000002D /* RoleSelectionView.swift in Sources */,
 				BEEFABCD123400000000002E /* Theme.swift in Sources */,
@@ -459,6 +599,24 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		D0C0DE000000000000002201 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				D0C0DE000000000000001202 /* AuthViewModelTests.swift in Sources */,
+				D0C0DE000000000000001201 /* CloudKitMigrationPolicyTests.swift in Sources */,
+				D0C0DE000000000000001203 /* EmployeeDashboardViewModelTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D0C0DE000000000000002301 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				D0C0DE000000000000001301 /* StoreCheckUITests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin XCBuildConfiguration section */
@@ -468,8 +626,10 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = StoreCheck/StoreCheck.entitlements;
 				CODE_SIGN_STYLE = Automatic;
+				CLOUDKIT_CONTAINER_ENVIRONMENT = Development;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = XA5BVJ88VD;
+				ENABLE_TESTABILITY = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = StoreCheck/SupportingFiles/Info.plist;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.business";
@@ -485,6 +645,7 @@
 				SUPPORTS_MACCATALYST = NO;
 				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.10;
 				TARGETED_DEVICE_FAMILY = 1;
@@ -497,6 +658,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = StoreCheck/StoreCheck.entitlements;
 				CODE_SIGN_STYLE = Automatic;
+				CLOUDKIT_CONTAINER_ENVIRONMENT = Production;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = XA5BVJ88VD;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -546,6 +708,102 @@
 			};
 			name = Release;
 		};
+		D0C0DE000000000000004301 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = XA5BVJ88VD;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.6;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.storecheck.app.StoreCheckTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.10;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/StoreCheck.app/StoreCheck";
+			};
+			name = Debug;
+		};
+		D0C0DE000000000000004302 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = XA5BVJ88VD;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.6;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.storecheck.app.StoreCheckTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.10;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/StoreCheck.app/StoreCheck";
+			};
+			name = Release;
+		};
+		D0C0DE000000000000004303 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = XA5BVJ88VD;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.6;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.storecheck.app.StoreCheckUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.10;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_TARGET_NAME = StoreCheck;
+				USES_XCTRUNNER = YES;
+			};
+			name = Debug;
+		};
+		D0C0DE000000000000004304 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = XA5BVJ88VD;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.6;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.storecheck.app.StoreCheckUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.10;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_TARGET_NAME = StoreCheck;
+				USES_XCTRUNNER = YES;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -563,6 +821,24 @@
 			buildConfigurations = (
 				BEEFABCD1234000000000062 /* Debug */,
 				BEEFABCD1234000000000063 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		D0C0DE000000000000004201 /* Build configuration list for PBXNativeTarget "StoreCheckTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				D0C0DE000000000000004301 /* Debug */,
+				D0C0DE000000000000004302 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		D0C0DE000000000000004202 /* Build configuration list for PBXNativeTarget "StoreCheckUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				D0C0DE000000000000004303 /* Debug */,
+				D0C0DE000000000000004304 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;

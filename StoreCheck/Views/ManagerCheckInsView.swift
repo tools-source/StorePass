@@ -87,9 +87,6 @@ struct ManagerCheckInsView: View {
             .task { await viewModel.load() }
             .refreshable { await viewModel.load() }
             .onChange(of: viewModel.selectedStoreId) { _, _ in Task { await viewModel.load() } }
-            .onReceive(Timer.publish(every: 12, on: .main, in: .common).autoconnect()) { _ in
-                Task { await viewModel.load() }
-            }
             .onReceive(NotificationCenter.default.publisher(for: .cloudKitDidReceiveRemoteChange)) { _ in
                 Task { await viewModel.load() }
             }

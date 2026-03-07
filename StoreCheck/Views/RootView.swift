@@ -19,7 +19,7 @@ private struct RootContentView: View {
     @State private var bootState: BootState = .launching
     @EnvironmentObject private var appContainer: AppContainer
 
-    init(authService: AuthService, roleProfileRepository: RoleProfileRepositoryProtocol) {
+    init(authService: AuthServiceProtocol, roleProfileRepository: RoleProfileRepositoryProtocol) {
         _authViewModel = StateObject(wrappedValue: AuthViewModel(authService: authService, roleProfileRepository: roleProfileRepository))
     }
 

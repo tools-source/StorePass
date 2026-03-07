@@ -63,6 +63,7 @@ final class StoreManagementViewModel: ObservableObject {
     func saveStore(_ store: Store) async {
         do {
             try await repository.upsertStore(store)
+            upsertLocalStore(store)
             showToast("Store updated")
             storeError = nil
         } catch {
@@ -74,6 +75,8 @@ final class StoreManagementViewModel: ObservableObject {
     func deleteStore(id: String) async {
         do {
             try await repository.deleteStore(id: id)
+            stores.removeAll { $0.id == id }
+            latestJoinCodesByStoreId[id] = nil
             showToast("Store deleted")
             storeError = nil
         } catch {

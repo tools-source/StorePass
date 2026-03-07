@@ -435,11 +435,20 @@ final class CloudKitCheckInRepository: CheckInRepositoryProtocol {
             predicate = NSPredicate(format: "%K == %@", CKSchema.CheckInField.employeeUserId, currentUserId)
         }
 
-        let records = try await service.queryRecords(
-            recordType: CKSchema.RecordType.checkInSession,
-            predicate: predicate,
-            sortDescriptors: [NSSortDescriptor(key: CKSchema.CheckInField.checkInAt, ascending: false)]
-        )
+        let records: [CKRecord]
+        do {
+            records = try await service.queryRecords(
+                recordType: CKSchema.RecordType.checkInSession,
+                predicate: predicate,
+                sortDescriptors: [NSSortDescriptor(key: CKSchema.CheckInField.checkInAt, ascending: false)]
+            )
+        } catch {
+            guard isRecoverableReadError(error) else {
+                throw error
+            }
+            AppLog.warning("Check-in list fetch recovered for user=\(AppLog.redactIdentifier(currentUserId)): \(AppLog.sanitize(error.localizedDescription))")
+            return []
+        }
 
         return Array(records.compactMap(decodeCheckIn(record:)).prefix(limit))
     }
@@ -447,11 +456,20 @@ final class CloudKitCheckInRepository: CheckInRepositoryProtocol {
     func fetchEmployeeCheckIns(employeeId: String, limit: Int) async throws -> [CheckIn] {
         try await service.ensureCloudKitAvailable()
 
-        let records = try await service.queryRecords(
-            recordType: CKSchema.RecordType.checkInSession,
-            predicate: NSPredicate(format: "%K == %@", CKSchema.CheckInField.employeeUserId, employeeId),
-            sortDescriptors: [NSSortDescriptor(key: CKSchema.CheckInField.checkInAt, ascending: false)]
-        )
+        let records: [CKRecord]
+        do {
+            records = try await service.queryRecords(
+                recordType: CKSchema.RecordType.checkInSession,
+                predicate: NSPredicate(format: "%K == %@", CKSchema.CheckInField.employeeUserId, employeeId),
+                sortDescriptors: [NSSortDescriptor(key: CKSchema.CheckInField.checkInAt, ascending: false)]
+            )
+        } catch {
+            guard isRecoverableReadError(error) else {
+                throw error
+            }
+            AppLog.warning("Employee check-in fetch recovered for user=\(AppLog.redactIdentifier(employeeId)): \(AppLog.sanitize(error.localizedDescription))")
+            return []
+        }
 
         return Array(records.compactMap(decodeCheckIn(record:)).prefix(limit))
     }
@@ -482,11 +500,20 @@ final class CloudKitCheckInRepository: CheckInRepositoryProtocol {
             predicates.append(NSPredicate(format: "%K == %@", CKSchema.CheckInField.employeeUserId, employeeId))
         }
 
-        let records = try await service.queryRecords(
-            recordType: CKSchema.RecordType.checkInSession,
-            predicate: NSCompoundPredicate(andPredicateWithSubpredicates: predicates),
-            sortDescriptors: [NSSortDescriptor(key: CKSchema.CheckInField.checkInAt, ascending: false)]
-        )
+        let records: [CKRecord]
+        do {
+            records = try await service.queryRecords(
+                recordType: CKSchema.RecordType.checkInSession,
+                predicate: NSCompoundPredicate(andPredicateWithSubpredicates: predicates),
+                sortDescriptors: [NSSortDescriptor(key: CKSchema.CheckInField.checkInAt, ascending: false)]
+            )
+        } catch {
+            guard isRecoverableReadError(error) else {
+                throw error
+            }
+            AppLog.warning("Manager store check-in fetch recovered manager=\(AppLog.redactIdentifier(managerId)) store=\(storeId): \(AppLog.sanitize(error.localizedDescription))")
+            return []
+        }
 
         return Array(records.compactMap(decodeCheckIn(record:)).prefix(limit))
     }
@@ -520,11 +547,20 @@ final class CloudKitCheckInRepository: CheckInRepositoryProtocol {
             predicates.append(NSPredicate(format: "%K == %@", CKSchema.CheckInField.status, status.rawValue))
         }
 
-        let records = try await service.queryRecords(
-            recordType: CKSchema.RecordType.checkInSession,
-            predicate: NSCompoundPredicate(andPredicateWithSubpredicates: predicates),
-            sortDescriptors: [NSSortDescriptor(key: CKSchema.CheckInField.checkInAt, ascending: false)]
-        )
+        let records: [CKRecord]
+        do {
+            records = try await service.queryRecords(
+                recordType: CKSchema.RecordType.checkInSession,
+                predicate: NSCompoundPredicate(andPredicateWithSubpredicates: predicates),
+                sortDescriptors: [NSSortDescriptor(key: CKSchema.CheckInField.checkInAt, ascending: false)]
+            )
+        } catch {
+            guard isRecoverableReadError(error) else {
+                throw error
+            }
+            AppLog.warning("Today's check-in fetch recovered for user=\(AppLog.redactIdentifier(currentUserId)): \(AppLog.sanitize(error.localizedDescription))")
+            return []
+        }
 
         return records.compactMap(decodeCheckIn(record:))
     }
@@ -557,6 +593,27 @@ final class CloudKitCheckInRepository: CheckInRepositoryProtocol {
               storeRecord.bool(CKSchema.StoreField.isActive, default: true) else {
             throw CloudKitClientError.invalidData("This store is no longer active.")
         }
+    }
+
+    private func isRecoverableReadError(_ error: Error) -> Bool {
+        if let clientError = error as? CloudKitClientError,
+           case .unauthorized = clientError {
+            return true
+        }
+
+        if let ckError = error as? CKError {
+            switch ckError.code {
+            case .permissionFailure, .unknownItem, .invalidArguments, .serverRejectedRequest, .partialFailure:
+                return true
+            default:
+                break
+            }
+        }
+
+        let description = error.localizedDescription.lowercased()
+        return description.contains("record type") ||
+            description.contains("schema") ||
+            description.contains("unknown field")
     }
 
     private func decodeCheckIn(record: CKRecord) -> CheckIn? {

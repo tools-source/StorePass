@@ -73,9 +73,6 @@ struct ManageStoresView: View {
             .navigationTitle("Stores")
             .task { await viewModel.load(managerId: container.authRepository.currentUserId) }
             .refreshable { await viewModel.load(managerId: container.authRepository.currentUserId) }
-            .onReceive(Timer.publish(every: 12, on: .main, in: .common).autoconnect()) { _ in
-                Task { await viewModel.load(managerId: container.authRepository.currentUserId) }
-            }
             .onReceive(NotificationCenter.default.publisher(for: .cloudKitDidReceiveRemoteChange)) { _ in
                 Task { await viewModel.load(managerId: container.authRepository.currentUserId) }
             }
@@ -87,7 +84,6 @@ struct ManageStoresView: View {
                     guard let store = deletingStore else { return }
                     Task {
                         await viewModel.deleteStore(id: store.id)
-                        await viewModel.load(managerId: container.authRepository.currentUserId)
                     }
                     deletingStore = nil
                 }
@@ -127,15 +123,15 @@ struct ManageStoresView: View {
                 )
 
                 Group {
-                    entryField(title: "Store name", text: $name, keyboard: .default)
+                    entryField(title: "Store name", text: $name, keyboard: .default, accessibilityID: "store_name_input")
                     addressEntrySection
 
                     HStack(spacing: DS.Spacing.s) {
-                        entryField(title: "Latitude", text: $latitudeText, keyboard: .numbersAndPunctuation)
-                        entryField(title: "Longitude", text: $longitudeText, keyboard: .numbersAndPunctuation)
+                        entryField(title: "Latitude", text: $latitudeText, keyboard: .numbersAndPunctuation, accessibilityID: "store_lat_input")
+                        entryField(title: "Longitude", text: $longitudeText, keyboard: .numbersAndPunctuation, accessibilityID: "store_lng_input")
                     }
 
-                    entryField(title: "Radius (meters)", text: $radiusText, keyboard: .numberPad)
+                    entryField(title: "Radius (meters)", text: $radiusText, keyboard: .numberPad, accessibilityID: "store_radius_input")
                 }
 
                 Button(viewModel.isCreatingStore ? "Creating..." : "Create Store") {
@@ -145,6 +141,7 @@ struct ManageStoresView: View {
                 }
                 .buttonStyle(PrimaryButtonStyle())
                 .disabled(viewModel.isCreatingStore)
+                .accessibilityIdentifier("create_store_button")
             }
         }
     }
@@ -161,6 +158,7 @@ struct ManageStoresView: View {
                 .padding(.horizontal, DS.Spacing.s)
                 .frame(height: DS.Metrics.rowHeight)
                 .background(DS.Colors.elevated.opacity(0.75), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .accessibilityIdentifier("store_address_input")
                 .onChange(of: address) { _, newValue in
                     if isApplyingAddressSelection {
                         isApplyingAddressSelection = false
@@ -243,7 +241,7 @@ struct ManageStoresView: View {
         }
     }
 
-    private func entryField(title: String, text: Binding<String>, keyboard: UIKeyboardType) -> some View {
+    private func entryField(title: String, text: Binding<String>, keyboard: UIKeyboardType, accessibilityID: String) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title)
                 .font(DS.Typography.micro)
@@ -254,6 +252,7 @@ struct ManageStoresView: View {
                 .padding(.horizontal, DS.Spacing.s)
                 .frame(height: DS.Metrics.rowHeight)
                 .background(DS.Colors.elevated.opacity(0.75), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .accessibilityIdentifier(accessibilityID)
         }
     }
 
@@ -291,9 +290,8 @@ struct ManageStoresView: View {
             radiusMeters: radius
         )
 
-        await viewModel.load(managerId: container.authRepository.currentUserId)
-
         if created {
+            await viewModel.load(managerId: container.authRepository.currentUserId)
             name = ""
             address = ""
             latitudeText = ""

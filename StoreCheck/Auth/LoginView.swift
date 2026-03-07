@@ -98,6 +98,29 @@ struct LoginView: View {
                 } else {
                     employeeAuthSection
                 }
+
+                #if DEBUG
+                if DebugOptions.isUITestingEnabled {
+                    Divider()
+                    VStack(alignment: .leading, spacing: DS.Spacing.s) {
+                        Text("UI Testing Shortcuts")
+                            .font(DS.Typography.caption)
+                            .foregroundStyle(DS.Colors.textSecondary)
+
+                        Button("Sign In as Test Manager") {
+                            Task { await viewModel.signInForDebug(role: .manager) }
+                        }
+                        .buttonStyle(SecondaryButtonStyle())
+                        .accessibilityIdentifier("ui_debug_signin_manager")
+
+                        Button("Sign In as Test Employee") {
+                            Task { await viewModel.signInForDebug(role: .employee) }
+                        }
+                        .buttonStyle(SecondaryButtonStyle())
+                        .accessibilityIdentifier("ui_debug_signin_employee")
+                    }
+                }
+                #endif
             }
         }
     }
@@ -109,6 +132,7 @@ struct LoginView: View {
                 .foregroundStyle(DS.Colors.textSecondary)
 
             appleButton(role: .manager)
+                .accessibilityIdentifier("manager_apple_signin_button")
         }
     }
 
@@ -126,10 +150,29 @@ struct LoginView: View {
 
             VStack(alignment: .leading, spacing: DS.Spacing.s) {
                 if isEmployeeSignupMode {
-                    entryField(title: "Employee name", placeholder: "Jane Doe", text: $employeeName, autocapitalization: .words, keyboard: .default)
+                    entryField(
+                        title: "Employee name",
+                        placeholder: "Jane Doe",
+                        text: $employeeName,
+                        autocapitalization: .words,
+                        keyboard: .default,
+                        accessibilityID: "employee_name_input"
+                    )
                 }
-                entryField(title: "Employee email", placeholder: "jane@storepass.app", text: $employeeEmail, autocapitalization: .never, keyboard: .emailAddress)
-                secureEntryField(title: "Password", placeholder: "At least 8 characters", text: $employeePassword)
+                entryField(
+                    title: "Employee email",
+                    placeholder: "jane@storepass.app",
+                    text: $employeeEmail,
+                    autocapitalization: .never,
+                    keyboard: .emailAddress,
+                    accessibilityID: "employee_email_input"
+                )
+                secureEntryField(
+                    title: "Password",
+                    placeholder: "At least 8 characters",
+                    text: $employeePassword,
+                    accessibilityID: "employee_password_input"
+                )
 
                 Button(viewModel.isLoading ? "Please wait..." : (isEmployeeSignupMode ? "Create Employee Account" : "Log In as Employee")) {
                     Task {
@@ -142,6 +185,7 @@ struct LoginView: View {
                 }
                 .buttonStyle(PrimaryButtonStyle())
                 .disabled(viewModel.isLoading)
+                .accessibilityIdentifier("employee_auth_submit")
 
                 Button("Quick Email Access") {
                     Task {
@@ -152,6 +196,7 @@ struct LoginView: View {
                 .font(DS.Typography.micro)
                 .foregroundStyle(DS.Colors.textSecondary)
                 .disabled(viewModel.isLoading)
+                .accessibilityIdentifier("employee_quick_access")
             }
 
             HStack {
@@ -167,6 +212,7 @@ struct LoginView: View {
             }
 
             appleButton(role: .employee)
+                .accessibilityIdentifier("employee_apple_signin_button")
         }
     }
 
@@ -239,7 +285,8 @@ struct LoginView: View {
         placeholder: String,
         text: Binding<String>,
         autocapitalization: TextInputAutocapitalization,
-        keyboard: UIKeyboardType
+        keyboard: UIKeyboardType,
+        accessibilityID: String
     ) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title)
@@ -254,6 +301,7 @@ struct LoginView: View {
                 .frame(height: DS.Metrics.rowHeight)
                 .background(DS.Colors.elevated.opacity(0.75), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                 .foregroundStyle(DS.Colors.textPrimary)
+                .accessibilityIdentifier(accessibilityID)
         }
     }
 
@@ -261,7 +309,8 @@ struct LoginView: View {
     private func secureEntryField(
         title: String,
         placeholder: String,
-        text: Binding<String>
+        text: Binding<String>,
+        accessibilityID: String
     ) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title)
@@ -275,6 +324,7 @@ struct LoginView: View {
                 .frame(height: DS.Metrics.rowHeight)
                 .background(DS.Colors.elevated.opacity(0.75), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                 .foregroundStyle(DS.Colors.textPrimary)
+                .accessibilityIdentifier(accessibilityID)
         }
     }
 

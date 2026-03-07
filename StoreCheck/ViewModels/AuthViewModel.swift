@@ -22,10 +22,10 @@ final class AuthViewModel: ObservableObject {
 
     @AppStorage("lastRequestedRole") private var lastRequestedRoleRaw: String = ""
 
-    private let authService: AuthService
+    private let authService: AuthServiceProtocol
     private let roleProfileRepository: RoleProfileRepositoryProtocol
 
-    init(authService: AuthService, roleProfileRepository: RoleProfileRepositoryProtocol) {
+    init(authService: AuthServiceProtocol, roleProfileRepository: RoleProfileRepositoryProtocol) {
         self.authService = authService
         self.roleProfileRepository = roleProfileRepository
         self.requestedRole = UserRole(rawValue: lastRequestedRoleRaw)
@@ -126,6 +126,32 @@ final class AuthViewModel: ObservableObject {
             errorMessage = userFacingMessage(for: error)
         }
     }
+
+    #if DEBUG
+    func signInForDebug(role: UserRole) async {
+        AppLog.info("AuthViewModel.signInForDebug started role=\(role.rawValue)")
+        isLoading = true
+        isRoleResolutionLoading = true
+        errorMessage = nil
+        signInNoticeMessage = nil
+        defer {
+            isLoading = false
+            isRoleResolutionLoading = false
+        }
+
+        do {
+            let seedEmail = role == .manager ? "manager.ui@test.storepass" : "employee.ui@test.storepass"
+            let seedName = role == .manager ? "UI Manager" : "UI Employee"
+            let result = try await authService.signInManuallyAsEmployee(name: seedName, email: seedEmail)
+            lastRequestedRoleRaw = role.rawValue
+            requestedRole = role
+            try await resolveProfileAndRoute(identity: result.identity, requestedRole: role)
+        } catch {
+            logAuthError(error, context: "signInForDebug")
+            errorMessage = userFacingMessage(for: error)
+        }
+    }
+    #endif
 
 
     func signUpEmployee(name: String, email: String, password: String) async {

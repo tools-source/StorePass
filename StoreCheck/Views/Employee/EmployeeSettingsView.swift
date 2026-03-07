@@ -107,11 +107,12 @@ struct AccountSettingsView: View {
                     .font(DS.Typography.caption)
                     .foregroundStyle(DS.Colors.textSecondary)
 
-                Button(isRunningDiagnostics ? "Running diagnostics..." : "Run Diagnostics") {
+                Button(isRunningDiagnostics ? "Running diagnostics..." : "Run Integrity Check") {
                     Task { await runDiagnostics() }
                 }
                 .buttonStyle(PrimaryButtonStyle())
                 .disabled(isRunningDiagnostics)
+                .accessibilityIdentifier("run_cloudkit_diagnostics_button")
 
                 if !diagnosticsMessage.isEmpty {
                     Text(diagnosticsMessage)
@@ -134,12 +135,14 @@ struct AccountSettingsView: View {
                     Task { await authViewModel.signOut() }
                 }
                 .buttonStyle(DestructiveButtonStyle())
+                .accessibilityIdentifier("settings_sign_out_button")
 
                 Button(isDeletingAccount ? "Deleting..." : "Delete Account", role: .destructive) {
                     showDeleteConfirmation = true
                 }
                 .buttonStyle(DestructiveButtonStyle())
                 .disabled(isDeletingAccount)
+                .accessibilityIdentifier("settings_delete_account_button")
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -170,7 +173,7 @@ struct AccountSettingsView: View {
     private func refreshCloudStatus() async {
         do {
             let status = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<CKAccountStatus, Error>) in
-                CKContainer.default().accountStatus { status, error in
+                appContainer.cloudKitService.container.accountStatus { status, error in
                     if let error {
                         continuation.resume(throwing: error)
                     } else {
@@ -207,53 +210,8 @@ struct AccountSettingsView: View {
 
         isRunningDiagnostics = true
         defer { isRunningDiagnostics = false }
-
-        var lines: [String] = []
-        lines.append("Container: \(appContainer.cloudKitService.container.containerIdentifier ?? "default")")
-        lines.append("User: \(AppLog.redactIdentifier(user.id))")
-
-        do {
-            let accountStatus = try await appContainer.cloudKitService.accountStatus()
-            lines.append("Account: \(accountStatusText(accountStatus))")
-        } catch {
-            lines.append("Account: FAIL (\(AppLog.sanitize(error.localizedDescription)))")
-        }
-
-        do {
-            let canonical = try await appContainer.userProfileStore.fetchCanonicalProfile(userId: user.id)
-            lines.append("Private read: \(canonical != nil ? "OK" : "MISSING")")
-
-            let probeProfile = canonical ?? user
-            _ = try await appContainer.userProfileStore.upsertCanonicalProfile(
-                probeProfile,
-                deletedAt: probeProfile.isActive ? nil : Date()
-            )
-            lines.append("Private write: OK")
-        } catch {
-            lines.append("Private write: FAIL (\(AppLog.sanitize(error.localizedDescription)))")
-        }
-
-        do {
-            let publicProfile = try await appContainer.userProfileStore.fetchPublicProfile(userId: user.id)
-            lines.append("Public read: \(publicProfile != nil ? "OK" : "UNAVAILABLE")")
-        } catch {
-            lines.append("Public read: FAIL (\(AppLog.sanitize(error.localizedDescription)))")
-        }
-
-        do {
-            _ = try await appContainer.userProfileStore.upsertPublicProfile(
-                user,
-                deletedAt: user.isActive ? nil : Date()
-            )
-            lines.append("Public write: OK")
-        } catch {
-            lines.append("Public write: FAIL (\(AppLog.sanitize(error.localizedDescription)))")
-        }
-
-        let publicRecordID = await appContainer.userProfileStore.resolvePublicUserRecordID(userId: user.id)
-        lines.append("Public user ref: \(publicRecordID == nil ? "UNAVAILABLE" : "AVAILABLE")")
-
-        diagnosticsMessage = lines.joined(separator: "\n")
+        let report = await appContainer.cloudKitSanityChecker.run(currentUserId: user.id)
+        diagnosticsMessage = report.renderedText
         #endif
     }
 

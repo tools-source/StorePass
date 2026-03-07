@@ -2,9 +2,15 @@ import Foundation
 
 enum DebugOptions {
     #if DEBUG
-    static let forceSignOutOnLaunch = false
+    static var isUITestingEnabled: Bool {
+        ProcessInfo.processInfo.arguments.contains("--ui-testing")
+    }
+    static var forceSignOutOnLaunch: Bool {
+        isUITestingEnabled
+    }
     #else
     static let forceSignOutOnLaunch = false
+    static let isUITestingEnabled = false
     #endif
 }
 

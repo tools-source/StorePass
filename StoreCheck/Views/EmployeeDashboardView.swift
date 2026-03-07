@@ -101,9 +101,6 @@ private struct EmployeeHomeView: View {
             .refreshable {
                 await viewModel.load()
             }
-            .onReceive(Timer.publish(every: 12, on: .main, in: .common).autoconnect()) { _ in
-                Task { await viewModel.load() }
-            }
             .onReceive(NotificationCenter.default.publisher(for: .cloudKitDidReceiveRemoteChange)) { _ in
                 Task { await viewModel.load() }
             }

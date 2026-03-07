@@ -210,8 +210,33 @@ final class CloudKitRoleProfileRepository: RoleProfileRepositoryProtocol {
     func softDeleteAccount(uid: String, role: UserRole) async throws {
         try await service.ensureCloudKitAvailable()
 
-        guard try await resolveAnyProfile(userId: uid) != nil else {
-            throw CloudKitClientError.missingRecord("Account not found.")
+        let now = Date()
+
+        let existingProfile: UserProfile?
+        do {
+            existingProfile = try await resolveAnyProfile(userId: uid)
+        } catch {
+            guard isRecoverableProfilePersistenceError(error) else {
+                throw error
+            }
+            AppLog.warning("Profile lookup skipped during account deletion user=\(AppLog.redactIdentifier(uid)): \(AppLog.sanitize(error.localizedDescription))")
+            existingProfile = nil
+        }
+
+        if var deactivatedProfile = existingProfile {
+            deactivatedProfile.isActive = false
+            deactivatedProfile.assignedStoreIds = []
+            deactivatedProfile.lastLoginAt = now
+
+            do {
+                _ = try await profileStore.upsertCanonicalProfile(deactivatedProfile, deletedAt: now)
+            } catch {
+                guard isRecoverableProfilePersistenceError(error) else {
+                    throw error
+                }
+                AppLog.warning("Canonical profile deactivation skipped for user=\(AppLog.redactIdentifier(uid)): \(AppLog.sanitize(error.localizedDescription))")
+            }
+            await profileStore.upsertPublicProfileBestEffort(deactivatedProfile, deletedAt: now)
         }
 
         var recordIDsToDelete: [CKRecord.ID] = [CloudKitService.userRecordID(userId: uid)]
@@ -219,55 +244,100 @@ final class CloudKitRoleProfileRepository: RoleProfileRepositoryProtocol {
 
         switch role {
         case .employee:
-            let memberships = try await service.queryRecords(
-                recordType: CKSchema.RecordType.storeMember,
-                predicate: NSPredicate(format: "%K == %@", CKSchema.StoreMemberField.employeeUserId, uid)
-            )
-            recordIDsToDelete.append(contentsOf: memberships.map(\.recordID))
+            do {
+                let memberships = try await service.queryRecords(
+                    recordType: CKSchema.RecordType.storeMember,
+                    predicate: NSPredicate(format: "%K == %@", CKSchema.StoreMemberField.employeeUserId, uid)
+                )
+                recordIDsToDelete.append(contentsOf: memberships.map(\.recordID))
+            } catch {
+                guard isRecoverableProfilePersistenceError(error) else {
+                    throw error
+                }
+                AppLog.warning("Employee membership delete query skipped user=\(AppLog.redactIdentifier(uid)): \(AppLog.sanitize(error.localizedDescription))")
+            }
 
-            let employeeCheckIns = try await service.queryRecords(
-                recordType: CKSchema.RecordType.checkInSession,
-                predicate: NSPredicate(format: "%K == %@", CKSchema.CheckInField.employeeUserId, uid)
-            )
-            recordIDsToDelete.append(contentsOf: employeeCheckIns.map(\.recordID))
+            do {
+                let employeeCheckIns = try await service.queryRecords(
+                    recordType: CKSchema.RecordType.checkInSession,
+                    predicate: NSPredicate(format: "%K == %@", CKSchema.CheckInField.employeeUserId, uid)
+                )
+                recordIDsToDelete.append(contentsOf: employeeCheckIns.map(\.recordID))
+            } catch {
+                guard isRecoverableProfilePersistenceError(error) else {
+                    throw error
+                }
+                AppLog.warning("Employee check-in delete query skipped user=\(AppLog.redactIdentifier(uid)): \(AppLog.sanitize(error.localizedDescription))")
+            }
 
         case .manager:
-            let managerStores = try await service.queryRecords(
-                recordType: CKSchema.RecordType.store,
-                predicate: NSPredicate(format: "%K == %@", CKSchema.StoreField.managerUserId, uid)
-            )
+            do {
+                let managerStores = try await service.queryRecords(
+                    recordType: CKSchema.RecordType.store,
+                    predicate: NSPredicate(format: "%K == %@", CKSchema.StoreField.managerUserId, uid)
+                )
 
-            for store in managerStores {
-                recordIDsToDelete.append(store.recordID)
-                if let storeId = store.string(CKSchema.StoreField.storeId) {
-                    let memberships = try await service.queryRecords(
-                        recordType: CKSchema.RecordType.storeMember,
-                        predicate: NSPredicate(format: "%K == %@", CKSchema.StoreMemberField.storeId, storeId)
-                    )
-                    for membership in memberships {
-                        if let employeeId = membership.string(CKSchema.StoreMemberField.employeeUserId) {
-                            employeeIdsToSync.insert(employeeId)
+                for store in managerStores {
+                    recordIDsToDelete.append(store.recordID)
+                    if let storeId = store.string(CKSchema.StoreField.storeId) {
+                        do {
+                            let memberships = try await service.queryRecords(
+                                recordType: CKSchema.RecordType.storeMember,
+                                predicate: NSPredicate(format: "%K == %@", CKSchema.StoreMemberField.storeId, storeId)
+                            )
+                            for membership in memberships {
+                                if let employeeId = membership.string(CKSchema.StoreMemberField.employeeUserId) {
+                                    employeeIdsToSync.insert(employeeId)
+                                }
+                            }
+                            recordIDsToDelete.append(contentsOf: memberships.map(\.recordID))
+                        } catch {
+                            guard isRecoverableProfilePersistenceError(error) else {
+                                throw error
+                            }
+                            AppLog.warning("Store membership delete query skipped store=\(storeId): \(AppLog.sanitize(error.localizedDescription))")
+                        }
+
+                        do {
+                            let checkIns = try await service.queryRecords(
+                                recordType: CKSchema.RecordType.checkInSession,
+                                predicate: NSPredicate(format: "%K == %@", CKSchema.CheckInField.storeId, storeId)
+                            )
+                            recordIDsToDelete.append(contentsOf: checkIns.map(\.recordID))
+                        } catch {
+                            guard isRecoverableProfilePersistenceError(error) else {
+                                throw error
+                            }
+                            AppLog.warning("Store check-in delete query skipped store=\(storeId): \(AppLog.sanitize(error.localizedDescription))")
                         }
                     }
-                    recordIDsToDelete.append(contentsOf: memberships.map(\.recordID))
-
-                    let checkIns = try await service.queryRecords(
-                        recordType: CKSchema.RecordType.checkInSession,
-                        predicate: NSPredicate(format: "%K == %@", CKSchema.CheckInField.storeId, storeId)
-                    )
-                    recordIDsToDelete.append(contentsOf: checkIns.map(\.recordID))
                 }
+            } catch {
+                guard isRecoverableProfilePersistenceError(error) else {
+                    throw error
+                }
+                AppLog.warning("Manager store delete query skipped user=\(AppLog.redactIdentifier(uid)): \(AppLog.sanitize(error.localizedDescription))")
             }
         }
 
         let uniqueRecordIDs = Array(Set(recordIDsToDelete.map(\.recordName))).map { CKRecord.ID(recordName: $0) }
         if !uniqueRecordIDs.isEmpty {
-            _ = try await service.modify(recordsToSave: [], recordIDsToDelete: uniqueRecordIDs, atomic: false)
+            do {
+                _ = try await service.modify(recordsToSave: [], recordIDsToDelete: uniqueRecordIDs, atomic: false)
+            } catch {
+                guard isRecoverableProfilePersistenceError(error) else {
+                    throw error
+                }
+                AppLog.warning("Public record delete batch skipped for user=\(AppLog.redactIdentifier(uid)): \(AppLog.sanitize(error.localizedDescription))")
+            }
         }
 
         do {
             try await service.deleteRecord(with: CloudKitService.userRecordID(userId: uid), in: service.privateDB)
         } catch {
+            guard isRecoverableProfilePersistenceError(error) else {
+                throw error
+            }
             AppLog.warning("Private user record delete skipped for user=\(AppLog.redactIdentifier(uid)): \(AppLog.sanitize(error.localizedDescription))")
         }
 

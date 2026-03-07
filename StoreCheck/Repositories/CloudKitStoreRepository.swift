@@ -26,12 +26,19 @@ final class CloudKitStoreRepository: StoreRepositoryProtocol {
             var fetched: [Store] = []
             for id in ids {
                 let recordID = CloudKitService.storeRecordID(storeId: id)
-                guard let record = try await service.fetchRecord(with: recordID),
-                      let store = decodeStore(record: record),
-                      store.isActive else {
-                    continue
+                do {
+                    guard let record = try await service.fetchRecord(with: recordID),
+                          let store = decodeStore(record: record),
+                          store.isActive else {
+                        continue
+                    }
+                    fetched.append(store)
+                } catch {
+                    guard isRecoverableManagerStoreError(error) else {
+                        throw error
+                    }
+                    AppLog.warning("Store fetch by id skipped for id=\(id): \(AppLog.sanitize(error.localizedDescription))")
                 }
-                fetched.append(store)
             }
             return fetched.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
         }
@@ -44,13 +51,22 @@ final class CloudKitStoreRepository: StoreRepositoryProtocol {
             return try await fetchManagerStores(managerId: userId)
         }
 
-        let memberships = try await service.queryRecords(
-            recordType: CKSchema.RecordType.storeMember,
-            predicate: NSCompoundPredicate(andPredicateWithSubpredicates: [
-                NSPredicate(format: "%K == %@", CKSchema.StoreMemberField.employeeUserId, userId),
-                NSPredicate(format: "%K == %@", CKSchema.StoreMemberField.status, CKSchema.MemberStatus.active)
-            ])
-        )
+        let memberships: [CKRecord]
+        do {
+            memberships = try await service.queryRecords(
+                recordType: CKSchema.RecordType.storeMember,
+                predicate: NSCompoundPredicate(andPredicateWithSubpredicates: [
+                    NSPredicate(format: "%K == %@", CKSchema.StoreMemberField.employeeUserId, userId),
+                    NSPredicate(format: "%K == %@", CKSchema.StoreMemberField.status, CKSchema.MemberStatus.active)
+                ])
+            )
+        } catch {
+            guard isRecoverableManagerStoreError(error) else {
+                throw error
+            }
+            AppLog.warning("Employee membership store fetch recovered for user=\(AppLog.redactIdentifier(userId)): \(AppLog.sanitize(error.localizedDescription))")
+            return []
+        }
 
         let storeIds = memberships.compactMap { $0.string(CKSchema.StoreMemberField.storeId) }
         return try await fetchStores(ids: Array(Set(storeIds)))
@@ -58,20 +74,6 @@ final class CloudKitStoreRepository: StoreRepositoryProtocol {
 
     func fetchManagerStores(managerId: String) async throws -> [Store] {
         try await service.ensureCloudKitAvailable()
-        var publicStores: [Store] = []
-        var publicQueryRecovered = false
-
-        do {
-            publicStores = try await queryManagerStores(managerId: managerId, in: service.publicDB)
-            await seedPrivateStoresBestEffort(publicStores)
-        } catch {
-            guard isRecoverableManagerStoreError(error) else {
-                throw error
-            }
-            publicQueryRecovered = true
-            AppLog.warning("Public manager store fetch failed; using private fallback only: \(AppLog.sanitize(error.localizedDescription))")
-        }
-
         var privateStores: [Store] = []
         var privateQueryRecovered = false
         do {
@@ -82,6 +84,21 @@ final class CloudKitStoreRepository: StoreRepositoryProtocol {
             }
             privateQueryRecovered = true
             AppLog.warning("Private manager store fetch failed; falling back to profile-backed store IDs: \(AppLog.sanitize(error.localizedDescription))")
+        }
+
+        var publicStores: [Store] = []
+        var publicQueryRecovered = false
+        do {
+            publicStores = try await queryManagerStores(managerId: managerId, in: service.publicDB)
+            if !publicStores.isEmpty {
+                await seedPrivateStoresBestEffort(publicStores)
+            }
+        } catch {
+            guard isRecoverableManagerStoreError(error) else {
+                throw error
+            }
+            publicQueryRecovered = true
+            AppLog.warning("Public manager store fetch failed; continuing with private canonical data: \(AppLog.sanitize(error.localizedDescription))")
         }
 
         let queriedStores = mergeStores(preferred: privateStores, fallback: publicStores)
@@ -118,16 +135,42 @@ final class CloudKitStoreRepository: StoreRepositoryProtocol {
             managerPublicRecordID: nil
         )
 
-        _ = try await service.save(record: record, in: service.privateDB)
-        await mirrorStoreRecordBestEffort(record, context: "upsertStore")
+        let savedRecord = try await saveManagerStoreRecord(record, context: "upsertStore")
+        await mirrorStoreRecordBestEffort(savedRecord, context: "upsertStore")
     }
 
     func deleteStore(id: String) async throws {
         try await service.ensureCloudKitAvailable()
         let currentUserId = try service.requireCurrentUserId()
-        let storeRecord = try await fetchManagerCanonicalStoreRecord(storeId: id, expectedManagerId: currentUserId)
+        let privateStoreRecord = try await fetchStoreRecordIfOwnedByManager(
+            storeId: id,
+            expectedManagerId: currentUserId,
+            in: service.privateDB
+        )
 
-        var recordIDsToDelete: [CKRecord.ID] = [storeRecord.recordID]
+        let publicStoreRecord: CKRecord?
+        do {
+            publicStoreRecord = try await fetchStoreRecordIfOwnedByManager(
+                storeId: id,
+                expectedManagerId: currentUserId,
+                in: service.publicDB
+            )
+        } catch {
+            guard isRecoverableManagerStoreError(error) else {
+                throw error
+            }
+            AppLog.warning("Public store lookup skipped during deleteStore for store=\(id): \(AppLog.sanitize(error.localizedDescription))")
+            publicStoreRecord = nil
+        }
+
+        guard privateStoreRecord != nil || publicStoreRecord != nil else {
+            throw CloudKitClientError.missingRecord("Store not found.")
+        }
+
+        var publicRecordIDsToDelete: [CKRecord.ID] = []
+        if let publicStoreRecord {
+            publicRecordIDsToDelete.append(publicStoreRecord.recordID)
+        }
         var employeeIds = Set<String>()
 
         do {
@@ -140,7 +183,7 @@ final class CloudKitStoreRepository: StoreRepositoryProtocol {
                     employeeIds.insert(employeeId)
                 }
             }
-            recordIDsToDelete.append(contentsOf: memberships.map(\.recordID))
+            publicRecordIDsToDelete.append(contentsOf: memberships.map(\.recordID))
         } catch {
             guard isRecoverableManagerStoreError(error) else {
                 throw error
@@ -148,21 +191,40 @@ final class CloudKitStoreRepository: StoreRepositoryProtocol {
             AppLog.warning("Membership lookup skipped during deleteStore: \(AppLog.sanitize(error.localizedDescription))")
         }
 
-        let checkIns = try await service.queryRecords(
-            recordType: CKSchema.RecordType.checkInSession,
-            predicate: NSPredicate(format: "%K == %@", CKSchema.CheckInField.storeId, id)
-        )
-        recordIDsToDelete.append(contentsOf: checkIns.map(\.recordID))
-
-        let uniqueRecordIDs = Array(Set(recordIDsToDelete.map(\.recordName))).map { CKRecord.ID(recordName: $0) }
-        if !uniqueRecordIDs.isEmpty {
-            _ = try await service.modify(recordsToSave: [], recordIDsToDelete: uniqueRecordIDs, atomic: false)
+        do {
+            let checkIns = try await service.queryRecords(
+                recordType: CKSchema.RecordType.checkInSession,
+                predicate: NSPredicate(format: "%K == %@", CKSchema.CheckInField.storeId, id)
+            )
+            publicRecordIDsToDelete.append(contentsOf: checkIns.map(\.recordID))
+        } catch {
+            guard isRecoverableManagerStoreError(error) else {
+                throw error
+            }
+            AppLog.warning("Check-in lookup skipped during deleteStore: \(AppLog.sanitize(error.localizedDescription))")
         }
 
-        do {
-            try await service.deleteRecord(with: storeRecord.recordID, in: service.privateDB)
-        } catch {
-            AppLog.warning("Private store delete skipped for store=\(id): \(AppLog.sanitize(error.localizedDescription))")
+        let uniquePublicRecordIDs = Array(Set(publicRecordIDsToDelete.map(\.recordName))).map { CKRecord.ID(recordName: $0) }
+        if !uniquePublicRecordIDs.isEmpty {
+            do {
+                _ = try await service.modify(
+                    recordsToSave: [],
+                    recordIDsToDelete: uniquePublicRecordIDs,
+                    atomic: false,
+                    in: service.publicDB
+                )
+            } catch {
+                guard isRecoverableManagerStoreError(error) else {
+                    throw error
+                }
+                AppLog.warning("Public cleanup skipped during deleteStore for store=\(id): \(AppLog.sanitize(error.localizedDescription))")
+            }
+        }
+
+        if let privateStoreRecord {
+            try await service.deleteRecord(with: privateStoreRecord.recordID, in: service.privateDB)
+        } else {
+            AppLog.warning("Private store record missing during deleteStore; completed using public-only cleanup for store=\(id)")
         }
 
         await syncManagerOwnedStoreIdsBestEffort(managerId: currentUserId, storeId: id, isAdding: false, context: "deleteStore")
@@ -178,14 +240,17 @@ final class CloudKitStoreRepository: StoreRepositoryProtocol {
         let currentUserId = try service.requireCurrentUserId()
         try validateStore(name: name, address: address, latitude: latitude, longitude: longitude, radiusMeters: radiusMeters)
 
-        let managerProfile = try await currentUserProfile(userId: currentUserId)
-        if let managerProfile {
-            guard managerProfile.role == .manager else {
-                throw CloudKitClientError.unauthorized
+        if let signedInUser = authService.currentUser, signedInUser.id == currentUserId {
+            guard signedInUser.role == .manager else {
+                throw CloudKitClientError.invalidData("Manager access is required to create stores.")
             }
-            guard managerProfile.isActive else {
+            guard signedInUser.isActive else {
                 throw CloudKitClientError.invalidData("Your manager account is inactive.")
             }
+        } else if service.currentRole != .manager {
+            throw CloudKitClientError.invalidData("Manager access is required to create stores.")
+        } else {
+            AppLog.warning("Manager profile not available in session during createStore; proceeding with current manager identity")
         }
 
         let storeId = UUID().uuidString
@@ -217,8 +282,8 @@ final class CloudKitStoreRepository: StoreRepositoryProtocol {
             managerPublicRecordID: nil
         )
 
-        _ = try await service.save(record: record, in: service.privateDB)
-        await mirrorStoreRecordBestEffort(record, context: "createStore")
+        let savedRecord = try await saveManagerStoreRecord(record, context: "createStore")
+        await mirrorStoreRecordBestEffort(savedRecord, context: "createStore")
         await syncManagerOwnedStoreIdsBestEffort(managerId: currentUserId, storeId: store.id, isAdding: true, context: "createStore")
 
         return StoreCreationResult(store: store, joinCode: joinCode)
@@ -236,8 +301,8 @@ final class CloudKitStoreRepository: StoreRepositoryProtocol {
         record[CKSchema.StoreField.joinCodeLast4] = String(newCode.suffix(4)) as CKRecordValue
         record[CKSchema.StoreField.updatedAt] = Date() as CKRecordValue
 
-        _ = try await service.save(record: record, in: service.privateDB)
-        await mirrorStoreRecordBestEffort(record, context: "rotateStoreCode")
+        let savedRecord = try await saveManagerStoreRecord(record, context: "rotateStoreCode")
+        await mirrorStoreRecordBestEffort(savedRecord, context: "rotateStoreCode")
         return newCode
     }
 
@@ -522,7 +587,14 @@ final class CloudKitStoreRepository: StoreRepositoryProtocol {
                 }
 
                 let privateRecord = cloneStoreRecord(publicRecord, includeManagerReference: false, managerPublicRecordID: nil)
-                _ = try await service.save(record: privateRecord, in: service.privateDB)
+                do {
+                    _ = try await service.save(record: privateRecord, in: service.privateDB)
+                } catch {
+                    guard isRecoverableManagerStoreError(error) else {
+                        throw error
+                    }
+                    AppLog.warning("Private canonical store seed failed for store=\(storeId); using in-memory private clone: \(AppLog.sanitize(error.localizedDescription))")
+                }
                 return privateRecord
             }
         } catch {
@@ -533,6 +605,21 @@ final class CloudKitStoreRepository: StoreRepositoryProtocol {
         }
 
         throw CloudKitClientError.missingRecord("Store not found.")
+    }
+
+    private func fetchStoreRecordIfOwnedByManager(
+        storeId: String,
+        expectedManagerId: String,
+        in database: CKDatabase
+    ) async throws -> CKRecord? {
+        let recordID = CloudKitService.storeRecordID(storeId: storeId)
+        guard let record = try await service.fetchRecord(with: recordID, in: database) else {
+            return nil
+        }
+        guard record.string(CKSchema.StoreField.managerUserId) == expectedManagerId else {
+            throw CloudKitClientError.unauthorized
+        }
+        return record
     }
 
     private func populateStoreRecord(
@@ -624,6 +711,63 @@ final class CloudKitStoreRepository: StoreRepositoryProtocol {
                 _ = try await service.save(record: record, in: service.privateDB)
             } catch {
                 AppLog.warning("Private manager store seed skipped for store=\(store.id): \(AppLog.sanitize(error.localizedDescription))")
+            }
+        }
+    }
+
+    private func saveManagerStoreRecord(_ record: CKRecord, context: String) async throws -> CKRecord {
+        do {
+            return try await service.save(record: record, in: service.privateDB)
+        } catch let privateError {
+            guard isRecoverableManagerStoreError(privateError) else {
+                throw privateError
+            }
+
+            AppLog.warning("Manager store private save failed context=\(context): \(AppLog.sanitize(privateError.localizedDescription))")
+
+            do {
+                let (savedRecords, _) = try await service.modify(
+                    recordsToSave: [record],
+                    savePolicy: .allKeys,
+                    atomic: true,
+                    in: service.privateDB
+                )
+                if let saved = savedRecords.first {
+                    AppLog.info("Manager store private modify fallback succeeded context=\(context) store=\(saved.recordID.recordName)")
+                    return saved
+                }
+            } catch let privateModifyError {
+                guard isRecoverableManagerStoreError(privateModifyError) else {
+                    throw privateModifyError
+                }
+                AppLog.warning(
+                    "Manager store private modify fallback failed context=\(context): \(AppLog.sanitize(privateModifyError.localizedDescription))"
+                )
+            }
+
+            let managerPublicRecordID: CKRecord.ID?
+            if let managerUserId = record.string(CKSchema.StoreField.managerUserId) {
+                managerPublicRecordID = await userProfileStore.resolvePublicUserRecordID(userId: managerUserId)
+            } else {
+                managerPublicRecordID = nil
+            }
+
+            let publicRecord = cloneStoreRecord(
+                record,
+                includeManagerReference: managerPublicRecordID != nil,
+                managerPublicRecordID: managerPublicRecordID
+            )
+
+            do {
+                let saved = try await service.save(record: publicRecord, in: service.publicDB)
+                AppLog.warning("Manager store persisted in public scope only context=\(context) store=\(saved.recordID.recordName)")
+                return saved
+            } catch let publicError {
+                guard isRecoverableManagerStoreError(publicError) else {
+                    throw publicError
+                }
+                AppLog.warning("Manager store public fallback failed context=\(context): \(AppLog.sanitize(publicError.localizedDescription))")
+                throw privateError
             }
         }
     }

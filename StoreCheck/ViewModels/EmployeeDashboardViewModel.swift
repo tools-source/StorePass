@@ -20,27 +20,31 @@ final class EmployeeDashboardViewModel: ObservableObject {
     @Published var isCheckInInProgress = false
     @Published var isCheckOutInProgress = false
 
-    private let authService: AuthService
+    private let authService: AuthServiceProtocol
     private let storeRepository: StoreRepositoryProtocol
     private let checkInService: CheckInServiceProtocol
     private let checkInRepository: CheckInRepositoryProtocol
     private let locationService: LocationServiceProtocol
 
-    private let verifyReadDelayNanoseconds: UInt64 = 1_500_000_000
-    private let verifyAccuracyThresholdMeters: Double = 65
+    private let verifyReadDelayNanoseconds: UInt64
+    private let verifyAccuracyThresholdMeters: Double
 
     init(
-        authService: AuthService,
+        authService: AuthServiceProtocol,
         storeRepository: StoreRepositoryProtocol,
         checkInService: CheckInServiceProtocol,
         checkInRepository: CheckInRepositoryProtocol,
-        locationService: LocationServiceProtocol
+        locationService: LocationServiceProtocol,
+        verifyReadDelayNanoseconds: UInt64 = 1_500_000_000,
+        verifyAccuracyThresholdMeters: Double = 65
     ) {
         self.authService = authService
         self.storeRepository = storeRepository
         self.checkInService = checkInService
         self.checkInRepository = checkInRepository
         self.locationService = locationService
+        self.verifyReadDelayNanoseconds = verifyReadDelayNanoseconds
+        self.verifyAccuracyThresholdMeters = verifyAccuracyThresholdMeters
     }
 
     private enum Verify2ReadError: LocalizedError {

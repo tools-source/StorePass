@@ -153,6 +153,85 @@ func decodeStore(record: CKRecord) -> Store? {
     )
 }
 
+struct CloudKitMigrationPolicy {
+    func shouldSuppress(
+        _ error: Error,
+        tolerateLookupErrors: Bool,
+        suppressPermissionErrors: Bool
+    ) -> Bool {
+        if suppressPermissionErrors,
+           let clientError = error as? CloudKitClientError,
+           case .unauthorized = clientError {
+            AppLog.warning("ProfileStore shouldSuppress=true for CloudKitClientError.unauthorized")
+            return true
+        }
+
+        if suppressPermissionErrors,
+           let ckError = error as? CKError,
+           ckError.code == .permissionFailure {
+            AppLog.warning("ProfileStore shouldSuppress=true for CKError.permissionFailure")
+            return true
+        }
+
+        if tolerateLookupErrors && isSchemaMismatch(error) {
+            AppLog.warning("ProfileStore shouldSuppress=true for schema mismatch")
+            return true
+        }
+
+        if tolerateLookupErrors,
+           let ckError = error as? CKError,
+           ckError.code == .unknownItem {
+            AppLog.warning("ProfileStore shouldSuppress=true for CKError.unknownItem")
+            return true
+        }
+
+        return false
+    }
+
+    func shouldFallbackToLegacyAfterPrimarySaveFailure(_ error: Error) -> Bool {
+        if isSchemaMismatch(error) {
+            AppLog.warning("ProfileStore shouldFallbackToLegacyAfterPrimarySaveFailure=true due to schema mismatch")
+            return true
+        }
+
+        if let clientError = error as? CloudKitClientError,
+           case .unauthorized = clientError {
+            AppLog.warning("ProfileStore shouldFallbackToLegacyAfterPrimarySaveFailure=true due to unauthorized")
+            return true
+        }
+
+        if let ckError = error as? CKError,
+           ckError.code == .permissionFailure {
+            AppLog.warning("ProfileStore shouldFallbackToLegacyAfterPrimarySaveFailure=true due to CKError.permissionFailure")
+            return true
+        }
+
+        return false
+    }
+
+    func isSchemaMismatch(_ error: Error) -> Bool {
+        if let ckError = error as? CKError {
+            switch ckError.code {
+            case .invalidArguments, .serverRejectedRequest, .unknownItem:
+                return true
+            case .partialFailure:
+                if let partial = ckError.userInfo[CKPartialErrorsByItemIDKey] as? [AnyHashable: Error],
+                   !partial.isEmpty {
+                    return partial.values.allSatisfy { isSchemaMismatch($0) }
+                }
+                return true
+            default:
+                break
+            }
+        }
+
+        let description = error.localizedDescription.lowercased()
+        return description.contains("record type") ||
+            description.contains("schema") ||
+            description.contains("unknown field")
+    }
+}
+
 @MainActor
 final class CloudKitService {
     let container: CKContainer
@@ -462,20 +541,22 @@ final class CloudKitService {
 
     nonisolated func mapCloudKitError(_ error: Error, context: String?) -> Error {
         guard let ckError = error as? CKError else { return error }
+        let normalizedError = normalizeCloudKitError(ckError)
+        let normalizedDescription = normalizedError.localizedDescription.lowercased()
 
-        let nsError = ckError as NSError
+        let nsError = normalizedError as NSError
         var message = "CloudKit error mapped"
         if let context {
             message += " [\(context)]"
         }
-        message += " code=\(ckError.code.rawValue) (\(ckError.code))"
+        message += " code=\(normalizedError.code.rawValue) (\(normalizedError.code))"
         message += " domain=\(nsError.domain)"
-        message += " message=\(AppLog.sanitize(ckError.localizedDescription))"
-        if let retryAfter = ckError.userInfo[CKErrorRetryAfterKey] as? TimeInterval {
+        message += " message=\(AppLog.sanitize(normalizedError.localizedDescription))"
+        if let retryAfter = normalizedError.userInfo[CKErrorRetryAfterKey] as? TimeInterval {
             message += " retryAfter=\(retryAfter)"
         }
-        if ckError.code == .partialFailure,
-           let partial = ckError.userInfo[CKPartialErrorsByItemIDKey] as? [AnyHashable: Error] {
+        if normalizedError.code == .partialFailure,
+           let partial = normalizedError.userInfo[CKPartialErrorsByItemIDKey] as? [AnyHashable: Error] {
             let partialCodes = partial.values.compactMap { ($0 as? CKError)?.code.rawValue }
             message += " partialCount=\(partial.count)"
             if !partialCodes.isEmpty {
@@ -484,7 +565,31 @@ final class CloudKitService {
         }
         AppLog.warning(message)
 
-        switch ckError.code {
+        if CloudKitMigrationPolicy().isSchemaMismatch(normalizedError) {
+            return CloudKitClientError.invalidData(
+                "CloudKit schema mismatch detected. Deploy schema updates for User, Store, StoreMember, and CheckInSession before retrying."
+            )
+        }
+
+        if normalizedError.code == .permissionFailure,
+           normalizedDescription.contains("invalid bundle id") &&
+           normalizedDescription.contains("container") {
+            let bundleID = Bundle.main.bundleIdentifier ?? "unknown"
+            let expectedContainer = "iCloud.\(bundleID)"
+            let signing = SigningDiagnostics.snapshot()
+            let signedAppIdentifier = signing.applicationIdentifier ?? "unknown"
+            let entitledContainers = signing.iCloudContainerIdentifiers.isEmpty
+                ? "none"
+                : signing.iCloudContainerIdentifiers.joined(separator: ",")
+            return CloudKitClientError.invalidData(
+                "CloudKit rejected this app identity (Invalid bundle ID for container). " +
+                "bundleID='\(bundleID)' expectedContainer='\(expectedContainer)' " +
+                "signedAppIdentifier='\(signedAppIdentifier)' entitledContainers='\(entitledContainers)'. " +
+                "In Apple Developer and Xcode, link this bundle ID to that container, regenerate profiles, rebuild, and retry."
+            )
+        }
+
+        switch normalizedError.code {
         case .notAuthenticated:
             return CloudKitClientError.iCloudUnavailable
         case .permissionFailure:
@@ -494,8 +599,25 @@ final class CloudKitService {
         case .networkUnavailable, .networkFailure, .serviceUnavailable, .requestRateLimited:
             return NSError(domain: "StorePass", code: 9202, userInfo: [NSLocalizedDescriptionKey: "CloudKit is temporarily unavailable. Please retry."])
         default:
-            return ckError
+            return normalizedError
         }
+    }
+
+    nonisolated private func normalizeCloudKitError(_ error: CKError) -> CKError {
+        guard error.code == .partialFailure,
+              let partial = error.userInfo[CKPartialErrorsByItemIDKey] as? [AnyHashable: Error],
+              !partial.isEmpty else {
+            return error
+        }
+
+        let ckPartialErrors = partial.values.compactMap { $0 as? CKError }
+        if ckPartialErrors.count == partial.count,
+           let first = ckPartialErrors.first,
+           ckPartialErrors.allSatisfy({ $0.code == first.code }) {
+            return first
+        }
+
+        return error
     }
 
     private func databaseScopeName(_ database: CKDatabase) -> String {
@@ -565,6 +687,7 @@ protocol UserProfileStoreProtocol {
 @MainActor
 final class CloudKitUserProfileStore: UserProfileStoreProtocol {
     private let service: CloudKitService
+    private let migrationPolicy = CloudKitMigrationPolicy()
 
     init(service: CloudKitService) {
         self.service = service
@@ -903,77 +1026,19 @@ final class CloudKitUserProfileStore: UserProfileStoreProtocol {
         tolerateLookupErrors: Bool,
         suppressPermissionErrors: Bool
     ) -> Bool {
-        if suppressPermissionErrors,
-           let clientError = error as? CloudKitClientError {
-            if case .unauthorized = clientError {
-                AppLog.warning("ProfileStore shouldSuppress=true for CloudKitClientError.unauthorized")
-                return true
-            }
-        }
-
-        if suppressPermissionErrors,
-           let ckError = error as? CKError,
-           ckError.code == .permissionFailure {
-            AppLog.warning("ProfileStore shouldSuppress=true for CKError.permissionFailure")
-            return true
-        }
-
-        if tolerateLookupErrors && isSchemaMismatch(error) {
-            AppLog.warning("ProfileStore shouldSuppress=true for schema mismatch")
-            return true
-        }
-
-        if tolerateLookupErrors,
-           let ckError = error as? CKError,
-           ckError.code == .unknownItem {
-            AppLog.warning("ProfileStore shouldSuppress=true for CKError.unknownItem")
-            return true
-        }
-
-        return false
+        migrationPolicy.shouldSuppress(
+            error,
+            tolerateLookupErrors: tolerateLookupErrors,
+            suppressPermissionErrors: suppressPermissionErrors
+        )
     }
 
     private func shouldFallbackToLegacyAfterPrimarySaveFailure(_ error: Error) -> Bool {
-        if isSchemaMismatch(error) {
-            AppLog.warning("ProfileStore shouldFallbackToLegacyAfterPrimarySaveFailure=true due to schema mismatch")
-            return true
-        }
-
-        if let clientError = error as? CloudKitClientError,
-           case .unauthorized = clientError {
-            AppLog.warning("ProfileStore shouldFallbackToLegacyAfterPrimarySaveFailure=true due to unauthorized")
-            return true
-        }
-
-        if let ckError = error as? CKError,
-           ckError.code == .permissionFailure {
-            AppLog.warning("ProfileStore shouldFallbackToLegacyAfterPrimarySaveFailure=true due to CKError.permissionFailure")
-            return true
-        }
-
-        return false
+        migrationPolicy.shouldFallbackToLegacyAfterPrimarySaveFailure(error)
     }
 
     private func isSchemaMismatch(_ error: Error) -> Bool {
-        if let ckError = error as? CKError {
-            switch ckError.code {
-            case .invalidArguments, .serverRejectedRequest, .unknownItem:
-                return true
-            case .partialFailure:
-                if let partial = ckError.userInfo[CKPartialErrorsByItemIDKey] as? [AnyHashable: Error],
-                   !partial.isEmpty {
-                    return partial.values.allSatisfy { isSchemaMismatch($0) }
-                }
-                return true
-            default:
-                break
-            }
-        }
-
-        let description = error.localizedDescription.lowercased()
-        return description.contains("record type") ||
-            description.contains("schema") ||
-            description.contains("unknown field")
+        migrationPolicy.isSchemaMismatch(error)
     }
 
     private func normalizeEmail(_ value: String?) -> String? {
