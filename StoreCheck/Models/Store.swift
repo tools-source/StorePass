@@ -67,6 +67,9 @@ enum StoreActivityEventKind: String, Codable {
     case checkedOut
     case employeeJoined
     case employeeRemoved
+    case storeCreated
+    case storeUpdated
+    case broadcastSent
 }
 
 struct StoreActivityEvent: Identifiable, Hashable, Codable {
@@ -90,6 +93,12 @@ struct StoreActivityEvent: Identifiable, Hashable, Codable {
             return "Joined store"
         case .employeeRemoved:
             return "Removed from store"
+        case .storeCreated:
+            return "Store created"
+        case .storeUpdated:
+            return "Store updated"
+        case .broadcastSent:
+            return "Broadcast sent"
         }
     }
 }

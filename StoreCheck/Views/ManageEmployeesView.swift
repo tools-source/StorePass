@@ -2,12 +2,14 @@ import SwiftUI
 
 struct EmployeeManagementView: View {
     @StateObject private var viewModel: EmployeeManagementViewModel
+    private let checkInRepository: CheckInRepositoryProtocol
 
     init(
         employeeRepository: EmployeeManagementRepositoryProtocol,
         authRepository: AuthRepositoryProtocol,
         checkInRepository: CheckInRepositoryProtocol
     ) {
+        self.checkInRepository = checkInRepository
         _viewModel = StateObject(
             wrappedValue: EmployeeManagementViewModel(
                 employeeRepository: employeeRepository,
@@ -42,11 +44,55 @@ struct EmployeeManagementView: View {
                             VStack(spacing: DS.Spacing.s) {
                                 ForEach(viewModel.filteredEmployees) { employee in
                                     NavigationLink {
-                                        EmployeeDetailView(employeeId: employee.id, initialEmployee: employee, viewModel: viewModel)
+                                        EmployeeDetailView(
+                                            employeeId: employee.id,
+                                            initialEmployee: employee,
+                                            viewModel: viewModel,
+                                            checkInRepository: checkInRepository
+                                        )
                                     } label: {
                                         employeeRow(employee)
                                     }
                                     .buttonStyle(.plain)
+                                    .swipeActions(edge: .leading, allowsFullSwipe: false) {
+                                        Button {
+                                            Task {
+                                                await viewModel.loadWorkSummary(for: employee)
+                                                await viewModel.loadAttendanceInsight(for: employee)
+                                            }
+                                        } label: {
+                                            Label("Refresh", systemImage: "arrow.clockwise")
+                                        }
+                                        .tint(DS.Colors.primary)
+                                    }
+                                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                        if employee.userIsActive {
+                                            Button {
+                                                Task { await viewModel.setActive(employeeId: employee.id, isActive: false) }
+                                            } label: {
+                                                Label("Deactivate", systemImage: "person.fill.xmark")
+                                            }
+                                            .tint(DS.Colors.warning)
+                                        } else {
+                                            Button {
+                                                Task { await viewModel.setActive(employeeId: employee.id, isActive: true) }
+                                            } label: {
+                                                Label("Activate", systemImage: "person.fill.checkmark")
+                                            }
+                                            .tint(DS.Colors.success)
+                                        }
+
+                                        if !employee.storeIds.isEmpty {
+                                            Button(role: .destructive) {
+                                                let preferredStoreId = viewModel.selectedStoreId == EmployeeManagementViewModel.allStoresFilter
+                                                    ? employee.storeIds.first
+                                                    : viewModel.selectedStoreId
+                                                viewModel.prepareRemoval(for: employee, preferredStoreId: preferredStoreId)
+                                            } label: {
+                                                Label("Remove", systemImage: "person.crop.circle.badge.minus")
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -149,8 +195,11 @@ private struct EmployeeDetailView: View {
     let employeeId: String
     let initialEmployee: EmployeeSummary
     @ObservedObject var viewModel: EmployeeManagementViewModel
+    let checkInRepository: CheckInRepositoryProtocol
     @State private var editedName = ""
     @State private var editedHourlyRate = ""
+    @State private var editedExpectedStartEnabled = false
+    @State private var editedExpectedStartDate = Date()
     @State private var isSavingProfile = false
     @State private var selectedRemovalStoreId = ""
     @FocusState private var focusedField: FormField?
@@ -159,11 +208,16 @@ private struct EmployeeDetailView: View {
         viewModel.employee(withId: employeeId) ?? initialEmployee
     }
 
+    private var attendanceInsight: EmployeeManagementViewModel.EmployeeAttendanceInsight? {
+        viewModel.attendanceInsight(for: employee.id)
+    }
+
     var body: some View {
         ScrollView {
             VStack(spacing: DS.Spacing.m) {
                 profileCard
                 editProfileCard
+                recentAttendanceCard
                 membershipsCard
                 actionsCard
             }
@@ -185,11 +239,18 @@ private struct EmployeeDetailView: View {
         .task {
             seedEditableFields()
             await viewModel.loadWorkSummary(for: employee)
+            await viewModel.loadAttendanceInsight(for: employee)
         }
         .onReceive(NotificationCenter.default.publisher(for: .cloudKitDidReceiveRemoteChange)) { _ in
-            Task { await viewModel.loadWorkSummary(for: employee) }
+            Task {
+                await viewModel.loadWorkSummary(for: employee)
+                await viewModel.loadAttendanceInsight(for: employee)
+            }
         }
         .onChange(of: employee.name) { _, _ in
+            seedEditableFields()
+        }
+        .onChange(of: employee.expectedStartMinutesFromMidnight) { _, _ in
             seedEditableFields()
         }
         .onChange(of: employee.storeIds) { _, _ in
@@ -202,6 +263,12 @@ private struct EmployeeDetailView: View {
             VStack(alignment: .leading, spacing: DS.Spacing.s) {
                 ScreenHeader(title: employee.name, subtitle: employee.email ?? "No email", icon: "person.crop.circle")
                 KeyValueRow(title: "Status", value: employee.userIsActive ? "Active" : "Inactive")
+                KeyValueRow(title: "Assigned Stores", value: viewModel.storeSummary(for: employee))
+                KeyValueRow(title: "Current Shift", value: currentShiftStatusText)
+                KeyValueRow(title: "Last Check-In", value: lastCheckInText)
+                KeyValueRow(title: "Today Hours", value: DurationFormatter.clockString(from: attendanceInsight?.todayWorkedSeconds ?? 0))
+                KeyValueRow(title: "This Week Hours", value: DurationFormatter.clockString(from: attendanceInsight?.weekWorkedSeconds ?? 0))
+                KeyValueRow(title: "Lateness", value: latenessText)
                 KeyValueRow(title: "Memberships", value: "\(employee.storeNames.count)")
                 KeyValueRow(title: "Hourly Salary", value: viewModel.hourlyRateText(for: employee))
                 KeyValueRow(title: "Approved Sessions", value: viewModel.approvedSessionsText(for: employee.id))
@@ -219,7 +286,7 @@ private struct EmployeeDetailView: View {
     private var editProfileCard: some View {
         CardView {
             VStack(alignment: .leading, spacing: DS.Spacing.s) {
-                ScreenHeader(title: "Edit Employee", subtitle: "Name and pay rate", icon: "pencil.and.list.clipboard")
+                ScreenHeader(title: "Edit Employee", subtitle: "Name, pay rate, and expected start", icon: "pencil.and.list.clipboard")
 
                 TextField("Full name", text: $editedName)
                     .textInputAutocapitalization(.words)
@@ -247,11 +314,89 @@ private struct EmployeeDetailView: View {
                     .frame(height: DS.Metrics.rowHeight)
                     .background(DS.Colors.elevated.opacity(0.75), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
 
+                Toggle("Set expected start time", isOn: $editedExpectedStartEnabled)
+
+                if editedExpectedStartEnabled {
+                    DatePicker("Expected Start", selection: $editedExpectedStartDate, displayedComponents: [.hourAndMinute])
+                        .datePickerStyle(.compact)
+
+                    Text("Used for late-arrival detection when the employee checks in.")
+                        .font(DS.Typography.micro)
+                        .foregroundStyle(DS.Colors.textSecondary)
+                }
+
                 Button(isSavingProfile ? "Saving..." : "Save Employee") {
                     Task { await saveProfile() }
                 }
                 .buttonStyle(PrimaryButtonStyle())
                 .disabled(isSavingProfile || editedName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var recentAttendanceCard: some View {
+        CardView {
+            VStack(alignment: .leading, spacing: DS.Spacing.s) {
+                ScreenHeader(
+                    title: "Recent Attendance",
+                    subtitle: "Open records to view check-in and check-out photos",
+                    icon: "clock.badge.checkmark"
+                )
+
+                if viewModel.loadingAttendanceInsightEmployeeIds.contains(employee.id),
+                   attendanceInsight == nil {
+                    ProgressView("Loading attendance...")
+                        .tint(DS.Colors.primary)
+                } else if let attendanceInsight, attendanceInsight.recentSessions.isEmpty {
+                    Text("No attendance records found for this employee yet.")
+                        .font(DS.Typography.caption)
+                        .foregroundStyle(DS.Colors.textSecondary)
+                } else if let attendanceInsight {
+                    VStack(spacing: DS.Spacing.xs) {
+                        ForEach(attendanceInsight.recentSessions) { session in
+                            NavigationLink {
+                                EmployeeAttendanceRecordDetailView(
+                                    checkIn: session,
+                                    checkInRepository: checkInRepository
+                                )
+                            } label: {
+                                HStack(alignment: .top, spacing: DS.Spacing.s) {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(session.storeName)
+                                            .font(DS.Typography.caption.weight(.semibold))
+                                            .foregroundStyle(DS.Colors.textPrimary)
+                                        Text(
+                                            "\(session.checkInTime.formatted(date: .abbreviated, time: .shortened)) " +
+                                            "→ \(session.checkOutTime?.formatted(date: .omitted, time: .shortened) ?? "Open")"
+                                        )
+                                        .font(DS.Typography.micro)
+                                        .foregroundStyle(DS.Colors.textSecondary)
+                                    }
+
+                                    Spacer()
+
+                                    VStack(alignment: .trailing, spacing: 4) {
+                                        if session.checkOutTime == nil {
+                                            StatBadge(style: .open, text: "Checked in")
+                                        } else {
+                                            StatBadge(style: .closed, text: "Checked out")
+                                        }
+                                        if let lateByMinutes = session.lateByMinutes, lateByMinutes > 0 {
+                                            StatBadge(style: .open, text: "Late • \(lateByMinutes)m")
+                                        }
+                                        if let method = session.checkInMethod {
+                                            StatBadge(style: .neutral, text: method.rawValue.uppercased())
+                                        }
+                                    }
+                                }
+                                .padding(10)
+                                .background(DS.Colors.elevated.opacity(0.65), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -306,6 +451,11 @@ private struct EmployeeDetailView: View {
                 }
                 .buttonStyle(DestructiveButtonStyle())
                 .disabled(selectedRemovalStoreId.isEmpty || removableStores.isEmpty)
+
+                Button(employee.userIsActive ? "Deactivate Account" : "Reactivate Account") {
+                    Task { await viewModel.setActive(employeeId: employee.id, isActive: !employee.userIsActive) }
+                }
+                .buttonStyle(SecondaryButtonStyle())
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -319,6 +469,15 @@ private struct EmployeeDetailView: View {
         } else {
             editedHourlyRate = ""
         }
+
+        if let expectedStartMinutes = employee.expectedStartMinutesFromMidnight {
+            editedExpectedStartEnabled = true
+            editedExpectedStartDate = expectedStartDate(from: expectedStartMinutes)
+        } else {
+            editedExpectedStartEnabled = false
+            editedExpectedStartDate = expectedStartDate(from: 9 * 60)
+        }
+
         seedRemovalStoreSelectionIfNeeded()
     }
 
@@ -360,14 +519,95 @@ private struct EmployeeDetailView: View {
             return
         }
 
+        let expectedStartMinutes: Int?
+        if editedExpectedStartEnabled {
+            expectedStartMinutes = expectedStartMinutesFromDate(editedExpectedStartDate)
+        } else {
+            expectedStartMinutes = nil
+        }
+
         isSavingProfile = true
         await viewModel.updateEmployeeProfile(
             employeeId: employee.id,
             name: trimmedName,
             hourlyRateCents: hourlyRateCents,
-            expectedStartMinutesFromMidnight: employee.expectedStartMinutesFromMidnight
+            expectedStartMinutesFromMidnight: expectedStartMinutes
         )
         isSavingProfile = false
+    }
+
+    private var currentShiftStatusText: String {
+        guard let attendanceInsight else { return "—" }
+        if attendanceInsight.activeSession != nil {
+            return "Checked in"
+        }
+        return employee.userIsActive ? "Not checked in" : "Inactive"
+    }
+
+    private var lastCheckInText: String {
+        guard let checkIn = attendanceInsight?.lastCheckIn else { return "—" }
+        return checkIn.checkInTime.formatted(date: .abbreviated, time: .shortened)
+    }
+
+    private var latenessText: String {
+        guard let lateByMinutes = attendanceInsight?.latestLateByMinutes, lateByMinutes > 0 else {
+            return "On time"
+        }
+        return "Late • \(lateByMinutes) min"
+    }
+
+    private func expectedStartDate(from minutes: Int) -> Date {
+        let clamped = min(max(minutes, 0), 1_439)
+        let hour = clamped / 60
+        let minute = clamped % 60
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .current
+        let now = Date()
+        var components = calendar.dateComponents([.year, .month, .day], from: now)
+        components.hour = hour
+        components.minute = minute
+        components.second = 0
+        return calendar.date(from: components) ?? now
+    }
+
+    private func expectedStartMinutesFromDate(_ date: Date) -> Int {
+        let components = Calendar.current.dateComponents([.hour, .minute], from: date)
+        let hour = components.hour ?? 0
+        let minute = components.minute ?? 0
+        return min(max(hour * 60 + minute, 0), 1_439)
+    }
+}
+
+private struct EmployeeAttendanceRecordDetailView: View {
+    let checkIn: CheckIn
+    let checkInRepository: CheckInRepositoryProtocol
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: DS.Spacing.m) {
+                CardView {
+                    VStack(alignment: .leading, spacing: DS.Spacing.s) {
+                        ScreenHeader(title: checkIn.employeeName, subtitle: checkIn.storeName, icon: "person.crop.square")
+                        KeyValueRow(title: "Check-In", value: checkIn.checkInTime.formatted(date: .abbreviated, time: .shortened))
+                        KeyValueRow(title: "Check-Out", value: checkIn.checkOutTime?.formatted(date: .abbreviated, time: .shortened) ?? "Open")
+                        KeyValueRow(title: "Status", value: checkIn.status.rawValue.capitalized)
+                        if let lateByMinutes = checkIn.lateByMinutes, lateByMinutes > 0 {
+                            KeyValueRow(title: "Lateness", value: "Late • \(lateByMinutes) min")
+                        } else {
+                            KeyValueRow(title: "Lateness", value: "On time")
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                ManagerVerificationPhotoSection(checkIn: checkIn, checkInRepository: checkInRepository)
+            }
+            .frame(maxWidth: DS.Metrics.maxReadableWidth)
+            .padding(.horizontal, DS.Spacing.m)
+            .padding(.vertical, DS.Spacing.m)
+        }
+        .background(AppBackground())
+        .navigationTitle("Attendance Detail")
     }
 }
 

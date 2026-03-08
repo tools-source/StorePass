@@ -1,3 +1,4 @@
+import CoreImage.CIFilterBuiltins
 import MapKit
 import SwiftUI
 import UIKit
@@ -59,7 +60,7 @@ struct ManageStoresView: View {
                                 ForEach(viewModel.stores) { store in
                                     NavigationLink {
                                         StoreDetailView(
-                                            store: store,
+                                            storeId: store.id,
                                             viewModel: viewModel,
                                             managerId: container.authRepository.currentUserId,
                                             onDelete: { deletingStore = store }
@@ -68,6 +69,26 @@ struct ManageStoresView: View {
                                         storeRow(store)
                                     }
                                     .buttonStyle(.plain)
+                                    .swipeActions(edge: .leading, allowsFullSwipe: false) {
+                                        Button {
+                                            Task {
+                                                await viewModel.rotateStoreCode(
+                                                    storeId: store.id,
+                                                    managerId: container.authRepository.currentUserId
+                                                )
+                                            }
+                                        } label: {
+                                            Label("Rotate Code", systemImage: "arrow.triangle.2.circlepath")
+                                        }
+                                        .tint(DS.Colors.primary)
+                                    }
+                                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                        Button(role: .destructive) {
+                                            deletingStore = store
+                                        } label: {
+                                            Label("Delete", systemImage: "trash")
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -297,6 +318,7 @@ struct ManageStoresView: View {
                 Divider()
 
                 KeyValueRow(title: "Join code", value: viewModel.resolvedJoinCode(for: store))
+                KeyValueRow(title: "QR check-in", value: store.qrCheckInEnabled ? "Enabled" : "Disabled")
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -464,72 +486,287 @@ private final class StoreAddressSearchModel: NSObject, ObservableObject, MKLocal
 }
 
 private struct StoreDetailView: View {
-    let store: Store
+    let storeId: String
     @ObservedObject var viewModel: StoreManagementViewModel
     let managerId: String?
     let onDelete: () -> Void
 
-    @State private var isRotating = false
+    @State private var isRotatingJoinCode = false
+    @State private var isRotatingQRCode = false
+    @State private var broadcastDraft = ""
+
+    private let qrContext = CIContext()
+
+    private var store: Store? {
+        viewModel.stores.first(where: { $0.id == storeId })
+    }
+
+    private var trimmedBroadcastDraft: String {
+        broadcastDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var broadcastCharacterCount: Int {
+        trimmedBroadcastDraft.count
+    }
+
+    private var messages: [BroadcastMessage] {
+        viewModel.broadcastMessages(for: storeId)
+    }
 
     var body: some View {
         ScrollView {
-            VStack(spacing: DS.Spacing.m) {
-                CardView {
-                    VStack(alignment: .leading, spacing: DS.Spacing.s) {
-                        ScreenHeader(title: store.name, subtitle: store.address, icon: "mappin.circle")
-                        KeyValueRow(title: "Latitude", value: String(format: "%.6f", store.latitude))
-                        KeyValueRow(title: "Longitude", value: String(format: "%.6f", store.longitude))
-                        KeyValueRow(title: "Radius", value: "\(store.radiusMeters)m")
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-
-                CardView {
-                    VStack(alignment: .leading, spacing: DS.Spacing.s) {
-                        ScreenHeader(title: "Join Code", subtitle: "Use this code to join the store", icon: "number")
-
-                        Text(viewModel.resolvedJoinCode(for: store))
-                            .font(.system(.title2, design: .monospaced).weight(.bold))
-                            .foregroundStyle(DS.Colors.textPrimary)
-
-                        HStack(spacing: DS.Spacing.s) {
-                            Button("Copy") {
-                                UIPasteboard.general.string = viewModel.resolvedJoinCode(for: store)
-                                viewModel.showToast("Join code copied")
-                            }
-                            .buttonStyle(SecondaryButtonStyle())
-
-                            Button(isRotating ? "Rotating..." : "Rotate") {
-                                Task {
-                                    isRotating = true
-                                    await viewModel.rotateStoreCode(storeId: store.id, managerId: managerId)
-                                    isRotating = false
-                                }
-                            }
-                            .buttonStyle(PrimaryButtonStyle())
-                            .disabled(isRotating)
+            if let store {
+                VStack(spacing: DS.Spacing.m) {
+                    CardView {
+                        VStack(alignment: .leading, spacing: DS.Spacing.s) {
+                            ScreenHeader(title: store.name, subtitle: store.address, icon: "mappin.circle")
+                            KeyValueRow(title: "Latitude", value: String(format: "%.6f", store.latitude))
+                            KeyValueRow(title: "Longitude", value: String(format: "%.6f", store.longitude))
+                            KeyValueRow(title: "Radius", value: "\(store.radiusMeters)m")
+                            KeyValueRow(title: "Time Zone", value: store.timeZoneIdentifier)
                         }
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
 
-                CardView {
-                    VStack(alignment: .leading, spacing: DS.Spacing.s) {
-                        ScreenHeader(title: "Danger Zone", subtitle: "Permanent store removal", icon: "trash")
+                    joinCodeCard(store: store)
+                    qrCodeCard(store: store)
+                    broadcastCard(store: store)
 
-                        Button("Delete Store", role: .destructive) {
-                            onDelete()
+                    CardView {
+                        VStack(alignment: .leading, spacing: DS.Spacing.s) {
+                            ScreenHeader(title: "Danger Zone", subtitle: "Permanent store removal", icon: "trash")
+
+                            Button("Delete Store", role: .destructive) {
+                                onDelete()
+                            }
+                            .buttonStyle(DestructiveButtonStyle())
                         }
-                        .buttonStyle(DestructiveButtonStyle())
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
+                .frame(maxWidth: DS.Metrics.maxReadableWidth)
+                .padding(.horizontal, DS.Spacing.m)
+                .padding(.vertical, DS.Spacing.m)
+            } else {
+                VStack {
+                    EmptyStateView(
+                        icon: "building.2.crop.circle",
+                        title: "Store unavailable",
+                        message: "This store could not be loaded. Pull to refresh and try again."
+                    )
+                }
+                .frame(maxWidth: DS.Metrics.maxReadableWidth)
+                .padding(.horizontal, DS.Spacing.m)
+                .padding(.vertical, DS.Spacing.m)
             }
-            .frame(maxWidth: DS.Metrics.maxReadableWidth)
-            .padding(.horizontal, DS.Spacing.m)
-            .padding(.vertical, DS.Spacing.m)
         }
         .background(AppBackground())
-        .navigationTitle("Store Detail")
+        .navigationTitle(store?.name ?? "Store Detail")
+        .task(id: storeId) {
+            _ = await viewModel.fetchJoinCode(storeId: storeId)
+            await viewModel.loadBroadcastMessages(storeId: storeId)
+        }
+    }
+
+    @ViewBuilder
+    private func joinCodeCard(store: Store) -> some View {
+        CardView {
+            VStack(alignment: .leading, spacing: DS.Spacing.s) {
+                ScreenHeader(title: "Join Code", subtitle: "Use this code to join the store", icon: "number")
+
+                Text(viewModel.resolvedJoinCode(for: store))
+                    .font(.system(.title2, design: .monospaced).weight(.bold))
+                    .foregroundStyle(DS.Colors.textPrimary)
+
+                HStack(spacing: DS.Spacing.s) {
+                    Button("Copy") {
+                        UIPasteboard.general.string = viewModel.resolvedJoinCode(for: store)
+                        viewModel.showToast("Join code copied")
+                    }
+                    .buttonStyle(SecondaryButtonStyle())
+
+                    Button(isRotatingJoinCode ? "Rotating..." : "Rotate") {
+                        Task {
+                            isRotatingJoinCode = true
+                            await viewModel.rotateStoreCode(storeId: store.id, managerId: managerId)
+                            isRotatingJoinCode = false
+                        }
+                    }
+                    .buttonStyle(PrimaryButtonStyle())
+                    .disabled(isRotatingJoinCode)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    @ViewBuilder
+    private func qrCodeCard(store: Store) -> some View {
+        CardView {
+            VStack(alignment: .leading, spacing: DS.Spacing.s) {
+                ScreenHeader(
+                    title: "QR Check-In",
+                    subtitle: "Employees can scan this code to check in.",
+                    icon: "qrcode.viewfinder"
+                )
+
+                Toggle(
+                    "Enable QR check-in",
+                    isOn: Binding(
+                        get: { store.qrCheckInEnabled },
+                        set: { isEnabled in
+                            Task {
+                                await viewModel.setQRCodeMode(storeId: store.id, isEnabled: isEnabled)
+                            }
+                        }
+                    )
+                )
+                .disabled(viewModel.isUpdatingStoreSettings)
+
+                if store.qrCheckInEnabled {
+                    if let payload = qrCheckInPayload(for: store),
+                       let qrImage = qrImage(from: payload) {
+                        VStack(alignment: .leading, spacing: DS.Spacing.xs) {
+                            Image(uiImage: qrImage)
+                                .interpolation(.none)
+                                .resizable()
+                                .scaledToFit()
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 220)
+                                .padding(DS.Spacing.s)
+                                .background(DS.Colors.elevated.opacity(0.7), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+
+                            Text(payload)
+                                .font(DS.Typography.micro)
+                                .foregroundStyle(DS.Colors.textSecondary)
+                                .textSelection(.enabled)
+                        }
+                    } else {
+                        Text("QR check-in is enabled, but this store does not have a valid QR token yet.")
+                            .font(DS.Typography.caption)
+                            .foregroundStyle(DS.Colors.textSecondary)
+                    }
+
+                    HStack(spacing: DS.Spacing.s) {
+                        Button("Copy QR Link") {
+                            if let payload = qrCheckInPayload(for: store) {
+                                UIPasteboard.general.string = payload
+                                viewModel.showToast("QR link copied")
+                            }
+                        }
+                        .buttonStyle(SecondaryButtonStyle())
+
+                        Button(isRotatingQRCode ? "Refreshing..." : "Refresh QR") {
+                            Task {
+                                isRotatingQRCode = true
+                                _ = await viewModel.rotateQRCode(storeId: store.id)
+                                isRotatingQRCode = false
+                            }
+                        }
+                        .buttonStyle(PrimaryButtonStyle())
+                        .disabled(isRotatingQRCode || viewModel.isUpdatingStoreSettings)
+                    }
+                } else {
+                    Text("QR mode is disabled. Employees can still use regular geofence check-in.")
+                        .font(DS.Typography.caption)
+                        .foregroundStyle(DS.Colors.textSecondary)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    @ViewBuilder
+    private func broadcastCard(store: Store) -> some View {
+        CardView {
+            VStack(alignment: .leading, spacing: DS.Spacing.s) {
+                ScreenHeader(
+                    title: "Broadcast",
+                    subtitle: "Send a message to everyone assigned to this store.",
+                    icon: "megaphone"
+                )
+
+                TextEditor(text: $broadcastDraft)
+                    .font(DS.Typography.body)
+                    .frame(minHeight: 96)
+                    .padding(DS.Spacing.xs)
+                    .background(DS.Colors.elevated.opacity(0.75), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(DS.Colors.separator, lineWidth: 1)
+                    }
+
+                HStack(spacing: DS.Spacing.s) {
+                    Text("\(broadcastCharacterCount)/500")
+                        .font(DS.Typography.micro)
+                        .foregroundStyle(DS.Colors.textSecondary)
+                    Spacer()
+                    Button(viewModel.isSendingBroadcast ? "Sending..." : "Send Broadcast") {
+                        Task {
+                            let didSend = await viewModel.sendBroadcast(storeId: store.id, message: broadcastDraft)
+                            if didSend {
+                                broadcastDraft = ""
+                            }
+                        }
+                    }
+                    .buttonStyle(PrimaryButtonStyle())
+                    .disabled(viewModel.isSendingBroadcast || trimmedBroadcastDraft.isEmpty || broadcastCharacterCount > 500)
+                    .frame(maxWidth: 220)
+                }
+
+                Divider()
+
+                if messages.isEmpty {
+                    Text("No broadcast history yet.")
+                        .font(DS.Typography.caption)
+                        .foregroundStyle(DS.Colors.textSecondary)
+                } else {
+                    VStack(spacing: DS.Spacing.xs) {
+                        ForEach(messages.prefix(8)) { message in
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack(spacing: DS.Spacing.s) {
+                                    Text(message.managerName)
+                                        .font(DS.Typography.micro.weight(.semibold))
+                                        .foregroundStyle(DS.Colors.textSecondary)
+                                    Spacer()
+                                    Text(message.createdAt.formatted(date: .abbreviated, time: .shortened))
+                                        .font(DS.Typography.micro)
+                                        .foregroundStyle(DS.Colors.textSecondary)
+                                }
+
+                                Text(message.message)
+                                    .font(DS.Typography.caption)
+                                    .foregroundStyle(DS.Colors.textPrimary)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            .padding(10)
+                            .background(DS.Colors.elevated.opacity(0.7), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        }
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private func qrCheckInPayload(for store: Store) -> String? {
+        guard let token = store.qrCodeToken, !token.isEmpty else { return nil }
+        return "storepass://checkin?storeId=\(store.id)&token=\(token)"
+    }
+
+    private func qrImage(from payload: String) -> UIImage? {
+        let filter = CIFilter.qrCodeGenerator()
+        filter.setValue(Data(payload.utf8), forKey: "inputMessage")
+        filter.setValue("M", forKey: "inputCorrectionLevel")
+
+        guard let outputImage = filter.outputImage else {
+            return nil
+        }
+
+        let transformed = outputImage.transformed(by: CGAffineTransform(scaleX: 10, y: 10))
+        guard let cgImage = qrContext.createCGImage(transformed, from: transformed.extent) else {
+            return nil
+        }
+        return UIImage(cgImage: cgImage)
     }
 }

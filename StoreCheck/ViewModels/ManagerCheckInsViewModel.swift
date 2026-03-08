@@ -35,6 +35,10 @@ final class ManagerCheckInsViewModel: ObservableObject {
     @Published var selectedStoreId: String?
     @Published var selectedEmployeeId: String = allEmployeesId
     @Published var checkIns: [CheckIn] = []
+    @Published var todayCheckIns: [CheckIn] = []
+    @Published var activeWindowCheckIns: [CheckIn] = []
+    @Published var activityFeed: [StoreActivityEvent] = []
+    @Published var employeesById: [String: EmployeeSummary] = [:]
     @Published var isLoading = false
     @Published var errorMessage: String?
     @Published var showOpenSessionsOnly = false
@@ -44,6 +48,7 @@ final class ManagerCheckInsViewModel: ObservableObject {
     private let storeRepository: StoreRepositoryProtocol
     private let checkInRepository: CheckInRepositoryProtocol
     private let authRepository: AuthRepositoryProtocol
+    private let employeeRepository: EmployeeManagementRepositoryProtocol
     private let csvExporter: CSVExportServiceProtocol
 
     private static let timeFormatter: DateFormatter = {
@@ -57,11 +62,13 @@ final class ManagerCheckInsViewModel: ObservableObject {
         storeRepository: StoreRepositoryProtocol,
         checkInRepository: CheckInRepositoryProtocol,
         authRepository: AuthRepositoryProtocol,
+        employeeRepository: EmployeeManagementRepositoryProtocol,
         csvExporter: CSVExportServiceProtocol
     ) {
         self.storeRepository = storeRepository
         self.checkInRepository = checkInRepository
         self.authRepository = authRepository
+        self.employeeRepository = employeeRepository
         self.csvExporter = csvExporter
     }
 
@@ -103,6 +110,29 @@ final class ManagerCheckInsViewModel: ObservableObject {
         employeeOptions.first(where: { $0.id == selectedEmployeeId })?.label ?? "All employees"
     }
 
+    var employeesWorkingTodayCount: Int {
+        Set(todayCheckIns.map(\.employeeId)).count
+    }
+
+    var currentlyCheckedInCount: Int {
+        Set(activeWindowCheckIns.filter { $0.checkOutTime == nil }.map(\.employeeId)).count
+    }
+
+    var lateTodayCount: Int {
+        todayCheckIns.filter { ($0.lateByMinutes ?? 0) > 0 }.count
+    }
+
+    var notCheckedInYetCount: Int {
+        max(activeEmployeesForSelectedStoreCount - employeesWorkingTodayCount, 0)
+    }
+
+    var activeEmployeesForSelectedStoreCount: Int {
+        guard let selectedStoreId else { return 0 }
+        return employeesById.values.filter { employee in
+            employee.userIsActive && employee.storeIds.contains(selectedStoreId)
+        }.count
+    }
+
     func load() async {
         guard let managerId = authRepository.currentUserId else {
             errorMessage = "Unable to resolve current manager session."
@@ -120,8 +150,14 @@ final class ManagerCheckInsViewModel: ObservableObject {
                 selectedStoreId = managerStores.first?.id
             }
 
+            let employeeSummaries = try await employeeRepository.fetchEmployeesForManagerStores(managerStores: managerStores)
+            employeesById = Dictionary(uniqueKeysWithValues: employeeSummaries.map { ($0.id, $0) })
+
             guard let storeId = selectedStoreId else {
                 checkIns = []
+                todayCheckIns = []
+                activityFeed = []
+                activeWindowCheckIns = []
                 errorMessage = nil
                 selectedEmployeeId = Self.allEmployeesId
                 return
@@ -133,16 +169,72 @@ final class ManagerCheckInsViewModel: ObservableObject {
                 fromDate: fromDate,
                 toDate: toDate,
                 employeeId: selectedEmployeeId == Self.allEmployeesId ? nil : selectedEmployeeId,
-                limit: 300
+                limit: 600
             )
 
             if !employeeOptions.contains(where: { $0.id == selectedEmployeeId }) {
                 selectedEmployeeId = Self.allEmployeesId
             }
+
+            await loadStoreDayInsights(managerId: managerId, storeId: storeId)
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    private func loadStoreDayInsights(managerId: String, storeId: String) async {
+        guard let store = stores.first(where: { $0.id == storeId }) else {
+            todayCheckIns = []
+            activeWindowCheckIns = []
+            activityFeed = []
+            return
+        }
+
+        let todayRange = dateRangeForCurrentDay(in: store)
+        let activeRangeStart = Calendar(identifier: .gregorian).date(byAdding: .day, value: -2, to: todayRange.start) ?? todayRange.start
+
+        do {
+            todayCheckIns = try await checkInRepository.fetchManagerStoreCheckIns(
+                managerId: managerId,
+                storeId: storeId,
+                fromDate: todayRange.start,
+                toDate: todayRange.end,
+                employeeId: nil,
+                limit: 1_200
+            )
+        } catch {
+            todayCheckIns = []
+        }
+
+        do {
+            activeWindowCheckIns = try await checkInRepository.fetchManagerStoreCheckIns(
+                managerId: managerId,
+                storeId: storeId,
+                fromDate: activeRangeStart,
+                toDate: todayRange.end,
+                employeeId: nil,
+                limit: 1_200
+            )
+        } catch {
+            activeWindowCheckIns = []
+        }
+
+        do {
+            activityFeed = try await employeeRepository.fetchStoreActivityFeed(managerId: managerId, storeId: storeId, limit: 80)
+        } catch {
+            activityFeed = []
+        }
+    }
+
+    private func dateRangeForCurrentDay(in store: Store) -> DateInterval {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = store.resolvedTimeZone
+
+        let now = Date()
+        let start = calendar.startOfDay(for: now)
+        let end = calendar.date(byAdding: .day, value: 1, to: start) ?? now
+        return DateInterval(start: start, end: end)
     }
 
     func applyPreset(_ preset: DatePreset) {
@@ -209,6 +301,8 @@ final class ManagerCheckInsViewModel: ObservableObject {
         do {
             try await checkInRepository.deleteCheckIn(checkinId: checkIn.id, storeId: checkIn.storeId, managerId: managerId)
             checkIns.removeAll { $0.id == checkIn.id }
+            todayCheckIns.removeAll { $0.id == checkIn.id }
+            activeWindowCheckIns.removeAll { $0.id == checkIn.id }
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -223,6 +317,8 @@ final class ManagerCheckInsViewModel: ObservableObject {
         do {
             try await checkInRepository.clearAllCheckIns(storeId: storeId, managerId: managerId, limit: 500)
             checkIns.removeAll { $0.storeId == storeId }
+            todayCheckIns.removeAll { $0.storeId == storeId }
+            activeWindowCheckIns.removeAll { $0.storeId == storeId }
             selectedEmployeeId = Self.allEmployeesId
             NotificationCenter.default.post(name: .cloudKitDidReceiveRemoteChange, object: nil)
         } catch {
@@ -237,6 +333,29 @@ final class ManagerCheckInsViewModel: ObservableObject {
     func exportURL() -> URL? {
         let store = stores.first(where: { $0.id == selectedStoreId })?.name ?? "store"
         return csvExporter.generateCSV(from: visibleCheckIns, filePrefix: "checkins_\(store)")
+    }
+
+    func payrollExportURL() -> URL? {
+        let store = stores.first(where: { $0.id == selectedStoreId })?.name ?? "store"
+        return csvExporter.generatePayrollCSV(
+            from: visibleCheckIns,
+            employeeSummariesById: employeesById,
+            filePrefix: "payroll_\(store)"
+        )
+    }
+
+    func isLongShiftOpen(_ checkIn: CheckIn) -> Bool {
+        guard checkIn.checkOutTime == nil else { return false }
+        let thresholdHours = stores.first(where: { $0.id == checkIn.storeId })?.longShiftWarningHours ?? 10
+        let elapsed = Date().timeIntervalSince(checkIn.checkInTime)
+        return elapsed >= Double(max(thresholdHours, 1) * 3600)
+    }
+
+    func formattedLateStatus(_ checkIn: CheckIn) -> String? {
+        guard let lateByMinutes = checkIn.lateByMinutes, lateByMinutes > 0 else {
+            return nil
+        }
+        return "Late • \(lateByMinutes) min"
     }
 
     func formattedTime(_ date: Date) -> String { Self.timeFormatter.string(from: date) }

@@ -7,6 +7,15 @@ final class EmployeeManagementViewModel: ObservableObject {
         let totalWorkedSeconds: Int
     }
 
+    struct EmployeeAttendanceInsight: Hashable {
+        let activeSession: CheckIn?
+        let lastCheckIn: CheckIn?
+        let todayWorkedSeconds: Int
+        let weekWorkedSeconds: Int
+        let latestLateByMinutes: Int?
+        let recentSessions: [CheckIn]
+    }
+
     static let allStoresFilter = "all"
 
     @Published var stores: [Store] = []
@@ -19,6 +28,8 @@ final class EmployeeManagementViewModel: ObservableObject {
     @Published private(set) var pendingRemoval: PendingRemoval?
     @Published private(set) var workSummaryByEmployeeId: [String: EmployeeWorkSummary] = [:]
     @Published private(set) var loadingWorkSummaryEmployeeIds: Set<String> = []
+    @Published private(set) var attendanceInsightByEmployeeId: [String: EmployeeAttendanceInsight] = [:]
+    @Published private(set) var loadingAttendanceInsightEmployeeIds: Set<String> = []
 
     private let employeeRepository: EmployeeManagementRepositoryProtocol
     private let authRepository: AuthRepositoryProtocol
@@ -142,6 +153,8 @@ final class EmployeeManagementViewModel: ObservableObject {
             let currentEmployeeIds = Set(employees.map(\.id))
             workSummaryByEmployeeId = workSummaryByEmployeeId.filter { currentEmployeeIds.contains($0.key) }
             loadingWorkSummaryEmployeeIds = loadingWorkSummaryEmployeeIds.intersection(currentEmployeeIds)
+            attendanceInsightByEmployeeId = attendanceInsightByEmployeeId.filter { currentEmployeeIds.contains($0.key) }
+            loadingAttendanceInsightEmployeeIds = loadingAttendanceInsightEmployeeIds.intersection(currentEmployeeIds)
             employeeError = nil
         } catch {
             employeeError = error.localizedDescription
@@ -152,6 +165,12 @@ final class EmployeeManagementViewModel: ObservableObject {
     func clearWorkSummaryCache() {
         workSummaryByEmployeeId.removeAll()
         loadingWorkSummaryEmployeeIds.removeAll()
+        attendanceInsightByEmployeeId.removeAll()
+        loadingAttendanceInsightEmployeeIds.removeAll()
+    }
+
+    func attendanceInsight(for employeeId: String) -> EmployeeAttendanceInsight? {
+        attendanceInsightByEmployeeId[employeeId]
     }
 
     func prepareRemoval(for employee: EmployeeSummary, preferredStoreId: String? = nil) {
@@ -265,5 +284,106 @@ final class EmployeeManagementViewModel: ObservableObject {
         } catch {
             AppLog.warning("Failed loading employee work summary id=\(AppLog.redactIdentifier(employee.id)): \(AppLog.sanitize(error.localizedDescription))")
         }
+    }
+
+    func loadAttendanceInsight(for employee: EmployeeSummary) async {
+        guard !loadingAttendanceInsightEmployeeIds.contains(employee.id) else { return }
+        guard let managerId = authRepository.currentUserId else { return }
+
+        loadingAttendanceInsightEmployeeIds.insert(employee.id)
+        defer { loadingAttendanceInsightEmployeeIds.remove(employee.id) }
+
+        let managedStoreIds = Set(employee.storeIds)
+        guard !managedStoreIds.isEmpty else {
+            attendanceInsightByEmployeeId[employee.id] = EmployeeAttendanceInsight(
+                activeSession: nil,
+                lastCheckIn: nil,
+                todayWorkedSeconds: 0,
+                weekWorkedSeconds: 0,
+                latestLateByMinutes: nil,
+                recentSessions: []
+            )
+            return
+        }
+
+        let now = Date()
+        let historyStart = Calendar(identifier: .gregorian).date(byAdding: .day, value: -365, to: now) ?? now
+        let historyEnd = Calendar(identifier: .gregorian).date(byAdding: .day, value: 1, to: now) ?? now
+
+        var mergedById: [String: CheckIn] = [:]
+
+        do {
+            for storeId in managedStoreIds {
+                let items = try await checkInRepository.fetchManagerStoreCheckIns(
+                    managerId: managerId,
+                    storeId: storeId,
+                    fromDate: historyStart,
+                    toDate: historyEnd,
+                    employeeId: employee.id,
+                    limit: 600
+                )
+                for item in items {
+                    mergedById[item.id] = item
+                }
+            }
+        } catch {
+            AppLog.warning(
+                "Failed loading attendance insight id=\(AppLog.redactIdentifier(employee.id)): \(AppLog.sanitize(error.localizedDescription))"
+            )
+            return
+        }
+
+        let sessions = mergedById.values.sorted { $0.checkInTime > $1.checkInTime }
+        let activeSession = sessions.first(where: { $0.checkOutTime == nil })
+        let lastCheckIn = sessions.first
+
+        var todaySeconds = 0
+        var weekSeconds = 0
+        for session in sessions where session.status == .approved {
+            let storeTimeZone = stores.first(where: { $0.id == session.storeId })?.resolvedTimeZone ?? .current
+            let dayInterval = dayInterval(for: now, timeZone: storeTimeZone)
+            let weekInterval = weekInterval(for: now, timeZone: storeTimeZone)
+            todaySeconds += overlapSeconds(session: session, interval: dayInterval)
+            weekSeconds += overlapSeconds(session: session, interval: weekInterval)
+        }
+
+        let lateSession = sessions.first(where: { ($0.lateByMinutes ?? 0) > 0 })
+        let recentSessions = Array(sessions.prefix(8))
+        attendanceInsightByEmployeeId[employee.id] = EmployeeAttendanceInsight(
+            activeSession: activeSession,
+            lastCheckIn: lastCheckIn,
+            todayWorkedSeconds: todaySeconds,
+            weekWorkedSeconds: weekSeconds,
+            latestLateByMinutes: lateSession?.lateByMinutes,
+            recentSessions: recentSessions
+        )
+    }
+
+    private func dayInterval(for date: Date, timeZone: TimeZone) -> DateInterval {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        let start = calendar.startOfDay(for: date)
+        let end = calendar.date(byAdding: .day, value: 1, to: start) ?? date
+        return DateInterval(start: start, end: end)
+    }
+
+    private func weekInterval(for date: Date, timeZone: TimeZone) -> DateInterval {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        if let interval = calendar.dateInterval(of: .weekOfYear, for: date) {
+            return interval
+        }
+        return DateInterval(start: date, end: date)
+    }
+
+    private func overlapSeconds(session: CheckIn, interval: DateInterval) -> Int {
+        let shiftStart = session.checkInTime
+        let shiftEnd = session.checkOutTime ?? Date()
+        guard shiftEnd > shiftStart else { return 0 }
+
+        let start = max(shiftStart, interval.start)
+        let end = min(shiftEnd, interval.end)
+        guard end > start else { return 0 }
+        return Int(end.timeIntervalSince(start))
     }
 }

@@ -461,9 +461,10 @@ private final class MockCheckInRepository: CheckInRepositoryProtocol {
         return sessions
     }
 
-    func fetchVerificationPhotoData(checkInId: String, storeId: String) async throws -> Data? {
+    func fetchVerificationPhotoData(checkInId: String, storeId: String, kind: VerificationPhotoKind) async throws -> Data? {
         _ = checkInId
         _ = storeId
+        _ = kind
         return nil
     }
 
@@ -497,11 +498,14 @@ private final class MockLocationService: LocationServiceProtocol {
     var authorizationStatus: CLAuthorizationStatus = .authorizedWhenInUse
     var isPreciseLocationEnabled: Bool = true
     var lastErrorMessage: String?
+    var onStoreRegionEvent: ((StoreRegionEvent) -> Void)?
     var queuedLocations: [CLLocation] = []
     var queuedErrors: [Error] = []
 
     func requestWhenInUseAuthorization() {}
     func requestLocation() {}
+    func startMonitoringStoreRegion(_ store: Store) { _ = store }
+    func stopMonitoringStoreRegion() {}
 
     func requestSingleAccurateLocation(timeoutSeconds: TimeInterval) async throws -> CLLocation {
         _ = timeoutSeconds

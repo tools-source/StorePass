@@ -1658,6 +1658,38 @@ final class CloudKitEmployeeManagementRepository: EmployeeManagementRepositoryPr
         try await service.ensureCloudKitAvailable()
 
         var events: [StoreActivityEvent] = []
+        if let createdAt = store.createdAt {
+            events.append(
+                StoreActivityEvent(
+                    id: "store_created_\(store.id)",
+                    storeId: store.id,
+                    storeName: store.name,
+                    employeeId: nil,
+                    employeeName: nil,
+                    employeeEmail: nil,
+                    kind: .storeCreated,
+                    occurredAt: createdAt,
+                    checkInId: nil
+                )
+            )
+        }
+        if let updatedAt = store.updatedAt,
+           let createdAt = store.createdAt,
+           updatedAt.timeIntervalSince(createdAt) > 2 {
+            events.append(
+                StoreActivityEvent(
+                    id: "store_updated_\(store.id)_\(updatedAt.timeIntervalSince1970)",
+                    storeId: store.id,
+                    storeName: store.name,
+                    employeeId: nil,
+                    employeeName: nil,
+                    employeeEmail: nil,
+                    kind: .storeUpdated,
+                    occurredAt: updatedAt,
+                    checkInId: nil
+                )
+            )
+        }
 
         do {
             let checkInRecords = try await service.queryRecords(
@@ -1769,6 +1801,40 @@ final class CloudKitEmployeeManagementRepository: EmployeeManagementRepositoryPr
                 throw error
             }
             events.append(contentsOf: localMembershipActivityFeed(store: store))
+        }
+
+        do {
+            let broadcastRecords = try await service.queryRecords(
+                recordType: CKSchema.RecordType.broadcastMessage,
+                predicate: NSPredicate(format: "%K == %@", CKSchema.BroadcastField.storeId, storeId),
+                sortDescriptors: [NSSortDescriptor(key: CKSchema.BroadcastField.createdAt, ascending: false)],
+                resultsLimit: max(limit, 30),
+                in: service.publicDB
+            )
+
+            for record in broadcastRecords {
+                guard let messageId = record.string(CKSchema.BroadcastField.messageId) else {
+                    continue
+                }
+                let managerName = record.string(CKSchema.BroadcastField.managerName)
+                events.append(
+                    StoreActivityEvent(
+                        id: "broadcast_\(messageId)",
+                        storeId: store.id,
+                        storeName: store.name,
+                        employeeId: record.string(CKSchema.BroadcastField.managerUserId),
+                        employeeName: managerName,
+                        employeeEmail: nil,
+                        kind: .broadcastSent,
+                        occurredAt: record.date(CKSchema.BroadcastField.createdAt) ?? Date.distantPast,
+                        checkInId: nil
+                    )
+                )
+            }
+        } catch {
+            if !isRecoverableManagerStoreError(error) {
+                throw error
+            }
         }
 
         let deduped = Dictionary(uniqueKeysWithValues: events.map { ($0.id, $0) }).values
@@ -2123,6 +2189,38 @@ final class CloudKitEmployeeManagementRepository: EmployeeManagementRepositoryPr
     private func localStoreActivityFeed(store: Store) -> [StoreActivityEvent] {
         let payload = loadLocalCheckInPayload()
         var events: [StoreActivityEvent] = []
+        if let createdAt = store.createdAt {
+            events.append(
+                StoreActivityEvent(
+                    id: "store_created_\(store.id)",
+                    storeId: store.id,
+                    storeName: store.name,
+                    employeeId: nil,
+                    employeeName: nil,
+                    employeeEmail: nil,
+                    kind: .storeCreated,
+                    occurredAt: createdAt,
+                    checkInId: nil
+                )
+            )
+        }
+        if let updatedAt = store.updatedAt,
+           let createdAt = store.createdAt,
+           updatedAt.timeIntervalSince(createdAt) > 2 {
+            events.append(
+                StoreActivityEvent(
+                    id: "store_updated_\(store.id)_\(updatedAt.timeIntervalSince1970)",
+                    storeId: store.id,
+                    storeName: store.name,
+                    employeeId: nil,
+                    employeeName: nil,
+                    employeeEmail: nil,
+                    kind: .storeUpdated,
+                    occurredAt: updatedAt,
+                    checkInId: nil
+                )
+            )
+        }
         for sessions in payload.checkInsByEmployeeId.values {
             for session in sessions where session.storeId == store.id {
                 events.append(

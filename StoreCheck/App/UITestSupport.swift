@@ -555,9 +555,10 @@ final class UITestCheckInRepository: CheckInRepositoryProtocol {
         .sorted { $0.checkInTime > $1.checkInTime }
     }
 
-    func fetchVerificationPhotoData(checkInId: String, storeId: String) async throws -> Data? {
+    func fetchVerificationPhotoData(checkInId: String, storeId: String, kind: VerificationPhotoKind) async throws -> Data? {
         _ = checkInId
         _ = storeId
+        _ = kind
         return nil
     }
 

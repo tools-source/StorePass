@@ -2,6 +2,7 @@ import SwiftUI
 
 struct EmployeeHistoryView: View {
     @StateObject private var vm: EmployeeHistoryViewModel
+    @State private var pendingDelete: CheckIn?
 
     init(authService: AuthService, checkInRepository: CheckInRepositoryProtocol, csvExporter: CSVExportServiceProtocol) {
         _vm = StateObject(wrappedValue: EmployeeHistoryViewModel(
@@ -45,6 +46,21 @@ struct EmployeeHistoryView: View {
                                         historyRow(item)
                                     }
                                     .buttonStyle(.plain)
+                                    .swipeActions(edge: .leading, allowsFullSwipe: false) {
+                                        Button {
+                                            vm.copySingle(item)
+                                        } label: {
+                                            Label("Copy CSV", systemImage: "doc.on.doc")
+                                        }
+                                        .tint(DS.Colors.primary)
+                                    }
+                                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                        Button(role: .destructive) {
+                                            pendingDelete = item
+                                        } label: {
+                                            Label("Delete", systemImage: "trash")
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -64,6 +80,24 @@ struct EmployeeHistoryView: View {
             }
             .task { await vm.load() }
             .refreshable { await vm.load() }
+            .alert(
+                "Delete Session",
+                isPresented: Binding(
+                    get: { pendingDelete != nil },
+                    set: { if !$0 { pendingDelete = nil } }
+                )
+            ) {
+                Button("Delete", role: .destructive) {
+                    guard let pendingDelete else { return }
+                    Task { await vm.delete(pendingDelete) }
+                    self.pendingDelete = nil
+                }
+                Button("Cancel", role: .cancel) {
+                    pendingDelete = nil
+                }
+            } message: {
+                Text("This permanently removes the selected attendance record.")
+            }
         }
     }
 

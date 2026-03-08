@@ -15,6 +15,7 @@ struct ManagerCheckInsView: View {
     @StateObject private var viewModel: ManagerCheckInsViewModel
     private let checkInRepository: CheckInRepositoryProtocol
     @State private var showClearAllConfirm = false
+    @State private var pendingDeleteCheckIn: CheckIn?
     @State private var activeFilterEditor: FilterEditor?
 
     @State private var draftStoreId: String?
@@ -23,9 +24,23 @@ struct ManagerCheckInsView: View {
     @State private var draftToDate = Date()
     @State private var draftOpenOnly = false
 
-    init(storeRepository: StoreRepositoryProtocol, checkInRepository: CheckInRepositoryProtocol, authRepository: AuthRepositoryProtocol, csvExporter: CSVExportServiceProtocol) {
+    init(
+        storeRepository: StoreRepositoryProtocol,
+        checkInRepository: CheckInRepositoryProtocol,
+        authRepository: AuthRepositoryProtocol,
+        employeeRepository: EmployeeManagementRepositoryProtocol,
+        csvExporter: CSVExportServiceProtocol
+    ) {
         self.checkInRepository = checkInRepository
-        _viewModel = StateObject(wrappedValue: ManagerCheckInsViewModel(storeRepository: storeRepository, checkInRepository: checkInRepository, authRepository: authRepository, csvExporter: csvExporter))
+        _viewModel = StateObject(
+            wrappedValue: ManagerCheckInsViewModel(
+                storeRepository: storeRepository,
+                checkInRepository: checkInRepository,
+                authRepository: authRepository,
+                employeeRepository: employeeRepository,
+                csvExporter: csvExporter
+            )
+        )
     }
 
     var body: some View {
@@ -42,6 +57,8 @@ struct ManagerCheckInsView: View {
                         )
 
                         filterSummaryCard
+                        managerSummaryCard
+                        activityFeedCard
 
                         if viewModel.isLoading {
                             loadingCard
@@ -85,6 +102,12 @@ struct ManagerCheckInsView: View {
                         }
                     }
 
+                    if let payrollURL = viewModel.payrollExportURL() {
+                        ShareLink(item: payrollURL) {
+                            Image(systemName: "dollarsign.square")
+                        }
+                    }
+
                     Button {
                         seedDraftFilters()
                         activeFilterEditor = .all
@@ -114,6 +137,24 @@ struct ManagerCheckInsView: View {
             .alert("Clear store check-ins?", isPresented: $showClearAllConfirm) {
                 Button("Cancel", role: .cancel) { }
                 Button("Clear", role: .destructive) { Task { await viewModel.clearAllForSelectedStore() } }
+            }
+            .alert(
+                "Delete this check-in?",
+                isPresented: Binding(
+                    get: { pendingDeleteCheckIn != nil },
+                    set: { if !$0 { pendingDeleteCheckIn = nil } }
+                )
+            ) {
+                Button("Delete", role: .destructive) {
+                    guard let pendingDeleteCheckIn else { return }
+                    Task { await viewModel.delete(pendingDeleteCheckIn) }
+                    self.pendingDeleteCheckIn = nil
+                }
+                Button("Cancel", role: .cancel) {
+                    pendingDeleteCheckIn = nil
+                }
+            } message: {
+                Text("This action cannot be undone.")
             }
         }
     }
@@ -162,6 +203,71 @@ struct ManagerCheckInsView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .accessibilityIdentifier("attendance_filter_summary_card")
+    }
+
+    private var managerSummaryCard: some View {
+        CardView {
+            VStack(alignment: .leading, spacing: DS.Spacing.s) {
+                ScreenHeader(
+                    title: "Today Overview",
+                    subtitle: "Live counts for the selected store",
+                    icon: "chart.bar.fill"
+                )
+
+                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: DS.Spacing.s) {
+                    MetricChip(label: "Working Today", value: "\(viewModel.employeesWorkingTodayCount)", icon: "person.2")
+                    MetricChip(label: "Checked In Now", value: "\(viewModel.currentlyCheckedInCount)", icon: "record.circle")
+                    MetricChip(label: "Late Today", value: "\(viewModel.lateTodayCount)", icon: "exclamationmark.triangle")
+                    MetricChip(label: "Not Checked In", value: "\(viewModel.notCheckedInYetCount)", icon: "person.crop.circle.badge.xmark")
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var activityFeedCard: some View {
+        CardView {
+            VStack(alignment: .leading, spacing: DS.Spacing.s) {
+                ScreenHeader(
+                    title: "Store Activity",
+                    subtitle: "Newest events first",
+                    icon: "bolt.horizontal.circle"
+                )
+
+                if viewModel.activityFeed.isEmpty {
+                    Text("No recent activity yet.")
+                        .font(DS.Typography.caption)
+                        .foregroundStyle(DS.Colors.textSecondary)
+                } else {
+                    ForEach(viewModel.activityFeed.prefix(8)) { event in
+                        HStack(alignment: .top, spacing: DS.Spacing.s) {
+                            Circle()
+                                .fill(DS.Colors.primary.opacity(0.3))
+                                .frame(width: 8, height: 8)
+                                .padding(.top, 6)
+
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(event.employeeName ?? event.storeName)
+                                    .font(DS.Typography.caption.weight(.semibold))
+                                    .foregroundStyle(DS.Colors.textPrimary)
+
+                                Text(event.subtitle)
+                                    .font(DS.Typography.micro)
+                                    .foregroundStyle(DS.Colors.textSecondary)
+                            }
+
+                            Spacer()
+
+                            Text(event.occurredAt.formatted(date: .omitted, time: .shortened))
+                                .font(DS.Typography.micro)
+                                .foregroundStyle(DS.Colors.textSecondary)
+                        }
+                        .padding(.vertical, 2)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 
     private func filterChipButton(label: String, value: String, icon: String, editor: FilterEditor) -> some View {
@@ -221,6 +327,30 @@ struct ManagerCheckInsView: View {
                         checkInRow(item)
                     }
                     .buttonStyle(.plain)
+                    .swipeActions(edge: .leading, allowsFullSwipe: false) {
+                        if item.status != .approved {
+                            Button {
+                                Task { await viewModel.update(item, status: .approved, reason: nil) }
+                            } label: {
+                                Label("Approve", systemImage: "checkmark.circle")
+                            }
+                            .tint(DS.Colors.success)
+                        } else {
+                            Button {
+                                Task { await viewModel.update(item, status: .rejected, reason: "Rejected by manager review.") }
+                            } label: {
+                                Label("Reject", systemImage: "xmark.circle")
+                            }
+                            .tint(DS.Colors.warning)
+                        }
+                    }
+                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                        Button(role: .destructive) {
+                            pendingDeleteCheckIn = item
+                        } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
+                    }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -248,6 +378,15 @@ struct ManagerCheckInsView: View {
             VStack(alignment: .trailing, spacing: 6) {
                 StatBadge(style: item.verifyInInside == true ? .inside : .outside, text: item.verifyInInside == true ? "Inside" : "Outside")
                 StatBadge(style: item.status == .approved ? .approved : .rejected)
+                if let lateText = viewModel.formattedLateStatus(item) {
+                    StatBadge(style: .open, text: lateText)
+                }
+                if viewModel.isLongShiftOpen(item) {
+                    StatBadge(style: .open, text: "Long shift")
+                }
+                if let method = item.checkInMethod {
+                    StatBadge(style: .neutral, text: method.rawValue.uppercased())
+                }
             }
         }
         .padding(.vertical, 4)
@@ -554,6 +693,12 @@ private struct ManagerCheckInDetailView: View {
                 CardView {
                     VStack(alignment: .leading, spacing: DS.Spacing.s) {
                         ScreenHeader(title: "Verification", subtitle: "Geo-fence evidence", icon: "location.viewfinder")
+                        KeyValueRow(title: "Method", value: currentItem.checkInMethod?.rawValue.uppercased() ?? "GEOFENCE")
+                        if let lateText = viewModel.formattedLateStatus(currentItem) {
+                            KeyValueRow(title: "Lateness", value: lateText)
+                        } else {
+                            KeyValueRow(title: "Lateness", value: "On time")
+                        }
                         KeyValueRow(title: "Distance", value: "\(Int(currentItem.verifyInDistance2Meters ?? 0))m")
                         KeyValueRow(title: "Accuracy", value: "±\(Int(currentItem.verifyInAccuracy2Meters ?? 0))m")
                         KeyValueRow(title: "Drift", value: "\(Int(currentItem.verifyInDriftMeters ?? 0))m")
@@ -704,87 +849,43 @@ private struct ManagerCheckInDetailView: View {
     }
 }
 
-private struct ManagerVerificationPhotoSection: View {
+struct ManagerVerificationPhotoSection: View {
     let checkIn: CheckIn
     let checkInRepository: CheckInRepositoryProtocol
 
-    @State private var photoData: Data?
-    @State private var photoURL: URL?
-    @State private var isLoading = false
-    @State private var errorMessage: String?
-    @State private var showFullscreen = false
+    @State private var checkInPhotoData: Data?
+    @State private var checkInPhotoURL: URL?
+    @State private var checkOutPhotoData: Data?
+    @State private var checkOutPhotoURL: URL?
+    @State private var isLoadingCheckIn = false
+    @State private var isLoadingCheckOut = false
+    @State private var checkInErrorMessage: String?
+    @State private var checkOutErrorMessage: String?
+    @State private var fullscreenKind: VerificationPhotoKind?
 
     var body: some View {
         CardView {
             VStack(alignment: .leading, spacing: DS.Spacing.s) {
-                ScreenHeader(title: "Photo Verification", subtitle: "Manager-only check-in proof", icon: "camera.viewfinder")
-
-                if let photoData, let image = UIImage(data: photoData) {
-                    Button {
-                        showFullscreen = true
-                    } label: {
-                        Image(uiImage: image)
-                            .resizable()
-                            .scaledToFill()
-                            .frame(maxWidth: .infinity)
-                            .frame(height: 240)
-                            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                    }
-                    .buttonStyle(.plain)
-                } else if let photoURL {
-                    Button {
-                        showFullscreen = true
-                    } label: {
-                        AsyncImage(url: photoURL) { phase in
-                            switch phase {
-                            case .empty:
-                                ProgressView("Loading photo…")
-                                    .tint(DS.Colors.primary)
-                            case .success(let image):
-                                image
-                                    .resizable()
-                                    .scaledToFill()
-                                    .frame(maxWidth: .infinity)
-                                    .frame(height: 240)
-                                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                            case .failure:
-                                Text("Photo proof is unavailable for this check-in.")
-                                    .font(DS.Typography.caption)
-                                    .foregroundStyle(DS.Colors.textSecondary)
-                            @unknown default:
-                                Text("Photo proof is unavailable for this check-in.")
-                                    .font(DS.Typography.caption)
-                                    .foregroundStyle(DS.Colors.textSecondary)
-                            }
-                        }
-                    }
-                    .buttonStyle(.plain)
-                } else if isLoading {
-                    ProgressView("Loading photo…")
-                        .tint(DS.Colors.primary)
-                } else if let errorMessage {
-                    BannerView(text: errorMessage, isError: true)
-                } else {
-                    Text("No photo proof is available for this check-in.")
-                        .font(DS.Typography.caption)
-                        .foregroundStyle(DS.Colors.textSecondary)
-                }
+                ScreenHeader(title: "Photo Verification", subtitle: "Check-in and check-out selfies", icon: "camera.viewfinder")
+                photoBlock(kind: .checkIn)
+                photoBlock(kind: .checkOut)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .task(id: checkIn.id) {
-            await loadPhoto()
+            await loadPhoto(kind: .checkIn)
+            await loadPhoto(kind: .checkOut)
         }
-        .fullScreenCover(isPresented: $showFullscreen) {
+        .fullScreenCover(item: $fullscreenKind) { kind in
             NavigationStack {
                 ZStack {
                     Color.black.ignoresSafeArea()
-                    if let photoData, let image = UIImage(data: photoData) {
+                    if let image = resolvedUIImage(for: kind) {
                         Image(uiImage: image)
                             .resizable()
                             .scaledToFit()
                             .padding(DS.Spacing.m)
-                    } else if let photoURL {
+                    } else if let photoURL = resolvedURL(for: kind) {
                         AsyncImage(url: photoURL) { phase in
                             switch phase {
                             case .empty:
@@ -807,7 +908,7 @@ private struct ManagerVerificationPhotoSection: View {
                 .toolbar {
                     ToolbarItem(placement: .topBarTrailing) {
                         Button("Done") {
-                            showFullscreen = false
+                            fullscreenKind = nil
                         }
                         .foregroundStyle(.white)
                     }
@@ -816,36 +917,158 @@ private struct ManagerVerificationPhotoSection: View {
         }
     }
 
-    private func loadPhoto() async {
-        guard !isLoading else { return }
-        isLoading = true
-        defer { isLoading = false }
+    @ViewBuilder
+    private func photoBlock(kind: VerificationPhotoKind) -> some View {
+        VStack(alignment: .leading, spacing: DS.Spacing.xs) {
+            HStack {
+                Text(kind == .checkIn ? "Check-In Photo" : "Check-Out Photo")
+                    .font(DS.Typography.caption.weight(.semibold))
+                    .foregroundStyle(DS.Colors.textPrimary)
+                Spacer()
+                if kind == .checkOut, checkIn.checkOutTime == nil {
+                    StatBadge(style: .open, text: "Open shift")
+                }
+            }
+
+            if let image = resolvedUIImage(for: kind) {
+                Button {
+                    fullscreenKind = kind
+                } label: {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 180)
+                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                }
+                .buttonStyle(.plain)
+            } else if let url = resolvedURL(for: kind) {
+                Button {
+                    fullscreenKind = kind
+                } label: {
+                    AsyncImage(url: url) { phase in
+                        switch phase {
+                        case .empty:
+                            ProgressView("Loading photo…")
+                                .tint(DS.Colors.primary)
+                                .frame(maxWidth: .infinity, minHeight: 120)
+                        case .success(let image):
+                            image
+                                .resizable()
+                                .scaledToFill()
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 180)
+                                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        case .failure:
+                            Text("Photo preview unavailable.")
+                                .font(DS.Typography.caption)
+                                .foregroundStyle(DS.Colors.textSecondary)
+                        @unknown default:
+                            Text("Photo preview unavailable.")
+                                .font(DS.Typography.caption)
+                                .foregroundStyle(DS.Colors.textSecondary)
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+            } else if isLoading(kind: kind) {
+                ProgressView("Loading photo…")
+                    .tint(DS.Colors.primary)
+            } else if let errorMessage = resolvedError(for: kind) {
+                BannerView(text: errorMessage, isError: true)
+            } else {
+                Text(kind == .checkIn ? "No check-in photo is available." : "No check-out photo is available.")
+                    .font(DS.Typography.caption)
+                    .foregroundStyle(DS.Colors.textSecondary)
+            }
+        }
+    }
+
+    private func loadPhoto(kind: VerificationPhotoKind) async {
+        if isLoading(kind: kind) { return }
+        setLoading(true, for: kind)
+        defer { setLoading(false, for: kind) }
 
         do {
             if let loadedData = try await checkInRepository.fetchVerificationPhotoData(
                 checkInId: checkIn.id,
-                storeId: checkIn.storeId
+                storeId: checkIn.storeId,
+                kind: kind
             ) {
-                photoData = loadedData
-                photoURL = nil
-                errorMessage = nil
+                setData(loadedData, for: kind)
+                setURL(nil, for: kind)
+                setError(nil, for: kind)
                 return
             }
 
-            if let path = checkIn.verificationPhotoPath {
-                photoURL = try await checkInRepository.fetchVerificationPhotoURL(photoPath: path)
-                photoData = nil
-                errorMessage = nil
+            let path = kind == .checkIn ? checkIn.verificationPhotoPath : checkIn.checkOutVerificationPhotoPath
+            if let path {
+                setURL(try await checkInRepository.fetchVerificationPhotoURL(photoPath: path), for: kind)
+                setData(nil, for: kind)
+                setError(nil, for: kind)
                 return
             }
 
-            photoData = nil
-            photoURL = nil
-            errorMessage = nil
+            setData(nil, for: kind)
+            setURL(nil, for: kind)
+            setError(nil, for: kind)
         } catch {
-            photoData = nil
-            photoURL = nil
-            errorMessage = error.localizedDescription
+            setData(nil, for: kind)
+            setURL(nil, for: kind)
+            setError(error.localizedDescription, for: kind)
+        }
+    }
+
+    private func isLoading(kind: VerificationPhotoKind) -> Bool {
+        kind == .checkIn ? isLoadingCheckIn : isLoadingCheckOut
+    }
+
+    private func setLoading(_ isLoading: Bool, for kind: VerificationPhotoKind) {
+        if kind == .checkIn {
+            isLoadingCheckIn = isLoading
+        } else {
+            isLoadingCheckOut = isLoading
+        }
+    }
+
+    private func resolvedUIImage(for kind: VerificationPhotoKind) -> UIImage? {
+        if kind == .checkIn {
+            guard let checkInPhotoData else { return nil }
+            return UIImage(data: checkInPhotoData)
+        }
+        guard let checkOutPhotoData else { return nil }
+        return UIImage(data: checkOutPhotoData)
+    }
+
+    private func resolvedURL(for kind: VerificationPhotoKind) -> URL? {
+        kind == .checkIn ? checkInPhotoURL : checkOutPhotoURL
+    }
+
+    private func resolvedError(for kind: VerificationPhotoKind) -> String? {
+        kind == .checkIn ? checkInErrorMessage : checkOutErrorMessage
+    }
+
+    private func setData(_ data: Data?, for kind: VerificationPhotoKind) {
+        if kind == .checkIn {
+            checkInPhotoData = data
+        } else {
+            checkOutPhotoData = data
+        }
+    }
+
+    private func setURL(_ url: URL?, for kind: VerificationPhotoKind) {
+        if kind == .checkIn {
+            checkInPhotoURL = url
+        } else {
+            checkOutPhotoURL = url
+        }
+    }
+
+    private func setError(_ message: String?, for kind: VerificationPhotoKind) {
+        if kind == .checkIn {
+            checkInErrorMessage = message
+        } else {
+            checkOutErrorMessage = message
         }
     }
 }

@@ -40,8 +40,14 @@ protocol CheckInRepositoryProtocol {
     func fetchEmployeeCheckIns(employeeId: String, limit: Int) async throws -> [CheckIn]
     func fetchManagerStoreCheckIns(managerId: String, storeId: String, fromDate: Date, toDate: Date, employeeId: String?, limit: Int) async throws -> [CheckIn]
     func fetchTodaysCheckIns(filter: CheckInFilter) async throws -> [CheckIn]
-    func fetchVerificationPhotoData(checkInId: String, storeId: String) async throws -> Data?
+    func fetchVerificationPhotoData(checkInId: String, storeId: String, kind: VerificationPhotoKind) async throws -> Data?
     func fetchVerificationPhotoURL(photoPath: String) async throws -> URL
+}
+
+extension CheckInRepositoryProtocol {
+    func fetchVerificationPhotoData(checkInId: String, storeId: String) async throws -> Data? {
+        try await fetchVerificationPhotoData(checkInId: checkInId, storeId: storeId, kind: .checkIn)
+    }
 }
 
 protocol CheckInListenerToken {
@@ -61,6 +67,8 @@ extension CKSchema {
         static let durationSeconds = "durationSeconds"
         static let checkInPhotoAsset = "checkInPhotoAsset"
         static let checkOutPhotoAsset = "checkOutPhotoAsset"
+        static let checkInMethod = "checkInMethod"
+        static let lateByMinutes = "lateByMinutes"
         static let checkInLocationLat = "checkInLocationLat"
         static let checkInLocationLng = "checkInLocationLng"
         static let checkInDistanceMeters = "checkInDistanceMeters"
@@ -215,6 +223,16 @@ final class CloudKitCheckInRepository: CheckInRepositoryProtocol {
             record[CKSchema.CheckInField.status] = checkIn.status.rawValue as CKRecordValue
             if let rejectReason = checkIn.rejectReason, !rejectReason.isEmpty {
                 record[CKSchema.CheckInField.rejectReason] = rejectReason as CKRecordValue
+            }
+            if let checkInMethod = checkIn.checkInMethod {
+                record[CKSchema.CheckInField.checkInMethod] = checkInMethod.rawValue as CKRecordValue
+            } else {
+                record[CKSchema.CheckInField.checkInMethod] = nil
+            }
+            if let lateByMinutes = checkIn.lateByMinutes, lateByMinutes > 0 {
+                record[CKSchema.CheckInField.lateByMinutes] = NSNumber(value: lateByMinutes)
+            } else {
+                record[CKSchema.CheckInField.lateByMinutes] = nil
             }
 
             record[CKSchema.CheckInField.employeeName] = checkIn.employeeName as CKRecordValue
@@ -782,8 +800,9 @@ final class CloudKitCheckInRepository: CheckInRepositoryProtocol {
         )
     }
 
-    func fetchVerificationPhotoData(checkInId: String, storeId: String) async throws -> Data? {
-        if let localData = localPhotoData(checkInId: checkInId, kind: .checkIn) {
+    func fetchVerificationPhotoData(checkInId: String, storeId: String, kind: VerificationPhotoKind) async throws -> Data? {
+        let photoKind: LocalPhotoKind = (kind == .checkIn) ? .checkIn : .checkOut
+        if let localData = localPhotoData(checkInId: checkInId, kind: photoKind) {
             return localData
         }
 
@@ -799,7 +818,8 @@ final class CloudKitCheckInRepository: CheckInRepositoryProtocol {
             if let recordStoreId = record.string(CKSchema.CheckInField.storeId), !storeId.isEmpty, recordStoreId != storeId {
                 return nil
             }
-            guard let asset = record[CKSchema.CheckInField.checkInPhotoAsset] as? CKAsset,
+            let field = kind == .checkIn ? CKSchema.CheckInField.checkInPhotoAsset : CKSchema.CheckInField.checkOutPhotoAsset
+            guard let asset = record[field] as? CKAsset,
                   let fileURL = asset.fileURL else {
                 return nil
             }
@@ -1242,6 +1262,8 @@ final class CloudKitCheckInRepository: CheckInRepositoryProtocol {
             verifyOutAccuracy2Meters: (record[CKSchema.CheckInField.verifyOutAccuracy2Meters] as? NSNumber)?.doubleValue,
             checkInPhotoAssetID: (record[CKSchema.CheckInField.checkInPhotoAsset] as? CKAsset)?.fileURL?.lastPathComponent,
             checkOutPhotoAssetID: (record[CKSchema.CheckInField.checkOutPhotoAsset] as? CKAsset)?.fileURL?.lastPathComponent,
+            checkInMethod: AttendanceMethod(rawValue: record.string(CKSchema.CheckInField.checkInMethod) ?? "") ?? .geofence,
+            lateByMinutes: record.intOptional(CKSchema.CheckInField.lateByMinutes),
             createdAt: record.date(CKSchema.CheckInField.createdAt),
             updatedAt: record.date(CKSchema.CheckInField.updatedAt)
         )

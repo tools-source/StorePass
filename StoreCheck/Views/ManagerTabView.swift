@@ -30,6 +30,7 @@ struct ManagerHomeView: View {
                 storeRepository: container.storeRepository,
                 checkInRepository: container.checkInRepository,
                 authRepository: container.authRepository,
+                employeeRepository: container.employeeManagementRepository,
                 csvExporter: container.csvExporter
             )
             .tabItem { Label("Attendance", systemImage: "checklist.checked") }

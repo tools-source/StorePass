@@ -105,7 +105,9 @@ struct CheckIn: Codable, Identifiable, Hashable {
     }
 }
 
-enum VerificationPhotoKind: String, Codable, CaseIterable {
+enum VerificationPhotoKind: String, Codable, CaseIterable, Identifiable {
     case checkIn
     case checkOut
+
+    var id: String { rawValue }
 }

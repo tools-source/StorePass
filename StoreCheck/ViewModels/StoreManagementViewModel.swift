@@ -4,9 +4,12 @@ import Foundation
 final class StoreManagementViewModel: ObservableObject {
     @Published var stores: [Store] = []
     @Published var latestJoinCodesByStoreId: [String: String] = [:]
+    @Published var broadcastMessagesByStoreId: [String: [BroadcastMessage]] = [:]
     @Published var storeError: String?
     @Published var toastMessage: String?
     @Published var isCreatingStore = false
+    @Published var isUpdatingStoreSettings = false
+    @Published var isSendingBroadcast = false
 
     private let repository: StoreRepositoryProtocol
     private var toastClearTask: Task<Void, Never>?
@@ -52,6 +55,7 @@ final class StoreManagementViewModel: ObservableObject {
             latestJoinCodesByStoreId[result.store.id] = result.joinCode
             showToast("Store created. Join code: \(result.joinCode)")
             storeError = nil
+            NotificationCenter.default.post(name: .cloudKitDidReceiveRemoteChange, object: nil)
             return true
         } catch {
             storeError = error.localizedDescription
@@ -66,6 +70,7 @@ final class StoreManagementViewModel: ObservableObject {
             upsertLocalStore(store)
             showToast("Store updated")
             storeError = nil
+            NotificationCenter.default.post(name: .cloudKitDidReceiveRemoteChange, object: nil)
         } catch {
             storeError = error.localizedDescription
             AppLog.error("Failed saving store", error: error)
@@ -79,6 +84,7 @@ final class StoreManagementViewModel: ObservableObject {
             latestJoinCodesByStoreId[id] = nil
             showToast("Store deleted")
             storeError = nil
+            NotificationCenter.default.post(name: .cloudKitDidReceiveRemoteChange, object: nil)
         } catch {
             storeError = error.localizedDescription
             AppLog.error("Failed deleting store", error: error)
@@ -101,6 +107,7 @@ final class StoreManagementViewModel: ObservableObject {
 
             showToast("Join code rotated")
             storeError = nil
+            NotificationCenter.default.post(name: .cloudKitDidReceiveRemoteChange, object: nil)
         } catch {
             storeError = error.localizedDescription
             AppLog.error("Failed rotating store code", error: error)
@@ -148,6 +155,90 @@ final class StoreManagementViewModel: ObservableObject {
 
     func clearStoreError() {
         storeError = nil
+    }
+
+    func setQRCodeMode(storeId: String, isEnabled: Bool) async {
+        guard !isUpdatingStoreSettings else { return }
+        isUpdatingStoreSettings = true
+        defer { isUpdatingStoreSettings = false }
+
+        do {
+            let updatedStore = try await repository.setStoreQRCheckInMode(storeId: storeId, isEnabled: isEnabled)
+            upsertLocalStore(updatedStore)
+            storeError = nil
+            showToast(isEnabled ? "QR check-in enabled" : "QR check-in disabled")
+            NotificationCenter.default.post(name: .cloudKitDidReceiveRemoteChange, object: nil)
+        } catch {
+            storeError = error.localizedDescription
+            AppLog.error("Failed toggling QR mode", error: error)
+        }
+    }
+
+    func rotateQRCode(storeId: String) async -> String? {
+        guard !isUpdatingStoreSettings else { return nil }
+        isUpdatingStoreSettings = true
+        defer { isUpdatingStoreSettings = false }
+
+        do {
+            let token = try await repository.rotateStoreQRCode(storeId: storeId)
+            if let index = stores.firstIndex(where: { $0.id == storeId }) {
+                stores[index].qrCodeToken = token
+                stores[index].qrCheckInEnabled = true
+                stores[index].updatedAt = Date()
+            }
+            showToast("Store QR rotated")
+            storeError = nil
+            NotificationCenter.default.post(name: .cloudKitDidReceiveRemoteChange, object: nil)
+            return token
+        } catch {
+            storeError = error.localizedDescription
+            AppLog.error("Failed rotating store QR", error: error)
+            return nil
+        }
+    }
+
+    func sendBroadcast(storeId: String, message: String) async -> Bool {
+        let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            storeError = "Broadcast message cannot be empty."
+            return false
+        }
+        guard trimmed.count <= 500 else {
+            storeError = "Broadcast message is too long."
+            return false
+        }
+        guard !isSendingBroadcast else { return false }
+
+        isSendingBroadcast = true
+        defer { isSendingBroadcast = false }
+
+        do {
+            try await repository.sendBroadcastMessage(storeId: storeId, message: trimmed)
+            await loadBroadcastMessages(storeId: storeId)
+            storeError = nil
+            showToast("Broadcast sent")
+            NotificationCenter.default.post(name: .cloudKitDidReceiveRemoteChange, object: nil)
+            return true
+        } catch {
+            storeError = error.localizedDescription
+            AppLog.error("Failed sending broadcast", error: error)
+            return false
+        }
+    }
+
+    func loadBroadcastMessages(storeId: String) async {
+        do {
+            let messages = try await repository.fetchBroadcastMessages(storeId: storeId, limit: 50)
+            broadcastMessagesByStoreId[storeId] = messages
+            storeError = nil
+        } catch {
+            storeError = error.localizedDescription
+            AppLog.error("Failed loading broadcast messages", error: error)
+        }
+    }
+
+    func broadcastMessages(for storeId: String) -> [BroadcastMessage] {
+        broadcastMessagesByStoreId[storeId] ?? []
     }
 
     private func upsertLocalStore(_ store: Store) {
