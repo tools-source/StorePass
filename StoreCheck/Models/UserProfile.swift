@@ -10,12 +10,16 @@ struct UserProfile: Codable, Identifiable, Hashable {
     var provider: String
     var assignedStoreIds: [String]
     var isActive: Bool
+    var hourlyRateCents: Int? = nil
+    var expectedStartMinutesFromMidnight: Int? = nil
 }
 
 struct EmployeeSummary: Identifiable, Hashable {
     let id: String
     let name: String
     let email: String?
+    let hourlyRateCents: Int?
+    let expectedStartMinutesFromMidnight: Int?
     let storeIds: [String]
     let storeNames: [String]
     let userIsActive: Bool

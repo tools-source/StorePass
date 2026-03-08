@@ -2,6 +2,12 @@ import AuthenticationServices
 import SwiftUI
 
 struct LoginView: View {
+    private enum FormField: Hashable {
+        case employeeName
+        case employeeEmail
+        case employeePassword
+    }
+
     @EnvironmentObject private var viewModel: AuthViewModel
     @Environment(\.colorScheme) private var colorScheme
     @State private var showError = false
@@ -9,6 +15,7 @@ struct LoginView: View {
     @State private var employeeEmail = ""
     @State private var employeePassword = ""
     @State private var isEmployeeSignupMode = true
+    @FocusState private var focusedField: FormField?
 
     var body: some View {
         ZStack {
@@ -28,10 +35,19 @@ struct LoginView: View {
                 .padding(.horizontal, DS.Spacing.m)
                 .padding(.vertical, DS.Spacing.l)
             }
+            .scrollDismissesKeyboard(.interactively)
         }
         .overlay {
             if viewModel.isLoading {
                 LoadingOverlay(message: "Signing in with Apple...")
+            }
+        }
+        .toolbar {
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button("Done") {
+                    focusedField = nil
+                }
             }
         }
         .alert("Sign in", isPresented: $showError) {
@@ -156,6 +172,9 @@ struct LoginView: View {
                         text: $employeeName,
                         autocapitalization: .words,
                         keyboard: .default,
+                        focus: .employeeName,
+                        submitLabel: .next,
+                        nextFocus: .employeeEmail,
                         accessibilityID: "employee_name_input"
                     )
                 }
@@ -165,29 +184,28 @@ struct LoginView: View {
                     text: $employeeEmail,
                     autocapitalization: .never,
                     keyboard: .emailAddress,
+                    focus: .employeeEmail,
+                    submitLabel: .next,
+                    nextFocus: .employeePassword,
                     accessibilityID: "employee_email_input"
                 )
                 secureEntryField(
                     title: "Password",
                     placeholder: "At least 8 characters",
                     text: $employeePassword,
+                    focus: .employeePassword,
                     accessibilityID: "employee_password_input"
                 )
 
                 Button(viewModel.isLoading ? "Please wait..." : (isEmployeeSignupMode ? "Create Employee Account" : "Log In as Employee")) {
-                    Task {
-                        if isEmployeeSignupMode {
-                            await viewModel.signUpEmployee(name: employeeName, email: employeeEmail, password: employeePassword)
-                        } else {
-                            await viewModel.signInEmployee(email: employeeEmail, password: employeePassword)
-                        }
-                    }
+                    submitEmployeeAuth()
                 }
                 .buttonStyle(PrimaryButtonStyle())
                 .disabled(viewModel.isLoading)
                 .accessibilityIdentifier("employee_auth_submit")
 
                 Button("Quick Email Access") {
+                    focusedField = nil
                     Task {
                         await viewModel.signInManuallyAsEmployee(name: employeeName, email: employeeEmail)
                     }
@@ -286,6 +304,9 @@ struct LoginView: View {
         text: Binding<String>,
         autocapitalization: TextInputAutocapitalization,
         keyboard: UIKeyboardType,
+        focus: FormField,
+        submitLabel: SubmitLabel = .done,
+        nextFocus: FormField? = nil,
         accessibilityID: String
     ) -> some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -297,6 +318,11 @@ struct LoginView: View {
                 .textInputAutocapitalization(autocapitalization)
                 .autocorrectionDisabled()
                 .keyboardType(keyboard)
+                .submitLabel(submitLabel)
+                .focused($focusedField, equals: focus)
+                .onSubmit {
+                    focusedField = nextFocus
+                }
                 .padding(.horizontal, DS.Spacing.s)
                 .frame(height: DS.Metrics.rowHeight)
                 .background(DS.Colors.elevated.opacity(0.75), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
@@ -310,6 +336,7 @@ struct LoginView: View {
         title: String,
         placeholder: String,
         text: Binding<String>,
+        focus: FormField,
         accessibilityID: String
     ) -> some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -320,11 +347,27 @@ struct LoginView: View {
             SecureField(placeholder, text: text)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
+                .submitLabel(.done)
+                .focused($focusedField, equals: focus)
+                .onSubmit {
+                    submitEmployeeAuth()
+                }
                 .padding(.horizontal, DS.Spacing.s)
                 .frame(height: DS.Metrics.rowHeight)
                 .background(DS.Colors.elevated.opacity(0.75), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                 .foregroundStyle(DS.Colors.textPrimary)
                 .accessibilityIdentifier(accessibilityID)
+        }
+    }
+
+    private func submitEmployeeAuth() {
+        focusedField = nil
+        Task {
+            if isEmployeeSignupMode {
+                await viewModel.signUpEmployee(name: employeeName, email: employeeEmail, password: employeePassword)
+            } else {
+                await viewModel.signInEmployee(email: employeeEmail, password: employeePassword)
+            }
         }
     }
 

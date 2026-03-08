@@ -146,6 +146,7 @@ final class UITestStoreRepository: StoreRepositoryProtocol {
     private var storesById: [String: Store] = [:]
     private var joinCodesByStoreId: [String: String] = [:]
     private var membershipsByEmployeeId: [String: Set<String>] = [:]
+    private var broadcastsByStoreId: [String: [BroadcastMessage]] = [:]
 
     init(authService: AuthServiceProtocol, roleProfiles: UITestRoleProfileRepository) {
         self.authService = authService
@@ -276,9 +277,64 @@ final class UITestStoreRepository: StoreRepositoryProtocol {
         roleProfiles.setAssignedStoreIds(Array(linked), for: user.id)
     }
 
+    func setStoreQRCheckInMode(storeId: String, isEnabled: Bool) async throws -> Store {
+        guard var store = storesById[storeId] else {
+            throw CloudKitClientError.missingRecord("Store not found.")
+        }
+        store.qrCheckInEnabled = isEnabled
+        if isEnabled, (store.qrCodeToken?.isEmpty ?? true) {
+            store.qrCodeToken = Self.generateQRCodeToken()
+        }
+        store.updatedAt = Date()
+        storesById[storeId] = store
+        return store
+    }
+
+    func rotateStoreQRCode(storeId: String) async throws -> String {
+        guard var store = storesById[storeId] else {
+            throw CloudKitClientError.missingRecord("Store not found.")
+        }
+        let token = Self.generateQRCodeToken()
+        store.qrCodeToken = token
+        store.qrCheckInEnabled = true
+        store.updatedAt = Date()
+        storesById[storeId] = store
+        return token
+    }
+
+    func sendBroadcastMessage(storeId: String, message: String) async throws {
+        guard let user = authService.currentUser else {
+            throw CloudKitClientError.signedOut
+        }
+        guard let store = storesById[storeId] else {
+            throw CloudKitClientError.missingRecord("Store not found.")
+        }
+        let item = BroadcastMessage(
+            id: UUID().uuidString,
+            storeId: storeId,
+            storeName: store.name,
+            managerUserId: user.id,
+            managerName: user.name,
+            message: message.trimmingCharacters(in: .whitespacesAndNewlines),
+            createdAt: Date()
+        )
+        var items = broadcastsByStoreId[storeId] ?? []
+        items.append(item)
+        broadcastsByStoreId[storeId] = items.sorted { $0.createdAt > $1.createdAt }
+    }
+
+    func fetchBroadcastMessages(storeId: String, limit: Int) async throws -> [BroadcastMessage] {
+        Array((broadcastsByStoreId[storeId] ?? []).prefix(max(limit, 0)))
+    }
+
     private static func generateJoinCode() -> String {
         let alphabet = Array("ABCDEFGHJKLMNPQRSTUVWXYZ23456789")
         return String((0..<8).map { _ in alphabet.randomElement()! })
+    }
+
+    private static func generateQRCodeToken() -> String {
+        let alphabet = Array("ABCDEFGHJKLMNPQRSTUVWXYZ23456789")
+        return String((0..<16).map { _ in alphabet.randomElement()! })
     }
 }
 
@@ -306,6 +362,30 @@ final class UITestEmployeeManagementRepository: EmployeeManagementRepositoryProt
         return []
     }
 
+    func updateEmployeeProfile(
+        employeeId: String,
+        name: String,
+        hourlyRateCents: Int?,
+        expectedStartMinutesFromMidnight: Int?
+    ) async throws {
+        var profile = roleProfiles.userProfile(for: employeeId) ?? UserProfile(
+            id: employeeId,
+            name: name,
+            email: nil,
+            role: .employee,
+            createdAt: Date(),
+            lastLoginAt: Date(),
+            provider: "ui-test",
+            assignedStoreIds: [],
+            isActive: true
+        )
+        profile.name = name
+        profile.hourlyRateCents = hourlyRateCents
+        profile.expectedStartMinutesFromMidnight = expectedStartMinutesFromMidnight
+        profile.lastLoginAt = Date()
+        roleProfiles.upsertUserProfile(profile)
+    }
+
     func removeEmployeeFromStore(storeId: String, employeeId: String) async throws {
         _ = storeId
         _ = employeeId
@@ -324,6 +404,13 @@ final class UITestEmployeeManagementRepository: EmployeeManagementRepositoryProt
         if !isActive {
             try await roleProfiles.softDeleteAccount(uid: employeeId, role: .employee)
         }
+    }
+
+    func fetchStoreActivityFeed(managerId: String, storeId: String, limit: Int) async throws -> [StoreActivityEvent] {
+        _ = managerId
+        _ = storeId
+        _ = limit
+        return []
     }
 }
 
@@ -466,6 +553,17 @@ final class UITestCheckInRepository: CheckInRepositoryProtocol {
             return true
         }
         .sorted { $0.checkInTime > $1.checkInTime }
+    }
+
+    func fetchVerificationPhotoData(checkInId: String, storeId: String) async throws -> Data? {
+        _ = checkInId
+        _ = storeId
+        return nil
+    }
+
+    func fetchVerificationPhotoURL(photoPath: String) async throws -> URL {
+        _ = photoPath
+        throw CloudKitClientError.missingRecord("Photo proof is unavailable.")
     }
 }
 #endif

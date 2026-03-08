@@ -63,6 +63,8 @@ struct CheckIn: Codable, Identifiable, Hashable {
     var verifyOutAccuracy2Meters: Double?
     var checkInPhotoAssetID: String?
     var checkOutPhotoAssetID: String?
+    var checkInMethod: AttendanceMethod? = .geofence
+    var lateByMinutes: Int?
     var createdAt: Date?
     var updatedAt: Date?
 
@@ -83,14 +85,27 @@ struct CheckIn: Codable, Identifiable, Hashable {
     }
 
     var hasVerificationPhoto: Bool {
-        checkInPhotoAssetID != nil
+        checkInPhotoAssetID != nil || checkOutPhotoAssetID != nil
     }
 
     var verificationPhotoPath: String? {
         checkInPhotoAssetID
     }
 
+    var checkOutVerificationPhotoPath: String? {
+        checkOutPhotoAssetID
+    }
+
     var verificationPhotoCapturedAt: Date? {
         checkInTime
     }
+
+    var isLateArrival: Bool {
+        (lateByMinutes ?? 0) > 0
+    }
+}
+
+enum VerificationPhotoKind: String, Codable, CaseIterable {
+    case checkIn
+    case checkOut
 }

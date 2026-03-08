@@ -28,6 +28,9 @@ final class EmployeeDashboardViewModel: ObservableObject {
 
     private let verifyReadDelayNanoseconds: UInt64
     private let verifyAccuracyThresholdMeters: Double
+    private let verifyReadTimeoutSeconds: TimeInterval
+    private let verifyReadRetryCount: Int
+    private let verifyCachedReadMaxAgeSeconds: TimeInterval
 
     init(
         authService: AuthServiceProtocol,
@@ -36,7 +39,10 @@ final class EmployeeDashboardViewModel: ObservableObject {
         checkInRepository: CheckInRepositoryProtocol,
         locationService: LocationServiceProtocol,
         verifyReadDelayNanoseconds: UInt64 = 1_500_000_000,
-        verifyAccuracyThresholdMeters: Double = 65
+        verifyAccuracyThresholdMeters: Double = 65,
+        verifyReadTimeoutSeconds: TimeInterval = 12,
+        verifyReadRetryCount: Int = 1,
+        verifyCachedReadMaxAgeSeconds: TimeInterval = 30
     ) {
         self.authService = authService
         self.storeRepository = storeRepository
@@ -45,6 +51,9 @@ final class EmployeeDashboardViewModel: ObservableObject {
         self.locationService = locationService
         self.verifyReadDelayNanoseconds = verifyReadDelayNanoseconds
         self.verifyAccuracyThresholdMeters = verifyAccuracyThresholdMeters
+        self.verifyReadTimeoutSeconds = verifyReadTimeoutSeconds
+        self.verifyReadRetryCount = max(0, verifyReadRetryCount)
+        self.verifyCachedReadMaxAgeSeconds = max(1, verifyCachedReadMaxAgeSeconds)
     }
 
     private enum Verify2ReadError: LocalizedError {
@@ -260,14 +269,17 @@ final class EmployeeDashboardViewModel: ObservableObject {
 
     private func runTwoReadVerification(for store: Store) async throws -> Verify2ReadEvidence {
         locationService.requestWhenInUseAuthorization()
+        if locationService.authorizationStatus == .notDetermined {
+            try? await Task.sleep(nanoseconds: 700_000_000)
+        }
         let authorization = locationService.authorizationStatus
         guard authorization == .authorizedWhenInUse || authorization == .authorizedAlways else {
             throw Verify2ReadError.permissionDenied
         }
 
-        let read1 = try await locationService.requestSingleAccurateLocation(timeoutSeconds: 8)
+        let read1 = try await requestVerificationRead(label: "read1")
         try await Task.sleep(nanoseconds: verifyReadDelayNanoseconds)
-        let read2 = try await locationService.requestSingleAccurateLocation(timeoutSeconds: 8)
+        let read2 = try await requestVerificationRead(label: "read2")
 
         let storeLocation = CLLocation(latitude: store.coordinate.latitude, longitude: store.coordinate.longitude)
         let distance1 = read1.distance(from: storeLocation)
@@ -299,6 +311,47 @@ final class EmployeeDashboardViewModel: ObservableObject {
             distance2Meters: distance2,
             driftMeters: drift
         )
+    }
+
+    private func requestVerificationRead(label: String) async throws -> CLLocation {
+        var attempts = 0
+        while true {
+            locationService.requestLocation()
+            do {
+                return try await locationService.requestSingleAccurateLocation(timeoutSeconds: verifyReadTimeoutSeconds)
+            } catch {
+                if isLocationTimeout(error),
+                   let cached = locationService.currentLocation,
+                   cached.horizontalAccuracy > 0,
+                   cached.horizontalAccuracy <= verifyAccuracyThresholdMeters,
+                   abs(cached.timestamp.timeIntervalSinceNow) <= verifyCachedReadMaxAgeSeconds {
+                    AppLog.warning(
+                        "Using cached GPS for \(label) after timeout accuracy=\(Int(cached.horizontalAccuracy)) ageSeconds=\(Int(abs(cached.timestamp.timeIntervalSinceNow)))"
+                    )
+                    return cached
+                }
+
+                guard isLocationTimeout(error), attempts < verifyReadRetryCount else {
+                    if isLocationTimeout(error) {
+                        throw CloudKitClientError.invalidData(
+                            "Location request timed out. Move near a window or outdoors, keep Wi-Fi enabled, then retry."
+                        )
+                    }
+                    throw error
+                }
+
+                attempts += 1
+                AppLog.warning("Location \(label) timed out; retrying attempt=\(attempts + 1)")
+            }
+        }
+    }
+
+    private func isLocationTimeout(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        if nsError.domain == "StorePass", nsError.code == 5304 {
+            return true
+        }
+        return error.localizedDescription.localizedCaseInsensitiveContains("timed out")
     }
 
     private func loadTodaySessions() async throws {

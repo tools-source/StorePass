@@ -51,10 +51,15 @@ struct EmployeeCheckInView: View {
 }
 
 private struct EmployeeHomeView: View {
+    private enum FormField: Hashable {
+        case joinCode
+    }
+
     @ObservedObject var viewModel: EmployeeDashboardViewModel
 
     @State private var pendingCameraAction: EmployeeDashboardViewModel.AttendanceAction?
     @State private var showLeaveConfirmation = false
+    @FocusState private var focusedField: FormField?
 
     var body: some View {
         NavigationStack {
@@ -83,6 +88,7 @@ private struct EmployeeHomeView: View {
                     .padding(.horizontal, DS.Spacing.m)
                     .padding(.vertical, DS.Spacing.m)
                 }
+                .scrollDismissesKeyboard(.interactively)
             }
             .navigationTitle("Shift")
             .toolbar {
@@ -92,6 +98,12 @@ private struct EmployeeHomeView: View {
                         Task { await viewModel.load() }
                     } label: {
                         Image(systemName: "arrow.clockwise")
+                    }
+                }
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("Done") {
+                        focusedField = nil
                     }
                 }
             }
@@ -255,11 +267,18 @@ private struct EmployeeHomeView: View {
                     TextField("Enter join code", text: $viewModel.joinCodeInput)
                         .textInputAutocapitalization(.characters)
                         .autocorrectionDisabled()
+                        .submitLabel(.done)
+                        .focused($focusedField, equals: .joinCode)
+                        .onSubmit {
+                            focusedField = nil
+                            Task { await viewModel.joinStoreByCode() }
+                        }
                         .padding(.horizontal, DS.Spacing.s)
                         .frame(height: DS.Metrics.rowHeight)
                         .background(DS.Colors.elevated.opacity(0.75), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
 
                     Button("Join") {
+                        focusedField = nil
                         Task { await viewModel.joinStoreByCode() }
                     }
                     .buttonStyle(SecondaryButtonStyle())

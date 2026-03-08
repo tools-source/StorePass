@@ -3,6 +3,14 @@ import SwiftUI
 import UIKit
 
 struct ManageStoresView: View {
+    private enum FormField: Hashable {
+        case name
+        case address
+        case latitude
+        case longitude
+        case radius
+    }
+
     @EnvironmentObject private var container: AppContainer
     @StateObject private var viewModel: StoreManagementViewModel
     @StateObject private var addressSearch = StoreAddressSearchModel()
@@ -14,6 +22,9 @@ struct ManageStoresView: View {
     @State private var radiusText = "150"
     @State private var isApplyingAddressSelection = false
     @State private var isResolvingAddress = false
+    @State private var isCreateStoreFormExpanded = true
+    @State private var didAutoConfigureCreateStoreForm = false
+    @FocusState private var focusedField: FormField?
 
     @State private var deletingStore: Store?
 
@@ -69,12 +80,26 @@ struct ManageStoresView: View {
                     .padding(.horizontal, DS.Spacing.m)
                     .padding(.vertical, DS.Spacing.m)
                 }
+                .scrollDismissesKeyboard(.interactively)
             }
             .navigationTitle("Stores")
+            .toolbar {
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("Done") {
+                        focusedField = nil
+                    }
+                }
+            }
             .task { await viewModel.load(managerId: container.authRepository.currentUserId) }
             .refreshable { await viewModel.load(managerId: container.authRepository.currentUserId) }
             .onReceive(NotificationCenter.default.publisher(for: .cloudKitDidReceiveRemoteChange)) { _ in
                 Task { await viewModel.load(managerId: container.authRepository.currentUserId) }
+            }
+            .onChange(of: viewModel.stores.count) { _, count in
+                guard !didAutoConfigureCreateStoreForm else { return }
+                isCreateStoreFormExpanded = count == 0
+                didAutoConfigureCreateStoreForm = true
             }
             .alert(
                 "Delete Store",
@@ -116,32 +141,63 @@ struct ManageStoresView: View {
     private var createStoreCard: some View {
         CardView {
             VStack(alignment: .leading, spacing: DS.Spacing.s) {
-                ScreenHeader(
-                    title: "Create Store",
-                    subtitle: "Set location and radius used for attendance validation.",
-                    icon: "plus.circle"
-                )
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        isCreateStoreFormExpanded.toggle()
+                    }
+                } label: {
+                    HStack(alignment: .center, spacing: DS.Spacing.s) {
+                        Image(systemName: "plus.circle")
+                            .font(.system(size: 18, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .frame(width: 38, height: 38)
+                            .background(DS.Colors.primaryGradient, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
 
-                Group {
-                    entryField(title: "Store name", text: $name, keyboard: .default, accessibilityID: "store_name_input")
-                    addressEntrySection
+                        VStack(alignment: .leading, spacing: DS.Spacing.xxs) {
+                            Text("Create Store")
+                                .font(DS.Typography.title)
+                                .foregroundStyle(DS.Colors.textPrimary)
+                            Text("Set location and radius used for attendance validation.")
+                                .font(DS.Typography.caption)
+                                .foregroundStyle(DS.Colors.textSecondary)
+                        }
 
-                    HStack(spacing: DS.Spacing.s) {
-                        entryField(title: "Latitude", text: $latitudeText, keyboard: .numbersAndPunctuation, accessibilityID: "store_lat_input")
-                        entryField(title: "Longitude", text: $longitudeText, keyboard: .numbersAndPunctuation, accessibilityID: "store_lng_input")
+                        Spacer(minLength: 12)
+
+                        Image(systemName: isCreateStoreFormExpanded ? "chevron.up.circle.fill" : "chevron.down.circle.fill")
+                            .font(.system(size: 22, weight: .semibold))
+                            .foregroundStyle(DS.Colors.primary)
+                    }
+                }
+                .buttonStyle(.plain)
+
+                if isCreateStoreFormExpanded {
+                    Group {
+                        entryField(title: "Store name", text: $name, keyboard: .default, accessibilityID: "store_name_input", focus: .name, submitLabel: .next, nextFocus: .address)
+                        addressEntrySection
+
+                        HStack(spacing: DS.Spacing.s) {
+                            entryField(title: "Latitude", text: $latitudeText, keyboard: .numbersAndPunctuation, accessibilityID: "store_lat_input", focus: .latitude, submitLabel: .next, nextFocus: .longitude)
+                            entryField(title: "Longitude", text: $longitudeText, keyboard: .numbersAndPunctuation, accessibilityID: "store_lng_input", focus: .longitude, submitLabel: .next, nextFocus: .radius)
+                        }
+
+                        entryField(title: "Radius (meters)", text: $radiusText, keyboard: .numberPad, accessibilityID: "store_radius_input", focus: .radius)
                     }
 
-                    entryField(title: "Radius (meters)", text: $radiusText, keyboard: .numberPad, accessibilityID: "store_radius_input")
-                }
-
-                Button(viewModel.isCreatingStore ? "Creating..." : "Create Store") {
-                    Task {
-                        await createStore()
+                    Button(viewModel.isCreatingStore ? "Creating..." : "Create Store") {
+                        Task {
+                            focusedField = nil
+                            await createStore()
+                        }
                     }
+                    .buttonStyle(PrimaryButtonStyle())
+                    .disabled(viewModel.isCreatingStore)
+                    .accessibilityIdentifier("create_store_button")
+                } else {
+                    Text("Collapsed. Tap to expand and create a new store.")
+                        .font(DS.Typography.micro)
+                        .foregroundStyle(DS.Colors.textSecondary)
                 }
-                .buttonStyle(PrimaryButtonStyle())
-                .disabled(viewModel.isCreatingStore)
-                .accessibilityIdentifier("create_store_button")
             }
         }
     }
@@ -155,10 +211,15 @@ struct ManageStoresView: View {
             TextField("Address", text: $address)
                 .textInputAutocapitalization(.words)
                 .autocorrectionDisabled()
+                .submitLabel(.next)
+                .focused($focusedField, equals: .address)
                 .padding(.horizontal, DS.Spacing.s)
                 .frame(height: DS.Metrics.rowHeight)
                 .background(DS.Colors.elevated.opacity(0.75), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                 .accessibilityIdentifier("store_address_input")
+                .onSubmit {
+                    focusedField = .latitude
+                }
                 .onChange(of: address) { _, newValue in
                     if isApplyingAddressSelection {
                         isApplyingAddressSelection = false
@@ -241,7 +302,15 @@ struct ManageStoresView: View {
         }
     }
 
-    private func entryField(title: String, text: Binding<String>, keyboard: UIKeyboardType, accessibilityID: String) -> some View {
+    private func entryField(
+        title: String,
+        text: Binding<String>,
+        keyboard: UIKeyboardType,
+        accessibilityID: String,
+        focus: FormField = .name,
+        submitLabel: SubmitLabel = .done,
+        nextFocus: FormField? = nil
+    ) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title)
                 .font(DS.Typography.micro)
@@ -249,6 +318,11 @@ struct ManageStoresView: View {
 
             TextField(title, text: text)
                 .keyboardType(keyboard)
+                .submitLabel(submitLabel)
+                .focused($focusedField, equals: focus)
+                .onSubmit {
+                    focusedField = nextFocus
+                }
                 .padding(.horizontal, DS.Spacing.s)
                 .frame(height: DS.Metrics.rowHeight)
                 .background(DS.Colors.elevated.opacity(0.75), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
@@ -297,6 +371,9 @@ struct ManageStoresView: View {
             latitudeText = ""
             longitudeText = ""
             radiusText = "150"
+            withAnimation(.easeInOut(duration: 0.2)) {
+                isCreateStoreFormExpanded = false
+            }
         }
     }
 }

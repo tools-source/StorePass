@@ -3,11 +3,16 @@ import SwiftUI
 struct EmployeeManagementView: View {
     @StateObject private var viewModel: EmployeeManagementViewModel
 
-    init(employeeRepository: EmployeeManagementRepositoryProtocol, authRepository: AuthRepositoryProtocol) {
+    init(
+        employeeRepository: EmployeeManagementRepositoryProtocol,
+        authRepository: AuthRepositoryProtocol,
+        checkInRepository: CheckInRepositoryProtocol
+    ) {
         _viewModel = StateObject(
             wrappedValue: EmployeeManagementViewModel(
                 employeeRepository: employeeRepository,
-                authRepository: authRepository
+                authRepository: authRepository,
+                checkInRepository: checkInRepository
             )
         )
     }
@@ -37,7 +42,7 @@ struct EmployeeManagementView: View {
                             VStack(spacing: DS.Spacing.s) {
                                 ForEach(viewModel.filteredEmployees) { employee in
                                     NavigationLink {
-                                        EmployeeDetailView(employee: employee, viewModel: viewModel)
+                                        EmployeeDetailView(employeeId: employee.id, initialEmployee: employee, viewModel: viewModel)
                                     } label: {
                                         employeeRow(employee)
                                     }
@@ -63,6 +68,7 @@ struct EmployeeManagementView: View {
             .task { await viewModel.load() }
             .refreshable { await viewModel.load() }
             .onReceive(NotificationCenter.default.publisher(for: .cloudKitDidReceiveRemoteChange)) { _ in
+                viewModel.clearWorkSummaryCache()
                 Task { await viewModel.load() }
             }
             .alert("Employee Action", isPresented: Binding(get: { viewModel.pendingRemoval != nil }, set: { if !$0 { viewModel.cancelPendingRemoval() } })) {
@@ -109,6 +115,9 @@ struct EmployeeManagementView: View {
                         Text(employee.email ?? "No email available")
                             .font(DS.Typography.caption)
                             .foregroundStyle(DS.Colors.textSecondary)
+                        Text("Hourly: \(viewModel.hourlyRateText(for: employee))")
+                            .font(DS.Typography.micro)
+                            .foregroundStyle(DS.Colors.textSecondary)
                     }
 
                     Spacer(minLength: 0)
@@ -132,13 +141,29 @@ struct EmployeeManagementView: View {
 }
 
 private struct EmployeeDetailView: View {
-    let employee: EmployeeSummary
+    private enum FormField: Hashable {
+        case name
+        case hourlyRate
+    }
+
+    let employeeId: String
+    let initialEmployee: EmployeeSummary
     @ObservedObject var viewModel: EmployeeManagementViewModel
+    @State private var editedName = ""
+    @State private var editedHourlyRate = ""
+    @State private var isSavingProfile = false
+    @State private var selectedRemovalStoreId = ""
+    @FocusState private var focusedField: FormField?
+
+    private var employee: EmployeeSummary {
+        viewModel.employee(withId: employeeId) ?? initialEmployee
+    }
 
     var body: some View {
         ScrollView {
             VStack(spacing: DS.Spacing.m) {
                 profileCard
+                editProfileCard
                 membershipsCard
                 actionsCard
             }
@@ -146,8 +171,30 @@ private struct EmployeeDetailView: View {
             .padding(.horizontal, DS.Spacing.m)
             .padding(.vertical, DS.Spacing.m)
         }
+        .scrollDismissesKeyboard(.interactively)
         .background(AppBackground())
         .navigationTitle("Employee")
+        .toolbar {
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button("Done") {
+                    focusedField = nil
+                }
+            }
+        }
+        .task {
+            seedEditableFields()
+            await viewModel.loadWorkSummary(for: employee)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .cloudKitDidReceiveRemoteChange)) { _ in
+            Task { await viewModel.loadWorkSummary(for: employee) }
+        }
+        .onChange(of: employee.name) { _, _ in
+            seedEditableFields()
+        }
+        .onChange(of: employee.storeIds) { _, _ in
+            seedRemovalStoreSelectionIfNeeded()
+        }
     }
 
     private var profileCard: some View {
@@ -156,6 +203,55 @@ private struct EmployeeDetailView: View {
                 ScreenHeader(title: employee.name, subtitle: employee.email ?? "No email", icon: "person.crop.circle")
                 KeyValueRow(title: "Status", value: employee.userIsActive ? "Active" : "Inactive")
                 KeyValueRow(title: "Memberships", value: "\(employee.storeNames.count)")
+                KeyValueRow(title: "Hourly Salary", value: viewModel.hourlyRateText(for: employee))
+                KeyValueRow(title: "Approved Sessions", value: viewModel.approvedSessionsText(for: employee.id))
+                KeyValueRow(title: "Total Hours", value: viewModel.totalHoursText(for: employee.id))
+                KeyValueRow(title: "Total Earned", value: viewModel.totalEarningsText(for: employee))
+
+                Text("Calculated from approved completed check-ins across this manager's stores.")
+                    .font(DS.Typography.micro)
+                    .foregroundStyle(DS.Colors.textSecondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var editProfileCard: some View {
+        CardView {
+            VStack(alignment: .leading, spacing: DS.Spacing.s) {
+                ScreenHeader(title: "Edit Employee", subtitle: "Name and pay rate", icon: "pencil.and.list.clipboard")
+
+                TextField("Full name", text: $editedName)
+                    .textInputAutocapitalization(.words)
+                    .autocorrectionDisabled()
+                    .submitLabel(.next)
+                    .focused($focusedField, equals: .name)
+                    .onSubmit {
+                        focusedField = .hourlyRate
+                    }
+                    .padding(.horizontal, DS.Spacing.s)
+                    .frame(height: DS.Metrics.rowHeight)
+                    .background(DS.Colors.elevated.opacity(0.75), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+                KeyValueRow(title: "Employee Email", value: employee.email ?? "No email on file")
+
+                Text("Email can only be changed by the employee account.")
+                    .font(DS.Typography.micro)
+                    .foregroundStyle(DS.Colors.textSecondary)
+
+                TextField("Hourly salary (e.g. 18.50)", text: $editedHourlyRate)
+                    .keyboardType(.decimalPad)
+                    .submitLabel(.done)
+                    .focused($focusedField, equals: .hourlyRate)
+                    .padding(.horizontal, DS.Spacing.s)
+                    .frame(height: DS.Metrics.rowHeight)
+                    .background(DS.Colors.elevated.opacity(0.75), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+                Button(isSavingProfile ? "Saving..." : "Save Employee") {
+                    Task { await saveProfile() }
+                }
+                .buttonStyle(PrimaryButtonStyle())
+                .disabled(isSavingProfile || editedName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -192,26 +288,99 @@ private struct EmployeeDetailView: View {
             VStack(alignment: .leading, spacing: DS.Spacing.s) {
                 ScreenHeader(title: "Actions", subtitle: "Membership and account controls", icon: "slider.horizontal.3")
 
-                Button(employee.userIsActive ? "Deactivate Account" : "Activate Account") {
-                    Task { await viewModel.setActive(employeeId: employee.id, isActive: !employee.userIsActive) }
+                if removableStores.isEmpty {
+                    Text("No active store memberships to remove.")
+                        .font(DS.Typography.caption)
+                        .foregroundStyle(DS.Colors.textSecondary)
+                } else {
+                    Picker("Store", selection: $selectedRemovalStoreId) {
+                        ForEach(removableStores) { store in
+                            Text(store.name).tag(store.id)
+                        }
+                    }
+                    .pickerStyle(.menu)
                 }
-                .buttonStyle(SecondaryButtonStyle())
 
                 Button("Remove From Selected Store", role: .destructive) {
-                    viewModel.prepareRemoval(for: employee)
+                    viewModel.prepareRemoval(for: employee, preferredStoreId: selectedRemovalStoreId)
                 }
                 .buttonStyle(DestructiveButtonStyle())
+                .disabled(selectedRemovalStoreId.isEmpty || removableStores.isEmpty)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
+
+    private func seedEditableFields() {
+        editedName = employee.name
+        if let hourlyRateCents = employee.hourlyRateCents {
+            let value = Decimal(hourlyRateCents) / 100
+            editedHourlyRate = NSDecimalNumber(decimal: value).stringValue
+        } else {
+            editedHourlyRate = ""
+        }
+        seedRemovalStoreSelectionIfNeeded()
+    }
+
+    private func seedRemovalStoreSelectionIfNeeded() {
+        if let selected = removableStores.first(where: { $0.id == selectedRemovalStoreId }) {
+            selectedRemovalStoreId = selected.id
+            return
+        }
+        selectedRemovalStoreId = removableStores.first?.id ?? ""
+    }
+
+    private struct RemovableStoreOption: Identifiable, Hashable {
+        let id: String
+        let name: String
+    }
+
+    private var removableStores: [RemovableStoreOption] {
+        if employee.storeIds.count == employee.storeNames.count {
+            return zip(employee.storeIds, employee.storeNames).map { RemovableStoreOption(id: $0.0, name: $0.1) }
+        }
+        return employee.storeIds.map { storeId in
+            let resolvedName = viewModel.stores.first(where: { $0.id == storeId })?.name ?? storeId
+            return RemovableStoreOption(id: storeId, name: resolvedName)
+        }
+    }
+
+    private func saveProfile() async {
+        focusedField = nil
+        let trimmedName = editedName.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let hourlyRateCents: Int?
+        let hourlyTrimmed = editedHourlyRate.trimmingCharacters(in: .whitespacesAndNewlines)
+        if hourlyTrimmed.isEmpty {
+            hourlyRateCents = nil
+        } else if let value = Decimal(string: hourlyTrimmed), value >= 0 {
+            hourlyRateCents = NSDecimalNumber(decimal: value * 100).intValue
+        } else {
+            viewModel.employeeError = "Enter a valid hourly salary."
+            return
+        }
+
+        isSavingProfile = true
+        await viewModel.updateEmployeeProfile(
+            employeeId: employee.id,
+            name: trimmedName,
+            hourlyRateCents: hourlyRateCents,
+            expectedStartMinutesFromMidnight: employee.expectedStartMinutesFromMidnight
+        )
+        isSavingProfile = false
     }
 }
 
 struct ManageEmployeesView: View {
     let employeeRepository: EmployeeManagementRepositoryProtocol
     let authRepository: AuthRepositoryProtocol
+    let checkInRepository: CheckInRepositoryProtocol
 
     var body: some View {
-        EmployeeManagementView(employeeRepository: employeeRepository, authRepository: authRepository)
+        EmployeeManagementView(
+            employeeRepository: employeeRepository,
+            authRepository: authRepository,
+            checkInRepository: checkInRepository
+        )
     }
 }

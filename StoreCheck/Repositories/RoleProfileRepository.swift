@@ -432,6 +432,13 @@ final class CloudKitRoleProfileRepository: RoleProfileRepositoryProtocol {
 
     private func isRecoverablePublicLookupError(_ error: Error) -> Bool {
         if let clientError = error as? CloudKitClientError,
+           case .invalidData(let message) = clientError,
+           message.localizedCaseInsensitiveContains("invalid bundle id for container") {
+            AppLog.warning("Treating CloudKit identity mismatch as recoverable during public lookup")
+            return true
+        }
+
+        if let clientError = error as? CloudKitClientError,
            case .unauthorized = clientError {
             AppLog.warning("Treating CloudKitClientError.unauthorized as recoverable during public lookup")
             return true

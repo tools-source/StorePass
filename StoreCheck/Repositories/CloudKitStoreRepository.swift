@@ -6,6 +6,9 @@ final class CloudKitStoreRepository: StoreRepositoryProtocol {
     private let service: CloudKitService
     private let authService: AuthService
     private let userProfileStore: UserProfileStoreProtocol
+    private static let localFallbackStoresKey = "storecheck.local_manager_stores.v1"
+    private static let localFallbackEmployeeLinksKey = "storecheck.local_employee_store_links.v1"
+    private static let localBroadcastMessagesKey = "storecheck.local_broadcast_messages.v1"
 
     init(service: CloudKitService, authService: AuthService, userProfileStore: UserProfileStoreProtocol) {
         self.service = service
@@ -14,13 +17,33 @@ final class CloudKitStoreRepository: StoreRepositoryProtocol {
     }
 
     func fetchStores(ids: [String]?) async throws -> [Store] {
+        if service.isCloudKitIdentityMismatchDetected {
+            if let ids {
+                if ids.isEmpty {
+                    return []
+                }
+                if service.currentRole == .manager, let managerId = service.currentUserId {
+                    return localFallbackStores(managerId: managerId).filter { ids.contains($0.id) }
+                }
+                return localFallbackStores(storeIDs: Set(ids))
+            }
+
+            guard let userId = service.currentUserId else {
+                throw CloudKitClientError.signedOut
+            }
+
+            if service.currentRole == .manager {
+                return localFallbackStores(managerId: userId)
+            }
+
+            let localLinkedStoreIDs = localFallbackStoreIDs(forEmployee: userId)
+            return localFallbackStores(storeIDs: Set(localLinkedStoreIDs))
+        }
+
         try await service.ensureCloudKitAvailable()
 
         if let ids {
             if ids.isEmpty {
-                if service.currentRole == .employee {
-                    return try await fetchStores(ids: nil)
-                }
                 return []
             }
             var fetched: [Store] = []
@@ -40,7 +63,13 @@ final class CloudKitStoreRepository: StoreRepositoryProtocol {
                     AppLog.warning("Store fetch by id skipped for id=\(id): \(AppLog.sanitize(error.localizedDescription))")
                 }
             }
-            return fetched.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+            let localStores: [Store]
+            if service.currentRole == .manager, let managerId = service.currentUserId {
+                localStores = localFallbackStores(managerId: managerId).filter { ids.contains($0.id) }
+            } else {
+                localStores = localFallbackStores(storeIDs: Set(ids))
+            }
+            return mergeStores(preferred: fetched, fallback: localStores)
         }
 
         guard let userId = service.currentUserId else {
@@ -51,6 +80,7 @@ final class CloudKitStoreRepository: StoreRepositoryProtocol {
             return try await fetchManagerStores(managerId: userId)
         }
 
+        let localLinkedStoreIDs = localFallbackStoreIDs(forEmployee: userId)
         let memberships: [CKRecord]
         do {
             memberships = try await service.queryRecords(
@@ -65,14 +95,21 @@ final class CloudKitStoreRepository: StoreRepositoryProtocol {
                 throw error
             }
             AppLog.warning("Employee membership store fetch recovered for user=\(AppLog.redactIdentifier(userId)): \(AppLog.sanitize(error.localizedDescription))")
-            return []
+            return localFallbackStores(storeIDs: Set(localLinkedStoreIDs))
         }
 
-        let storeIds = memberships.compactMap { $0.string(CKSchema.StoreMemberField.storeId) }
-        return try await fetchStores(ids: Array(Set(storeIds)))
+        let cloudStoreIDs = memberships.compactMap { $0.string(CKSchema.StoreMemberField.storeId) }
+        let allStoreIDs = Array(Set(cloudStoreIDs).union(localLinkedStoreIDs))
+        return try await fetchStores(ids: allStoreIDs)
     }
 
     func fetchManagerStores(managerId: String) async throws -> [Store] {
+        if service.isCloudKitIdentityMismatchDetected {
+            let localStores = localFallbackStores(managerId: managerId)
+            AppLog.warning("Manager store fetch using local-only mode manager=\(AppLog.redactIdentifier(managerId)) count=\(localStores.count)")
+            return localStores
+        }
+
         try await service.ensureCloudKitAvailable()
         var privateStores: [Store] = []
         var privateQueryRecovered = false
@@ -103,45 +140,79 @@ final class CloudKitStoreRepository: StoreRepositoryProtocol {
 
         let queriedStores = mergeStores(preferred: privateStores, fallback: publicStores)
         let idFallbackStores = await fetchManagerStoresViaProfileIDs(managerId: managerId)
+        let localStores = localFallbackStores(managerId: managerId)
+        if !localStores.isEmpty {
+            AppLog.warning("Using local store fallback for manager=\(AppLog.redactIdentifier(managerId)) count=\(localStores.count)")
+        }
 
         if queriedStores.isEmpty, !idFallbackStores.isEmpty {
             AppLog.info("Manager store fetch recovered via profile IDs for manager=\(AppLog.redactIdentifier(managerId)) count=\(idFallbackStores.count)")
-            return idFallbackStores
+            return mergeStores(preferred: idFallbackStores, fallback: localStores)
         }
 
         if queriedStores.isEmpty, publicQueryRecovered || privateQueryRecovered {
-            AppLog.warning("Manager store queries recovered with no results; returning empty store list for manager=\(AppLog.redactIdentifier(managerId))")
-            return []
+            AppLog.warning("Manager store queries recovered with no cloud results; returning local fallback stores for manager=\(AppLog.redactIdentifier(managerId)) count=\(localStores.count)")
+            return localStores
         }
 
-        return mergeStores(preferred: queriedStores, fallback: idFallbackStores)
+        let mergedCloud = mergeStores(preferred: queriedStores, fallback: idFallbackStores)
+        return mergeStores(preferred: mergedCloud, fallback: localStores)
     }
 
     func upsertStore(_ store: Store) async throws {
-        try await service.ensureCloudKitAvailable()
-
         guard let currentUserId = service.currentUserId else {
             throw CloudKitClientError.signedOut
         }
 
         try validateStore(name: store.name, address: store.address, latitude: store.latitude, longitude: store.longitude, radiusMeters: store.radiusMeters)
-        let record = try await fetchManagerCanonicalStoreRecord(storeId: store.id, expectedManagerId: currentUserId)
 
-        populateStoreRecord(
-            record,
-            store: store,
-            joinCode: store.resolvedJoinCode,
-            joinCodeHash: store.resolvedJoinCode.map { CloudKitService.stableHash(normalizeJoinCode($0)) },
-            managerPublicRecordID: nil
-        )
+        if service.isCloudKitIdentityMismatchDetected {
+            persistLocalFallbackStore(store, managerId: currentUserId)
+            return
+        }
 
-        let savedRecord = try await saveManagerStoreRecord(record, context: "upsertStore")
-        await mirrorStoreRecordBestEffort(savedRecord, context: "upsertStore")
+        try await service.ensureCloudKitAvailable()
+        if localFallbackStore(storeId: store.id, managerId: currentUserId) != nil {
+            persistLocalFallbackStore(store, managerId: currentUserId)
+            return
+        }
+
+        do {
+            let record = try await fetchManagerCanonicalStoreRecord(storeId: store.id, expectedManagerId: currentUserId)
+
+            populateStoreRecord(
+                record,
+                store: store,
+                joinCode: store.resolvedJoinCode,
+                joinCodeHash: store.resolvedJoinCode.map { CloudKitService.stableHash(normalizeJoinCode($0)) },
+                managerPublicRecordID: nil
+            )
+
+            let savedRecord = try await saveManagerStoreRecord(record, context: "upsertStore")
+            await mirrorStoreRecordBestEffort(savedRecord, context: "upsertStore")
+        } catch {
+            guard shouldUseLocalStoreFallback(for: error) else {
+                throw error
+            }
+            AppLog.warning("Store upsert fell back to local persistence store=\(store.id): \(AppLog.sanitize(error.localizedDescription))")
+            persistLocalFallbackStore(store, managerId: currentUserId)
+        }
     }
 
     func deleteStore(id: String) async throws {
-        try await service.ensureCloudKitAvailable()
         let currentUserId = try service.requireCurrentUserId()
+
+        if service.isCloudKitIdentityMismatchDetected {
+            deleteLocalFallbackStore(storeId: id, managerId: currentUserId)
+            return
+        }
+
+        try await service.ensureCloudKitAvailable()
+        if localFallbackStore(storeId: id, managerId: currentUserId) != nil {
+            deleteLocalFallbackStore(storeId: id, managerId: currentUserId)
+            return
+        }
+
         let privateStoreRecord = try await fetchStoreRecordIfOwnedByManager(
             storeId: id,
             expectedManagerId: currentUserId,
@@ -235,8 +306,6 @@ final class CloudKitStoreRepository: StoreRepositoryProtocol {
     }
 
     func createStore(name: String, address: String, latitude: Double, longitude: Double, radiusMeters: Int) async throws -> StoreCreationResult {
-        try await service.ensureCloudKitAvailable()
-
         let currentUserId = try service.requireCurrentUserId()
         try validateStore(name: name, address: address, latitude: latitude, longitude: longitude, radiusMeters: radiusMeters)
 
@@ -273,6 +342,13 @@ final class CloudKitStoreRepository: StoreRepositoryProtocol {
             joinCodeLast4: String(joinCode.suffix(4))
         )
 
+        if service.isCloudKitIdentityMismatchDetected {
+            persistLocalFallbackStore(store, managerId: currentUserId)
+            return StoreCreationResult(store: store, joinCode: joinCode)
+        }
+
+        try await service.ensureCloudKitAvailable()
+
         let record = CKRecord(recordType: CKSchema.RecordType.store, recordID: CloudKitService.storeRecordID(storeId: storeId))
         populateStoreRecord(
             record,
@@ -282,17 +358,33 @@ final class CloudKitStoreRepository: StoreRepositoryProtocol {
             managerPublicRecordID: nil
         )
 
-        let savedRecord = try await saveManagerStoreRecord(record, context: "createStore")
-        await mirrorStoreRecordBestEffort(savedRecord, context: "createStore")
-        await syncManagerOwnedStoreIdsBestEffort(managerId: currentUserId, storeId: store.id, isAdding: true, context: "createStore")
-
-        return StoreCreationResult(store: store, joinCode: joinCode)
+        do {
+            let savedRecord = try await saveManagerStoreRecord(record, context: "createStore")
+            await mirrorStoreRecordBestEffort(savedRecord, context: "createStore")
+            await syncManagerOwnedStoreIdsBestEffort(managerId: currentUserId, storeId: store.id, isAdding: true, context: "createStore")
+            return StoreCreationResult(store: store, joinCode: joinCode)
+        } catch {
+            guard shouldUseLocalStoreFallback(for: error) else {
+                throw error
+            }
+            AppLog.warning("Store create fell back to local persistence store=\(store.id): \(AppLog.sanitize(error.localizedDescription))")
+            persistLocalFallbackStore(store, managerId: currentUserId)
+            return StoreCreationResult(store: store, joinCode: joinCode)
+        }
     }
 
     func rotateStoreCode(storeId: String) async throws -> String {
+        let currentUserId = try service.requireCurrentUserId()
+        if localFallbackStore(storeId: storeId, managerId: currentUserId) != nil {
+            return try rotateLocalFallbackJoinCode(storeId: storeId, managerId: currentUserId)
+        }
+
+        if service.isCloudKitIdentityMismatchDetected {
+            throw CloudKitClientError.missingRecord("Store code not found.")
+        }
+
         try await service.ensureCloudKitAvailable()
 
-        let currentUserId = try service.requireCurrentUserId()
         let record = try await fetchManagerCanonicalStoreRecord(storeId: storeId, expectedManagerId: currentUserId)
 
         let newCode = Self.generateJoinCode()
@@ -307,9 +399,20 @@ final class CloudKitStoreRepository: StoreRepositoryProtocol {
     }
 
     func getStoreJoinCode(storeId: String) async throws -> String {
+        let currentUserId = try service.requireCurrentUserId()
+        if let localStore = localFallbackStore(storeId: storeId, managerId: currentUserId) {
+            if let localCode = localStore.resolvedJoinCode, !localCode.isEmpty {
+                return localCode
+            }
+            return try rotateLocalFallbackJoinCode(storeId: storeId, managerId: currentUserId)
+        }
+
+        if service.isCloudKitIdentityMismatchDetected {
+            throw CloudKitClientError.missingRecord("Store code not found.")
+        }
+
         try await service.ensureCloudKitAvailable()
 
-        let currentUserId = try service.requireCurrentUserId()
         let record = try await fetchManagerCanonicalStoreRecord(storeId: storeId, expectedManagerId: currentUserId)
 
         if let existing = record.string(CKSchema.StoreField.joinCode), !existing.isEmpty {
@@ -320,14 +423,36 @@ final class CloudKitStoreRepository: StoreRepositoryProtocol {
     }
 
     func joinStoreByCode(code: String) async throws -> JoinStoreResult {
-        try await service.ensureCloudKitAvailable()
-
         let normalizedCode = normalizeJoinCode(code)
         guard normalizedCode.count >= 6 else {
             throw CloudKitClientError.invalidData("Enter a valid join code.")
         }
 
         let currentUserId = try service.requireCurrentUserId()
+        let codeHash = CloudKitService.stableHash(normalizedCode)
+
+        if service.isCloudKitIdentityMismatchDetected {
+            guard let localProfile = authService.currentUser, localProfile.id == currentUserId else {
+                throw CloudKitClientError.missingRecord("Employee profile unavailable in local mode. Sign in again.")
+            }
+
+            guard localProfile.role == .employee else {
+                throw CloudKitClientError.invalidData("Only employees can join stores by code.")
+            }
+
+            guard localProfile.isActive else {
+                throw CloudKitClientError.invalidData("Your account is inactive. Contact your manager.")
+            }
+
+            return try joinLocalFallbackStoreByCode(
+                normalizedCode: normalizedCode,
+                codeHash: codeHash,
+                currentUserId: currentUserId,
+                employeeName: localProfile.name,
+                employeeEmail: localProfile.email
+            )
+        }
+
         guard let userProfile = try await currentUserProfile(userId: currentUserId) else {
             throw CloudKitClientError.missingRecord("Your profile is missing. Sign in again.")
         }
@@ -340,78 +465,290 @@ final class CloudKitStoreRepository: StoreRepositoryProtocol {
             throw CloudKitClientError.invalidData("Your account is inactive. Contact your manager.")
         }
 
-        let codeHash = CloudKitService.stableHash(normalizedCode)
-        let storeRecords = try await service.queryRecords(
-            recordType: CKSchema.RecordType.store,
-            predicate: NSCompoundPredicate(andPredicateWithSubpredicates: [
-                NSPredicate(format: "%K == %@", CKSchema.StoreField.joinCodeHash, codeHash),
-                NSPredicate(format: "%K == %@", CKSchema.StoreField.isActive, NSNumber(value: true))
-            ]),
-            sortDescriptors: [NSSortDescriptor(key: CKSchema.StoreField.updatedAt, ascending: false)]
-        )
+        try await service.ensureCloudKitAvailable()
 
-        guard let storeRecord = storeRecords.first,
-              let store = decodeStore(record: storeRecord),
-              store.isActive else {
-            throw CloudKitClientError.invalidData("Join code not found. Ask your manager for a fresh code.")
+        do {
+            let storeRecords = try await service.queryRecords(
+                recordType: CKSchema.RecordType.store,
+                predicate: NSCompoundPredicate(andPredicateWithSubpredicates: [
+                    NSPredicate(format: "%K == %@", CKSchema.StoreField.joinCodeHash, codeHash),
+                    NSPredicate(format: "%K == %@", CKSchema.StoreField.isActive, NSNumber(value: true))
+                ]),
+                sortDescriptors: [NSSortDescriptor(key: CKSchema.StoreField.updatedAt, ascending: false)]
+            )
+
+            guard let storeRecord = storeRecords.first,
+                  let store = decodeStore(record: storeRecord),
+                  store.isActive else {
+                throw CloudKitClientError.invalidData("Join code not found. Ask your manager for a fresh code.")
+            }
+
+            let membershipRecordID = CloudKitService.membershipRecordID(storeId: store.id, employeeId: currentUserId)
+            let membership = try await service.fetchRecord(with: membershipRecordID) ?? CKRecord(recordType: CKSchema.RecordType.storeMember, recordID: membershipRecordID)
+
+            let alreadyJoined = membership.string(CKSchema.StoreMemberField.status) == CKSchema.MemberStatus.active
+
+            membership[CKSchema.StoreMemberField.memberId] = membershipRecordID.recordName as CKRecordValue
+            membership[CKSchema.StoreMemberField.storeId] = store.id as CKRecordValue
+            membership[CKSchema.StoreMemberField.storeRef] = CKRecord.Reference(recordID: storeRecord.recordID, action: .none)
+            membership[CKSchema.StoreMemberField.employeeUserId] = currentUserId as CKRecordValue
+
+            if let publicUserRecordID = await userProfileStore.resolvePublicUserRecordID(userId: currentUserId) {
+                membership[CKSchema.StoreMemberField.employeeUserRef] = CKRecord.Reference(recordID: publicUserRecordID, action: .none)
+            } else {
+                membership[CKSchema.StoreMemberField.employeeUserRef] = nil
+            }
+
+            membership[CKSchema.StoreMemberField.employeeName] = userProfile.name as CKRecordValue
+            if let email = userProfile.email, !email.isEmpty {
+                membership[CKSchema.StoreMemberField.employeeEmail] = email as CKRecordValue
+            }
+            membership[CKSchema.StoreMemberField.status] = CKSchema.MemberStatus.active as CKRecordValue
+            if membership.date(CKSchema.StoreMemberField.joinedAt) == nil {
+                membership[CKSchema.StoreMemberField.joinedAt] = Date() as CKRecordValue
+            }
+            membership[CKSchema.StoreMemberField.updatedAt] = Date() as CKRecordValue
+
+            let previousAssignedStoreIds = Set(userProfile.assignedStoreIds)
+            var updatedProfile = userProfile
+            updatedProfile.assignedStoreIds = Array(previousAssignedStoreIds.union([store.id])).sorted()
+            updatedProfile.lastLoginAt = Date()
+
+            _ = try await service.save(record: membership)
+            setLocalFallbackStoreMembership(
+                employeeId: currentUserId,
+                storeId: store.id,
+                isActive: true,
+                employeeName: userProfile.name,
+                employeeEmail: userProfile.email
+            )
+            await persistProfileBestEffort(updatedProfile, deletedAt: nil, context: "joinStoreByCode")
+
+            return JoinStoreResult(
+                storeId: store.id,
+                storeName: store.name,
+                alreadyJoined: alreadyJoined,
+                assignedStoreIds: Array(Set(updatedProfile.assignedStoreIds).union(localFallbackStoreIDs(forEmployee: currentUserId))).sorted()
+            )
+        } catch {
+            guard shouldUseLocalStoreFallback(for: error) else {
+                throw error
+            }
+            AppLog.warning("Join store fell back to local lookup: \(AppLog.sanitize(error.localizedDescription))")
+            return try joinLocalFallbackStoreByCode(
+                normalizedCode: normalizedCode,
+                codeHash: codeHash,
+                currentUserId: currentUserId,
+                employeeName: userProfile.name,
+                employeeEmail: userProfile.email
+            )
         }
-
-        let membershipRecordID = CloudKitService.membershipRecordID(storeId: store.id, employeeId: currentUserId)
-        let membership = try await service.fetchRecord(with: membershipRecordID) ?? CKRecord(recordType: CKSchema.RecordType.storeMember, recordID: membershipRecordID)
-
-        let alreadyJoined = membership.string(CKSchema.StoreMemberField.status) == CKSchema.MemberStatus.active
-
-        membership[CKSchema.StoreMemberField.memberId] = membershipRecordID.recordName as CKRecordValue
-        membership[CKSchema.StoreMemberField.storeId] = store.id as CKRecordValue
-        membership[CKSchema.StoreMemberField.storeRef] = CKRecord.Reference(recordID: storeRecord.recordID, action: .none)
-        membership[CKSchema.StoreMemberField.employeeUserId] = currentUserId as CKRecordValue
-
-        if let publicUserRecordID = await userProfileStore.resolvePublicUserRecordID(userId: currentUserId) {
-            membership[CKSchema.StoreMemberField.employeeUserRef] = CKRecord.Reference(recordID: publicUserRecordID, action: .none)
-        } else {
-            membership[CKSchema.StoreMemberField.employeeUserRef] = nil
-        }
-
-        membership[CKSchema.StoreMemberField.employeeName] = userProfile.name as CKRecordValue
-        if let email = userProfile.email, !email.isEmpty {
-            membership[CKSchema.StoreMemberField.employeeEmail] = email as CKRecordValue
-        }
-        membership[CKSchema.StoreMemberField.status] = CKSchema.MemberStatus.active as CKRecordValue
-        if membership.date(CKSchema.StoreMemberField.joinedAt) == nil {
-            membership[CKSchema.StoreMemberField.joinedAt] = Date() as CKRecordValue
-        }
-        membership[CKSchema.StoreMemberField.updatedAt] = Date() as CKRecordValue
-
-        let previousAssignedStoreIds = Set(userProfile.assignedStoreIds)
-        var updatedProfile = userProfile
-        updatedProfile.assignedStoreIds = Array(previousAssignedStoreIds.union([store.id])).sorted()
-        updatedProfile.lastLoginAt = Date()
-
-        _ = try await service.save(record: membership)
-        await persistProfileBestEffort(updatedProfile, deletedAt: nil, context: "joinStoreByCode")
-
-        return JoinStoreResult(
-            storeId: store.id,
-            storeName: store.name,
-            alreadyJoined: alreadyJoined,
-            assignedStoreIds: updatedProfile.assignedStoreIds
-        )
     }
 
     func leaveStore(storeId: String) async throws {
-        try await service.ensureCloudKitAvailable()
-
         let currentUserId = try service.requireCurrentUserId()
-        let membershipRecordID = CloudKitService.membershipRecordID(storeId: storeId, employeeId: currentUserId)
-        guard let membership = try await service.fetchRecord(with: membershipRecordID) else {
+        setLocalFallbackStoreMembership(employeeId: currentUserId, storeId: storeId, isActive: false, employeeName: nil, employeeEmail: nil)
+
+        if service.isCloudKitIdentityMismatchDetected {
             return
         }
 
-        membership[CKSchema.StoreMemberField.status] = CKSchema.MemberStatus.removed as CKRecordValue
-        membership[CKSchema.StoreMemberField.updatedAt] = Date() as CKRecordValue
-        _ = try await service.save(record: membership)
+        try await service.ensureCloudKitAvailable()
 
-        await recomputeAssignedStoresBestEffort(for: currentUserId, context: "leaveStore")
+        do {
+            let membershipRecordID = CloudKitService.membershipRecordID(storeId: storeId, employeeId: currentUserId)
+            guard let membership = try await service.fetchRecord(with: membershipRecordID) else {
+                return
+            }
+
+            membership[CKSchema.StoreMemberField.status] = CKSchema.MemberStatus.removed as CKRecordValue
+            membership[CKSchema.StoreMemberField.updatedAt] = Date() as CKRecordValue
+            _ = try await service.save(record: membership)
+
+            await recomputeAssignedStoresBestEffort(for: currentUserId, context: "leaveStore")
+        } catch {
+            guard shouldUseLocalStoreFallback(for: error) else {
+                throw error
+            }
+            AppLog.warning("Leave store fell back to local membership update store=\(storeId): \(AppLog.sanitize(error.localizedDescription))")
+        }
+    }
+
+    func setStoreQRCheckInMode(storeId: String, isEnabled: Bool) async throws -> Store {
+        let currentUserId = try service.requireCurrentUserId()
+
+        if var localStore = localFallbackStore(storeId: storeId, managerId: currentUserId) {
+            localStore.qrCheckInEnabled = isEnabled
+            if isEnabled, (localStore.qrCodeToken?.isEmpty ?? true) {
+                localStore.qrCodeToken = Self.generateQRCodeToken()
+            }
+            localStore.updatedAt = Date()
+            persistLocalFallbackStore(localStore, managerId: currentUserId)
+            return localStore
+        }
+
+        if service.isCloudKitIdentityMismatchDetected {
+            throw CloudKitClientError.missingRecord("Store not found.")
+        }
+
+        try await service.ensureCloudKitAvailable()
+        let record = try await fetchManagerCanonicalStoreRecord(storeId: storeId, expectedManagerId: currentUserId)
+        record[CKSchema.StoreField.qrCheckInEnabled] = NSNumber(value: isEnabled)
+        if isEnabled {
+            let existingToken = record.string(CKSchema.StoreField.qrCodeToken)
+            if existingToken?.isEmpty ?? true {
+                record[CKSchema.StoreField.qrCodeToken] = Self.generateQRCodeToken() as CKRecordValue
+            }
+        }
+        record[CKSchema.StoreField.updatedAt] = Date() as CKRecordValue
+
+        let saved = try await saveManagerStoreRecord(record, context: "setStoreQRCheckInMode")
+        await mirrorStoreRecordBestEffort(saved, context: "setStoreQRCheckInMode")
+        guard let decoded = decodeStore(record: saved) else {
+            throw CloudKitClientError.invalidData("Store update failed.")
+        }
+        return decoded
+    }
+
+    func rotateStoreQRCode(storeId: String) async throws -> String {
+        let currentUserId = try service.requireCurrentUserId()
+
+        if var localStore = localFallbackStore(storeId: storeId, managerId: currentUserId) {
+            let token = Self.generateQRCodeToken()
+            localStore.qrCodeToken = token
+            localStore.qrCheckInEnabled = true
+            localStore.updatedAt = Date()
+            persistLocalFallbackStore(localStore, managerId: currentUserId)
+            return token
+        }
+
+        if service.isCloudKitIdentityMismatchDetected {
+            throw CloudKitClientError.missingRecord("Store not found.")
+        }
+
+        try await service.ensureCloudKitAvailable()
+        let record = try await fetchManagerCanonicalStoreRecord(storeId: storeId, expectedManagerId: currentUserId)
+        let token = Self.generateQRCodeToken()
+        record[CKSchema.StoreField.qrCodeToken] = token as CKRecordValue
+        record[CKSchema.StoreField.qrCheckInEnabled] = NSNumber(value: true)
+        record[CKSchema.StoreField.updatedAt] = Date() as CKRecordValue
+
+        let saved = try await saveManagerStoreRecord(record, context: "rotateStoreQRCode")
+        await mirrorStoreRecordBestEffort(saved, context: "rotateStoreQRCode")
+        return token
+    }
+
+    func sendBroadcastMessage(storeId: String, message: String) async throws {
+        let trimmedMessage = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedMessage.isEmpty else {
+            throw CloudKitClientError.invalidData("Message cannot be empty.")
+        }
+        guard trimmedMessage.count <= 500 else {
+            throw CloudKitClientError.invalidData("Message is too long.")
+        }
+
+        let managerId = try service.requireCurrentUserId()
+        let managerName = authService.currentUser?.name ?? "Manager"
+        let now = Date()
+
+        let broadcast = BroadcastMessage(
+            id: UUID().uuidString,
+            storeId: storeId,
+            storeName: (try await fetchStores(ids: [storeId]).first?.name) ?? "Store",
+            managerUserId: managerId,
+            managerName: managerName,
+            message: trimmedMessage,
+            createdAt: now
+        )
+
+        persistLocalBroadcastMessage(broadcast)
+
+        if service.isCloudKitIdentityMismatchDetected {
+            return
+        }
+
+        try await service.ensureCloudKitAvailable()
+
+        do {
+            _ = try await fetchManagerCanonicalStoreRecord(storeId: storeId, expectedManagerId: managerId)
+        } catch {
+            guard isRecoverableManagerStoreError(error) else {
+                throw error
+            }
+        }
+
+        let recordID = CKRecord.ID(recordName: "broadcast_\(CloudKitService.stableHash("\(storeId)|\(broadcast.id)"))")
+        let record = CKRecord(recordType: CKSchema.RecordType.broadcastMessage, recordID: recordID)
+        record[CKSchema.BroadcastField.messageId] = broadcast.id as CKRecordValue
+        record[CKSchema.BroadcastField.storeId] = broadcast.storeId as CKRecordValue
+        record[CKSchema.BroadcastField.storeRef] = CKRecord.Reference(recordID: CloudKitService.storeRecordID(storeId: storeId), action: .none)
+        record[CKSchema.BroadcastField.storeName] = broadcast.storeName as CKRecordValue
+        record[CKSchema.BroadcastField.managerUserId] = managerId as CKRecordValue
+        record[CKSchema.BroadcastField.managerName] = managerName as CKRecordValue
+        record[CKSchema.BroadcastField.message] = trimmedMessage as CKRecordValue
+        record[CKSchema.BroadcastField.createdAt] = now as CKRecordValue
+
+        do {
+            _ = try await service.save(record: record, in: service.publicDB)
+        } catch {
+            guard isRecoverableManagerStoreError(error) else {
+                throw error
+            }
+            AppLog.warning("Broadcast cloud save failed; local fallback kept: \(AppLog.sanitize(error.localizedDescription))")
+        }
+    }
+
+    func fetchBroadcastMessages(storeId: String, limit: Int) async throws -> [BroadcastMessage] {
+        let currentUserId = try service.requireCurrentUserId()
+        let localMessages = localBroadcastMessages(for: storeId)
+
+        if service.isCloudKitIdentityMismatchDetected {
+            return Array(localMessages.prefix(limit))
+        }
+
+        try await service.ensureCloudKitAvailable()
+
+        if service.currentRole == .manager {
+            do {
+                _ = try await fetchManagerCanonicalStoreRecord(storeId: storeId, expectedManagerId: currentUserId)
+            } catch {
+                guard isRecoverableManagerStoreError(error) else {
+                    throw error
+                }
+            }
+        } else {
+            let membershipRecordID = CloudKitService.membershipRecordID(storeId: storeId, employeeId: currentUserId)
+            do {
+                guard let membership = try await service.fetchRecord(with: membershipRecordID),
+                      membership.string(CKSchema.StoreMemberField.status) == CKSchema.MemberStatus.active else {
+                    return []
+                }
+            } catch {
+                guard isRecoverableManagerStoreError(error) else {
+                    throw error
+                }
+            }
+        }
+
+        let records: [CKRecord]
+        do {
+            records = try await service.queryRecords(
+                recordType: CKSchema.RecordType.broadcastMessage,
+                predicate: NSPredicate(format: "%K == %@", CKSchema.BroadcastField.storeId, storeId),
+                sortDescriptors: [NSSortDescriptor(key: CKSchema.BroadcastField.createdAt, ascending: false)],
+                resultsLimit: max(limit, 1),
+                in: service.publicDB
+            )
+        } catch {
+            guard isRecoverableManagerStoreError(error) else {
+                throw error
+            }
+            return Array(localMessages.prefix(limit))
+        }
+
+        let cloudMessages = records.compactMap(decodeBroadcastMessage(record:))
+        let merged = mergeBroadcastMessages(preferred: cloudMessages, fallback: localMessages)
+        return Array(merged.prefix(limit))
     }
 
     private func recomputeAssignedStores(for employeeId: String) async throws {
@@ -645,6 +982,14 @@ final class CloudKitStoreRepository: StoreRepositoryProtocol {
         record[CKSchema.StoreField.latitude] = NSNumber(value: store.latitude)
         record[CKSchema.StoreField.longitude] = NSNumber(value: store.longitude)
         record[CKSchema.StoreField.radiusMeters] = NSNumber(value: store.radiusMeters)
+        record[CKSchema.StoreField.timeZoneIdentifier] = store.timeZoneIdentifier as CKRecordValue
+        record[CKSchema.StoreField.qrCheckInEnabled] = NSNumber(value: store.qrCheckInEnabled)
+        if let qrCodeToken = store.qrCodeToken, !qrCodeToken.isEmpty {
+            record[CKSchema.StoreField.qrCodeToken] = qrCodeToken as CKRecordValue
+        } else {
+            record[CKSchema.StoreField.qrCodeToken] = nil
+        }
+        record[CKSchema.StoreField.longShiftWarningHours] = NSNumber(value: max(store.longShiftWarningHours, 1))
         record[CKSchema.StoreField.isActive] = NSNumber(value: store.isActive)
         if let joinCode, !joinCode.isEmpty {
             record[CKSchema.StoreField.joinCode] = joinCode as CKRecordValue
@@ -679,6 +1024,10 @@ final class CloudKitStoreRepository: StoreRepositoryProtocol {
             CKSchema.StoreField.joinCodeHash,
             CKSchema.StoreField.joinCode,
             CKSchema.StoreField.joinCodeLast4,
+            CKSchema.StoreField.timeZoneIdentifier,
+            CKSchema.StoreField.qrCheckInEnabled,
+            CKSchema.StoreField.qrCodeToken,
+            CKSchema.StoreField.longShiftWarningHours,
             CKSchema.StoreField.isActive,
             CKSchema.StoreField.createdAt,
             CKSchema.StoreField.updatedAt,
@@ -793,6 +1142,10 @@ final class CloudKitStoreRepository: StoreRepositoryProtocol {
     }
 
     private func isRecoverableManagerStoreError(_ error: Error) -> Bool {
+        if shouldUseLocalStoreFallback(for: error) {
+            return true
+        }
+
         if let clientError = error as? CloudKitClientError,
            case .unauthorized = clientError {
             return true
@@ -811,6 +1164,309 @@ final class CloudKitStoreRepository: StoreRepositoryProtocol {
         return description.contains("record type") ||
             description.contains("schema") ||
             description.contains("unknown field")
+    }
+
+    private func shouldUseLocalStoreFallback(for error: Error) -> Bool {
+        if let clientError = error as? CloudKitClientError,
+           case .invalidData(let message) = clientError,
+           message.localizedCaseInsensitiveContains("invalid bundle id for container") {
+            return true
+        }
+
+        if let ckError = error as? CKError,
+           ckError.code == .permissionFailure,
+           ckError.localizedDescription.localizedCaseInsensitiveContains("invalid bundle id for container") {
+            return true
+        }
+
+        return error.localizedDescription.localizedCaseInsensitiveContains("invalid bundle id for container")
+    }
+
+    private struct LocalFallbackPayload: Codable {
+        var storesByManagerId: [String: [Store]] = [:]
+    }
+
+    private struct LocalBroadcastPayload: Codable {
+        var messagesByStoreId: [String: [BroadcastMessage]] = [:]
+    }
+
+    private struct LocalEmployeeStoreLinksPayload: Codable {
+        var storeIdsByEmployeeId: [String: [String]] = [:]
+        var employeeNameById: [String: String]? = nil
+        var employeeEmailById: [String: String]? = nil
+        var employeeHourlyRateCentsById: [String: Int]? = nil
+        var employeeExpectedStartMinutesById: [String: Int]? = nil
+        var employeeIsActiveById: [String: Bool]? = nil
+    }
+
+    private func localFallbackStores() -> [Store] {
+        let payload = loadLocalFallbackPayload()
+        var mergedById: [String: Store] = [:]
+        for stores in payload.storesByManagerId.values {
+            for store in stores where store.isActive {
+                mergedById[store.id] = store
+            }
+        }
+        return mergedById.values.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    private func localFallbackStores(storeIDs: Set<String>) -> [Store] {
+        guard !storeIDs.isEmpty else { return [] }
+        return localFallbackStores().filter { storeIDs.contains($0.id) }
+    }
+
+    private func localFallbackStores(managerId: String) -> [Store] {
+        let payload = loadLocalFallbackPayload()
+        let stores = payload.storesByManagerId[managerId] ?? []
+        return stores
+            .filter(\.isActive)
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    private func localFallbackStore(storeId: String, managerId: String) -> Store? {
+        localFallbackStores(managerId: managerId).first { $0.id == storeId }
+    }
+
+    private func persistLocalFallbackStore(_ store: Store, managerId: String) {
+        var payload = loadLocalFallbackPayload()
+        var stores = payload.storesByManagerId[managerId] ?? []
+        var updatedStore = store
+        let now = Date()
+        updatedStore.managerId = managerId
+        updatedStore.createdAt = updatedStore.createdAt ?? now
+        updatedStore.updatedAt = now
+        if let code = updatedStore.resolvedJoinCode, !code.isEmpty {
+            let normalizedCode = normalizeJoinCode(code)
+            updatedStore.joinCode = normalizedCode
+            updatedStore.joinCodeCiphertext = normalizedCode
+            updatedStore.joinCodeLast4 = String(normalizedCode.suffix(4))
+        }
+
+        if let index = stores.firstIndex(where: { $0.id == updatedStore.id }) {
+            stores[index] = updatedStore
+        } else {
+            stores.append(updatedStore)
+        }
+
+        payload.storesByManagerId[managerId] = stores
+        saveLocalFallbackPayload(payload)
+    }
+
+    private func deleteLocalFallbackStore(storeId: String, managerId: String) {
+        var payload = loadLocalFallbackPayload()
+        var stores = payload.storesByManagerId[managerId] ?? []
+        stores.removeAll { $0.id == storeId }
+        payload.storesByManagerId[managerId] = stores
+        saveLocalFallbackPayload(payload)
+    }
+
+    private func localFallbackStoreIDs(forEmployee employeeId: String) -> [String] {
+        let payload = loadLocalEmployeeStoreLinksPayload()
+        return Array(Set(payload.storeIdsByEmployeeId[employeeId] ?? [])).sorted()
+    }
+
+    private func setLocalFallbackStoreMembership(
+        employeeId: String,
+        storeId: String,
+        isActive: Bool,
+        employeeName: String?,
+        employeeEmail: String?
+    ) {
+        var payload = loadLocalEmployeeStoreLinksPayload()
+        var storeIDs = Set(payload.storeIdsByEmployeeId[employeeId] ?? [])
+        var namesById = payload.employeeNameById ?? [:]
+        var emailsById = payload.employeeEmailById ?? [:]
+        if isActive {
+            storeIDs.insert(storeId)
+            if let employeeName, !employeeName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                namesById[employeeId] = employeeName
+            }
+            if let employeeEmail, !employeeEmail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                emailsById[employeeId] = employeeEmail
+            }
+        } else {
+            storeIDs.remove(storeId)
+        }
+        if storeIDs.isEmpty {
+            payload.storeIdsByEmployeeId.removeValue(forKey: employeeId)
+            namesById.removeValue(forKey: employeeId)
+            emailsById.removeValue(forKey: employeeId)
+        } else {
+            payload.storeIdsByEmployeeId[employeeId] = storeIDs.sorted()
+        }
+        payload.employeeNameById = namesById
+        payload.employeeEmailById = emailsById
+        saveLocalEmployeeStoreLinksPayload(payload)
+    }
+
+    private func joinLocalFallbackStoreByCode(
+        normalizedCode: String,
+        codeHash: String,
+        currentUserId: String,
+        employeeName: String?,
+        employeeEmail: String?
+    ) throws -> JoinStoreResult {
+        let localStores = localFallbackStores()
+        guard !localStores.isEmpty else {
+            throw CloudKitClientError.invalidData(
+                "Cloud sync is unavailable on this build, so join codes from other devices cannot be resolved yet."
+            )
+        }
+
+        guard let store = localStores.first(where: { candidate in
+            guard candidate.isActive,
+                  let resolvedCode = candidate.resolvedJoinCode,
+                  !resolvedCode.isEmpty else {
+                return false
+            }
+            let normalizedCandidateCode = normalizeJoinCode(resolvedCode)
+            return normalizedCandidateCode == normalizedCode || CloudKitService.stableHash(normalizedCandidateCode) == codeHash
+        }) else {
+            throw CloudKitClientError.invalidData(
+                "Join code not found locally. Ask your manager for a fresh code from this device, or fix CloudKit container setup."
+            )
+        }
+
+        let existingStoreIDs = Set(localFallbackStoreIDs(forEmployee: currentUserId))
+        let alreadyJoined = existingStoreIDs.contains(store.id)
+        setLocalFallbackStoreMembership(
+            employeeId: currentUserId,
+            storeId: store.id,
+            isActive: true,
+            employeeName: employeeName,
+            employeeEmail: employeeEmail
+        )
+        let assignedStoreIds = Array(existingStoreIDs.union([store.id])).sorted()
+        AppLog.warning("Join store used local fallback store=\(store.id) employee=\(AppLog.redactIdentifier(currentUserId))")
+
+        return JoinStoreResult(
+            storeId: store.id,
+            storeName: store.name,
+            alreadyJoined: alreadyJoined,
+            assignedStoreIds: assignedStoreIds
+        )
+    }
+
+    private func rotateLocalFallbackJoinCode(storeId: String, managerId: String) throws -> String {
+        var payload = loadLocalFallbackPayload()
+        var stores = payload.storesByManagerId[managerId] ?? []
+        guard let index = stores.firstIndex(where: { $0.id == storeId }) else {
+            throw CloudKitClientError.missingRecord("Store code not found.")
+        }
+        let code = Self.generateJoinCode()
+        stores[index].joinCode = code
+        stores[index].joinCodeCiphertext = code
+        stores[index].joinCodeLast4 = String(code.suffix(4))
+        stores[index].updatedAt = Date()
+        payload.storesByManagerId[managerId] = stores
+        saveLocalFallbackPayload(payload)
+        return code
+    }
+
+    private func loadLocalFallbackPayload() -> LocalFallbackPayload {
+        guard let data = UserDefaults.standard.data(forKey: Self.localFallbackStoresKey) else {
+            return LocalFallbackPayload()
+        }
+        do {
+            return try JSONDecoder().decode(LocalFallbackPayload.self, from: data)
+        } catch {
+            AppLog.warning("Local store fallback decode failed: \(AppLog.sanitize(error.localizedDescription))")
+            return LocalFallbackPayload()
+        }
+    }
+
+    private func saveLocalFallbackPayload(_ payload: LocalFallbackPayload) {
+        do {
+            let data = try JSONEncoder().encode(payload)
+            UserDefaults.standard.set(data, forKey: Self.localFallbackStoresKey)
+        } catch {
+            AppLog.warning("Local store fallback encode failed: \(AppLog.sanitize(error.localizedDescription))")
+        }
+    }
+
+    private func loadLocalEmployeeStoreLinksPayload() -> LocalEmployeeStoreLinksPayload {
+        guard let data = UserDefaults.standard.data(forKey: Self.localFallbackEmployeeLinksKey) else {
+            return LocalEmployeeStoreLinksPayload()
+        }
+        do {
+            return try JSONDecoder().decode(LocalEmployeeStoreLinksPayload.self, from: data)
+        } catch {
+            AppLog.warning("Local employee membership fallback decode failed: \(AppLog.sanitize(error.localizedDescription))")
+            return LocalEmployeeStoreLinksPayload()
+        }
+    }
+
+    private func saveLocalEmployeeStoreLinksPayload(_ payload: LocalEmployeeStoreLinksPayload) {
+        do {
+            let data = try JSONEncoder().encode(payload)
+            UserDefaults.standard.set(data, forKey: Self.localFallbackEmployeeLinksKey)
+        } catch {
+            AppLog.warning("Local employee membership fallback encode failed: \(AppLog.sanitize(error.localizedDescription))")
+        }
+    }
+
+    private func loadLocalBroadcastPayload() -> LocalBroadcastPayload {
+        guard let data = UserDefaults.standard.data(forKey: Self.localBroadcastMessagesKey) else {
+            return LocalBroadcastPayload()
+        }
+        do {
+            return try JSONDecoder().decode(LocalBroadcastPayload.self, from: data)
+        } catch {
+            AppLog.warning("Local broadcast fallback decode failed: \(AppLog.sanitize(error.localizedDescription))")
+            return LocalBroadcastPayload()
+        }
+    }
+
+    private func saveLocalBroadcastPayload(_ payload: LocalBroadcastPayload) {
+        do {
+            let data = try JSONEncoder().encode(payload)
+            UserDefaults.standard.set(data, forKey: Self.localBroadcastMessagesKey)
+        } catch {
+            AppLog.warning("Local broadcast fallback encode failed: \(AppLog.sanitize(error.localizedDescription))")
+        }
+    }
+
+    private func persistLocalBroadcastMessage(_ message: BroadcastMessage) {
+        var payload = loadLocalBroadcastPayload()
+        var items = payload.messagesByStoreId[message.storeId] ?? []
+        if let index = items.firstIndex(where: { $0.id == message.id }) {
+            items[index] = message
+        } else {
+            items.append(message)
+        }
+        payload.messagesByStoreId[message.storeId] = items.sorted { $0.createdAt > $1.createdAt }
+        saveLocalBroadcastPayload(payload)
+    }
+
+    private func localBroadcastMessages(for storeId: String) -> [BroadcastMessage] {
+        let payload = loadLocalBroadcastPayload()
+        return (payload.messagesByStoreId[storeId] ?? []).sorted { $0.createdAt > $1.createdAt }
+    }
+
+    private func decodeBroadcastMessage(record: CKRecord) -> BroadcastMessage? {
+        guard let id = record.string(CKSchema.BroadcastField.messageId),
+              let storeId = record.string(CKSchema.BroadcastField.storeId),
+              let managerUserId = record.string(CKSchema.BroadcastField.managerUserId),
+              let message = record.string(CKSchema.BroadcastField.message) else {
+            return nil
+        }
+        return BroadcastMessage(
+            id: id,
+            storeId: storeId,
+            storeName: record.string(CKSchema.BroadcastField.storeName) ?? "Store",
+            managerUserId: managerUserId,
+            managerName: record.string(CKSchema.BroadcastField.managerName) ?? "Manager",
+            message: message,
+            createdAt: record.date(CKSchema.BroadcastField.createdAt) ?? Date()
+        )
+    }
+
+    private func mergeBroadcastMessages(preferred: [BroadcastMessage], fallback: [BroadcastMessage]) -> [BroadcastMessage] {
+        var merged = Dictionary(uniqueKeysWithValues: fallback.map { ($0.id, $0) })
+        for message in preferred {
+            merged[message.id] = message
+        }
+        return merged.values.sorted { $0.createdAt > $1.createdAt }
     }
 
     private func validateStore(name: String, address: String, latitude: Double, longitude: Double, radiusMeters: Int) throws {
@@ -874,6 +1530,11 @@ final class CloudKitStoreRepository: StoreRepositoryProtocol {
     private static func generateJoinCode() -> String {
         let alphabet = Array("ABCDEFGHJKLMNPQRSTUVWXYZ23456789")
         return String((0..<8).map { _ in alphabet.randomElement()! })
+    }
+
+    private static func generateQRCodeToken() -> String {
+        let alphabet = Array("ABCDEFGHJKLMNPQRSTUVWXYZ23456789")
+        return String((0..<16).map { _ in alphabet.randomElement()! })
     }
 }
 

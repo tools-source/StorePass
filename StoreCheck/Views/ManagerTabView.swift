@@ -20,7 +20,8 @@ struct ManagerHomeView: View {
 
             EmployeeManagementView(
                 employeeRepository: container.employeeManagementRepository,
-                authRepository: container.authRepository
+                authRepository: container.authRepository,
+                checkInRepository: container.checkInRepository
             )
             .tabItem { Label("Employees", systemImage: "person.3.fill") }
             .tag(ManagerTab.employees)

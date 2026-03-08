@@ -23,4 +23,8 @@ protocol StoreRepositoryProtocol {
     func getStoreJoinCode(storeId: String) async throws -> String
     func joinStoreByCode(code: String) async throws -> JoinStoreResult
     func leaveStore(storeId: String) async throws
+    func setStoreQRCheckInMode(storeId: String, isEnabled: Bool) async throws -> Store
+    func rotateStoreQRCode(storeId: String) async throws -> String
+    func sendBroadcastMessage(storeId: String, message: String) async throws
+    func fetchBroadcastMessages(storeId: String, limit: Int) async throws -> [BroadcastMessage]
 }

@@ -224,6 +224,7 @@ final class ManagerCheckInsViewModel: ObservableObject {
             try await checkInRepository.clearAllCheckIns(storeId: storeId, managerId: managerId, limit: 500)
             checkIns.removeAll { $0.storeId == storeId }
             selectedEmployeeId = Self.allEmployeesId
+            NotificationCenter.default.post(name: .cloudKitDidReceiveRemoteChange, object: nil)
         } catch {
             errorMessage = error.localizedDescription
         }

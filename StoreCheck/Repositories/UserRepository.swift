@@ -13,10 +13,12 @@ protocol EmployeeManagementRepositoryProtocol {
     func fetchManagerStores(managerId: String) async throws -> [Store]
     func fetchEmployeesForManagerStores(managerStores: [Store]) async throws -> [EmployeeSummary]
     func fetchEmployeesForManager(managerId: String) async throws -> [EmployeeSummary]
+    func updateEmployeeProfile(employeeId: String, name: String, hourlyRateCents: Int?, expectedStartMinutesFromMidnight: Int?) async throws
     func removeEmployeeFromStore(storeId: String, employeeId: String) async throws
     func removeEmployeeFromAllManagerStores(employeeId: String, managerId: String) async throws
     func setEmployeeStoresForManager(employeeId: String, storeIds: [String]) async throws
     func setEmployeeActive(employeeId: String, isActive: Bool) async throws
+    func fetchStoreActivityFeed(managerId: String, storeId: String, limit: Int) async throws -> [StoreActivityEvent]
 }
 
 enum CloudKitClientError: LocalizedError {
@@ -49,6 +51,7 @@ enum CKSchema {
         static let store = "Store"
         static let storeMember = "StoreMember"
         static let checkInSession = "CheckInSession"
+        static let broadcastMessage = "BroadcastMessage"
     }
 
     enum UserField {
@@ -59,6 +62,8 @@ enum CKSchema {
         static let isActive = "isActive"
         static let provider = "provider"
         static let assignedStoreIds = "assignedStoreIds"
+        static let hourlyRateCents = "hourlyRateCents"
+        static let expectedStartMinutesFromMidnight = "expectedStartMinutesFromMidnight"
         static let createdAt = "createdAt"
         static let updatedAt = "updatedAt"
         static let deletedAt = "deletedAt"
@@ -76,6 +81,10 @@ enum CKSchema {
         static let joinCodeHash = "joinCodeHash"
         static let joinCode = "joinCode"
         static let joinCodeLast4 = "joinCodeLast4"
+        static let timeZoneIdentifier = "timeZoneIdentifier"
+        static let qrCheckInEnabled = "qrCheckInEnabled"
+        static let qrCodeToken = "qrCodeToken"
+        static let longShiftWarningHours = "longShiftWarningHours"
         static let isActive = "isActive"
         static let createdAt = "createdAt"
         static let updatedAt = "updatedAt"
@@ -99,12 +108,24 @@ enum CKSchema {
         static let active = "active"
         static let removed = "removed"
     }
+
+    enum BroadcastField {
+        static let messageId = "messageId"
+        static let storeId = "storeId"
+        static let storeRef = "storeRef"
+        static let storeName = "storeName"
+        static let managerUserId = "managerUserId"
+        static let managerName = "managerName"
+        static let message = "message"
+        static let createdAt = "createdAt"
+    }
 }
 
 extension CKRecord {
     func string(_ key: String) -> String? { self[key] as? String }
     func bool(_ key: String, default fallback: Bool = false) -> Bool { (self[key] as? NSNumber)?.boolValue ?? (self[key] as? Bool) ?? fallback }
     func int(_ key: String, default fallback: Int = 0) -> Int { (self[key] as? NSNumber)?.intValue ?? fallback }
+    func intOptional(_ key: String) -> Int? { (self[key] as? NSNumber)?.intValue }
     func date(_ key: String) -> Date? { self[key] as? Date }
     func stringArray(_ key: String) -> [String] { self[key] as? [String] ?? [] }
 }
@@ -125,7 +146,9 @@ func decodeUserProfile(record: CKRecord) -> UserProfile? {
         lastLoginAt: record.date(CKSchema.UserField.updatedAt) ?? Date(),
         provider: record.string(CKSchema.UserField.provider) ?? "apple",
         assignedStoreIds: record.stringArray(CKSchema.UserField.assignedStoreIds),
-        isActive: record.bool(CKSchema.UserField.isActive, default: true)
+        isActive: record.bool(CKSchema.UserField.isActive, default: true),
+        hourlyRateCents: record.intOptional(CKSchema.UserField.hourlyRateCents),
+        expectedStartMinutesFromMidnight: record.intOptional(CKSchema.UserField.expectedStartMinutesFromMidnight)
     )
 }
 
@@ -149,7 +172,11 @@ func decodeStore(record: CKRecord) -> Store? {
         updatedAt: record.date(CKSchema.StoreField.updatedAt),
         joinCode: record.string(CKSchema.StoreField.joinCode),
         joinCodeCiphertext: record.string(CKSchema.StoreField.joinCode),
-        joinCodeLast4: record.string(CKSchema.StoreField.joinCodeLast4)
+        joinCodeLast4: record.string(CKSchema.StoreField.joinCodeLast4),
+        timeZoneIdentifier: record.string(CKSchema.StoreField.timeZoneIdentifier) ?? TimeZone.current.identifier,
+        qrCheckInEnabled: record.bool(CKSchema.StoreField.qrCheckInEnabled, default: false),
+        qrCodeToken: record.string(CKSchema.StoreField.qrCodeToken),
+        longShiftWarningHours: max(record.int(CKSchema.StoreField.longShiftWarningHours, default: 10), 1)
     )
 }
 
@@ -232,6 +259,31 @@ struct CloudKitMigrationPolicy {
     }
 }
 
+private enum CloudKitIdentityMismatchState {
+    private static let lock = NSLock()
+    private static var detected = false
+    private static var cachedMessage: String?
+
+    static func markDetected(message: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        detected = true
+        cachedMessage = message
+    }
+
+    static func isDetected() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return detected
+    }
+
+    static func message() -> String? {
+        lock.lock()
+        defer { lock.unlock() }
+        return cachedMessage
+    }
+}
+
 @MainActor
 final class CloudKitService {
     let container: CKContainer
@@ -252,6 +304,14 @@ final class CloudKitService {
 
     var currentRole: UserRole? {
         authService?.currentUser?.role
+    }
+
+    nonisolated var isCloudKitIdentityMismatchDetected: Bool {
+        CloudKitIdentityMismatchState.isDetected()
+    }
+
+    nonisolated var cloudKitIdentityMismatchMessage: String? {
+        CloudKitIdentityMismatchState.message()
     }
 
     func requireCurrentUserId() throws -> String {
@@ -282,6 +342,9 @@ final class CloudKitService {
     }
 
     func fetchRecord(with id: CKRecord.ID, in database: CKDatabase? = nil) async throws -> CKRecord? {
+        if let mismatchError = cloudKitIdentityMismatchErrorIfAny() {
+            throw mismatchError
+        }
         let db = database ?? publicDB
         let scope = databaseScopeName(db)
         AppLog.info("CloudKit fetchRecord started scope=\(scope) recordID=\(id.recordName)")
@@ -308,6 +371,9 @@ final class CloudKitService {
     }
 
     func save(record: CKRecord, in database: CKDatabase? = nil) async throws -> CKRecord {
+        if let mismatchError = cloudKitIdentityMismatchErrorIfAny() {
+            throw mismatchError
+        }
         let db = database ?? publicDB
         let scope = databaseScopeName(db)
         AppLog.info(
@@ -337,6 +403,9 @@ final class CloudKitService {
     }
 
     func deleteRecord(with id: CKRecord.ID, in database: CKDatabase? = nil) async throws {
+        if let mismatchError = cloudKitIdentityMismatchErrorIfAny() {
+            throw mismatchError
+        }
         let db = database ?? publicDB
         let scope = databaseScopeName(db)
         AppLog.info("CloudKit delete started scope=\(scope) recordID=\(id.recordName)")
@@ -369,6 +438,9 @@ final class CloudKitService {
         atomic: Bool = false,
         in database: CKDatabase? = nil
     ) async throws -> ([CKRecord], [CKRecord.ID]) {
+        if let mismatchError = cloudKitIdentityMismatchErrorIfAny() {
+            throw mismatchError
+        }
         let db = database ?? publicDB
         let scope = databaseScopeName(db)
         AppLog.info(
@@ -404,6 +476,9 @@ final class CloudKitService {
         resultsLimit: Int = CKQueryOperation.maximumResults,
         in database: CKDatabase? = nil
     ) async throws -> [CKRecord] {
+        if let mismatchError = cloudKitIdentityMismatchErrorIfAny() {
+            throw mismatchError
+        }
         let query = CKQuery(recordType: recordType, predicate: predicate)
         query.sortDescriptors = sortDescriptors
         let db = database ?? publicDB
@@ -418,6 +493,9 @@ final class CloudKitService {
         resultsLimit: Int = CKQueryOperation.maximumResults,
         in database: CKDatabase
     ) async throws -> [CKRecord] {
+        if let mismatchError = cloudKitIdentityMismatchErrorIfAny() {
+            throw mismatchError
+        }
         var allRecords: [CKRecord] = []
         var nextCursor: CKQueryOperation.Cursor?
         AppLog.info(
@@ -479,6 +557,9 @@ final class CloudKitService {
     }
 
     func saveSubscription(_ subscription: CKSubscription) async throws {
+        if let mismatchError = cloudKitIdentityMismatchErrorIfAny() {
+            throw mismatchError
+        }
         AppLog.info("CloudKit saveSubscription started id=\(subscription.subscriptionID)")
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             publicDB.save(subscription) { _, error in
@@ -581,12 +662,13 @@ final class CloudKitService {
             let entitledContainers = signing.iCloudContainerIdentifiers.isEmpty
                 ? "none"
                 : signing.iCloudContainerIdentifiers.joined(separator: ",")
-            return CloudKitClientError.invalidData(
+            let mismatchMessage =
                 "CloudKit rejected this app identity (Invalid bundle ID for container). " +
                 "bundleID='\(bundleID)' expectedContainer='\(expectedContainer)' " +
                 "signedAppIdentifier='\(signedAppIdentifier)' entitledContainers='\(entitledContainers)'. " +
                 "In Apple Developer and Xcode, link this bundle ID to that container, regenerate profiles, rebuild, and retry."
-            )
+            CloudKitIdentityMismatchState.markDetected(message: mismatchMessage)
+            return CloudKitClientError.invalidData(mismatchMessage)
         }
 
         switch normalizedError.code {
@@ -618,6 +700,13 @@ final class CloudKitService {
         }
 
         return error
+    }
+
+    nonisolated private func cloudKitIdentityMismatchErrorIfAny() -> CloudKitClientError? {
+        guard let message = CloudKitIdentityMismatchState.message() else {
+            return nil
+        }
+        return CloudKitClientError.invalidData(message)
     }
 
     private func databaseScopeName(_ database: CKDatabase) -> String {
@@ -928,6 +1017,17 @@ final class CloudKitUserProfileStore: UserProfileStoreProtocol {
         record[CKSchema.UserField.isActive] = NSNumber(value: profile.isActive)
         record[CKSchema.UserField.provider] = profile.provider as CKRecordValue
         record[CKSchema.UserField.assignedStoreIds] = profile.assignedStoreIds.sorted() as CKRecordValue
+        if let hourlyRateCents = profile.hourlyRateCents {
+            record[CKSchema.UserField.hourlyRateCents] = NSNumber(value: max(hourlyRateCents, 0))
+        } else {
+            record[CKSchema.UserField.hourlyRateCents] = nil
+        }
+        if let expectedStartMinutes = profile.expectedStartMinutesFromMidnight {
+            let clamped = min(max(expectedStartMinutes, 0), 1_439)
+            record[CKSchema.UserField.expectedStartMinutesFromMidnight] = NSNumber(value: clamped)
+        } else {
+            record[CKSchema.UserField.expectedStartMinutesFromMidnight] = nil
+        }
 
         let createdAt = record.date(CKSchema.UserField.createdAt) ?? profile.createdAt
         record[CKSchema.UserField.createdAt] = createdAt as CKRecordValue
@@ -1090,6 +1190,10 @@ final class CloudKitUserRepository: UserRepositoryProtocol {
 final class CloudKitEmployeeManagementRepository: EmployeeManagementRepositoryProtocol {
     private let service: CloudKitService
     private let profileStore: UserProfileStoreProtocol
+    private static let localFallbackStoresKey = "storecheck.local_manager_stores.v1"
+    private static let localFallbackEmployeeLinksKey = "storecheck.local_employee_store_links.v1"
+    private static let localCheckInsKey = "storecheck.local_checkins.v1"
+    private static let localPhotoDirectoryName = "storecheck_local_photos"
 
     init(service: CloudKitService, profileStore: UserProfileStoreProtocol) {
         self.service = service
@@ -1098,7 +1202,17 @@ final class CloudKitEmployeeManagementRepository: EmployeeManagementRepositoryPr
 
     func fetchManagerStores(managerId: String) async throws -> [Store] {
         try await service.ensureCloudKitAvailable()
+        let localStores = localFallbackStores(managerId: managerId)
+        if !localStores.isEmpty {
+            AppLog.warning("Employee management using local store fallback manager=\(AppLog.redactIdentifier(managerId)) count=\(localStores.count)")
+        }
+
+        if service.isCloudKitIdentityMismatchDetected {
+            return localStores
+        }
+
         var publicStores: [Store] = []
+        var publicRecovered = false
 
         do {
             publicStores = try await queryManagerStores(managerId: managerId, in: service.publicDB)
@@ -1106,28 +1220,37 @@ final class CloudKitEmployeeManagementRepository: EmployeeManagementRepositoryPr
             guard isRecoverableManagerStoreError(error) else {
                 throw error
             }
+            publicRecovered = true
             AppLog.warning("Public manager store fetch failed in employee management: \(AppLog.sanitize(error.localizedDescription))")
         }
 
-        let privateStores: [Store]
+        var privateStores: [Store] = []
+        var privateRecovered = false
         do {
             privateStores = try await queryManagerStores(managerId: managerId, in: service.privateDB)
         } catch {
-            guard !publicStores.isEmpty, isRecoverableManagerStoreError(error) else {
+            guard isRecoverableManagerStoreError(error) else {
                 throw error
             }
-            AppLog.warning("Private manager store fetch failed in employee management after public success: \(AppLog.sanitize(error.localizedDescription))")
-            return publicStores
+            privateRecovered = true
+            AppLog.warning("Private manager store fetch failed in employee management: \(AppLog.sanitize(error.localizedDescription))")
         }
 
-        return mergeStores(preferred: privateStores, fallback: publicStores)
+        let queriedStores = mergeStores(preferred: privateStores, fallback: publicStores)
+        if queriedStores.isEmpty, publicRecovered || privateRecovered {
+            return localStores
+        }
+
+        return mergeStores(preferred: queriedStores, fallback: localStores)
     }
 
     func fetchEmployeesForManagerStores(managerStores: [Store]) async throws -> [EmployeeSummary] {
         try await service.ensureCloudKitAvailable()
         guard !managerStores.isEmpty else { return [] }
+        let identityMismatchDetected = service.isCloudKitIdentityMismatchDetected
 
         let storesById = Dictionary(uniqueKeysWithValues: managerStores.map { ($0.id, $0) })
+        let managedStoreIds = Set(storesById.keys)
         var storeIdsByEmployee: [String: Set<String>] = [:]
         var membershipIdentityHints: [String: (name: String?, email: String?)] = [:]
 
@@ -1137,7 +1260,16 @@ final class CloudKitEmployeeManagementRepository: EmployeeManagementRepositoryPr
                 NSPredicate(format: "%K == %@", CKSchema.StoreMemberField.status, CKSchema.MemberStatus.active)
             ])
 
-            let membershipRecords = try await service.queryRecords(recordType: CKSchema.RecordType.storeMember, predicate: predicate)
+            let membershipRecords: [CKRecord]
+            do {
+                membershipRecords = try await service.queryRecords(recordType: CKSchema.RecordType.storeMember, predicate: predicate)
+            } catch {
+                guard isRecoverableManagerStoreError(error) else {
+                    throw error
+                }
+                AppLog.warning("Membership fetch skipped for store=\(store.id): \(AppLog.sanitize(error.localizedDescription))")
+                continue
+            }
             for record in membershipRecords {
                 guard let employeeId = record.string(CKSchema.StoreMemberField.employeeUserId) else { continue }
                 storeIdsByEmployee[employeeId, default: []].insert(store.id)
@@ -1150,15 +1282,41 @@ final class CloudKitEmployeeManagementRepository: EmployeeManagementRepositoryPr
             }
         }
 
+        let localLinks = localEmployeeStoreLinks(forManagedStoreIds: managedStoreIds)
+        for (employeeId, storeIds) in localLinks {
+            storeIdsByEmployee[employeeId, default: []].formUnion(storeIds)
+        }
+        let localCheckInHints = localIdentityHintsFromCheckIns(forManagedStoreIds: managedStoreIds)
+        for (employeeId, hint) in localCheckInHints {
+            if let storeIds = hint.storeIds, !storeIds.isEmpty {
+                storeIdsByEmployee[employeeId, default: []].formUnion(storeIds)
+            }
+        }
+        let cloudCheckInHints = identityMismatchDetected
+            ? [:]
+            : await cloudIdentityHintsFromCheckIns(forManagedStoreIds: managedStoreIds)
+        for (employeeId, hint) in cloudCheckInHints {
+            if let storeIds = hint.storeIds, !storeIds.isEmpty {
+                storeIdsByEmployee[employeeId, default: []].formUnion(storeIds)
+            }
+        }
+
         var summaries: [EmployeeSummary] = []
         for (employeeId, memberships) in storeIdsByEmployee {
             let fallback = membershipIdentityHints[employeeId]
+            let linkHint = localIdentityHintFromLinks(employeeId: employeeId)
+            let localCheckInHint = localCheckInHints[employeeId]
+            let cloudCheckInHint = cloudCheckInHints[employeeId]
             let resolvedProfile: UserProfile?
-            do {
-                resolvedProfile = try await resolveAnyProfile(userId: employeeId)
-            } catch {
-                AppLog.warning("Employee profile lookup failed for user=\(AppLog.redactIdentifier(employeeId)): \(AppLog.sanitize(error.localizedDescription))")
+            if identityMismatchDetected {
                 resolvedProfile = nil
+            } else {
+                do {
+                    resolvedProfile = try await resolveAnyProfile(userId: employeeId)
+                } catch {
+                    AppLog.warning("Employee profile lookup failed for user=\(AppLog.redactIdentifier(employeeId)): \(AppLog.sanitize(error.localizedDescription))")
+                    resolvedProfile = nil
+                }
             }
 
             if let resolvedProfile, resolvedProfile.role == .manager {
@@ -1167,17 +1325,39 @@ final class CloudKitEmployeeManagementRepository: EmployeeManagementRepositoryPr
 
             let sortedIds = memberships.sorted()
             let storeNames = sortedIds.compactMap { storesById[$0]?.name }
-            let displayName = resolvedProfile?.name ?? fallback?.name ?? "Employee"
-            let displayEmail = resolvedProfile?.email ?? fallback?.email
+            let displayName = preferredDisplayName(
+                employeeId: employeeId,
+                candidates: [
+                    resolvedProfile?.name,
+                    fallback?.name,
+                    cloudCheckInHint?.name,
+                    localCheckInHint?.name,
+                    linkHint?.name
+                ]
+            )
+            let displayEmail = preferredDisplayEmail(
+                candidates: [
+                    resolvedProfile?.email,
+                    fallback?.email,
+                    cloudCheckInHint?.email,
+                    localCheckInHint?.email,
+                    linkHint?.email
+                ]
+            )
+            let hourlyRateCents = localHourlyRateCents(employeeId: employeeId) ?? resolvedProfile?.hourlyRateCents
+            let expectedStartMinutes = localExpectedStartMinutes(employeeId: employeeId) ?? resolvedProfile?.expectedStartMinutesFromMidnight
+            let localIsActive = localEmployeeIsActive(employeeId: employeeId)
 
             summaries.append(
                 EmployeeSummary(
                     id: employeeId,
                     name: displayName,
                     email: displayEmail,
+                    hourlyRateCents: hourlyRateCents,
+                    expectedStartMinutesFromMidnight: expectedStartMinutes,
                     storeIds: sortedIds,
                     storeNames: storeNames,
-                    userIsActive: resolvedProfile?.isActive ?? true,
+                    userIsActive: localIsActive ?? resolvedProfile?.isActive ?? true,
                     hasInactiveMembership: false
                 )
             )
@@ -1191,20 +1371,145 @@ final class CloudKitEmployeeManagementRepository: EmployeeManagementRepositoryPr
         return try await fetchEmployeesForManagerStores(managerStores: stores)
     }
 
-    func removeEmployeeFromStore(storeId: String, employeeId: String) async throws {
-        try await service.ensureCloudKitAvailable()
+    func updateEmployeeProfile(
+        employeeId: String,
+        name: String,
+        hourlyRateCents: Int?,
+        expectedStartMinutesFromMidnight: Int?
+    ) async throws {
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty else {
+            throw CloudKitClientError.invalidData("Employee name is required.")
+        }
 
-        let currentUserId = try service.requireCurrentUserId()
-        try await assertStoreManagedByCurrentUser(storeId: storeId, expectedManagerId: currentUserId)
+        if let hourlyRateCents, hourlyRateCents < 0 {
+            throw CloudKitClientError.invalidData("Hourly salary must be zero or greater.")
+        }
+        if let expectedStartMinutesFromMidnight,
+           !(0...1_439).contains(expectedStartMinutesFromMidnight) {
+            throw CloudKitClientError.invalidData("Expected start time is invalid.")
+        }
 
-        let membershipId = CloudKitService.membershipRecordID(storeId: storeId, employeeId: employeeId)
-        guard let membership = try await service.fetchRecord(with: membershipId) else {
+        let managerId = try service.requireCurrentUserId()
+        let managerStores = try await fetchManagerStores(managerId: managerId)
+        let managedStoreIds = Set(managerStores.map(\.id))
+        guard !managedStoreIds.isEmpty else {
+            throw CloudKitClientError.invalidData("Create a store before editing employees.")
+        }
+
+        let preservedEmail = localIdentityHintFromLinks(employeeId: employeeId)?.email
+        setLocalEmployeeOverride(
+            employeeId: employeeId,
+            name: trimmedName,
+            email: preservedEmail,
+            hourlyRateCents: hourlyRateCents,
+            expectedStartMinutesFromMidnight: expectedStartMinutesFromMidnight
+        )
+
+        if service.isCloudKitIdentityMismatchDetected {
             return
         }
 
-        membership[CKSchema.StoreMemberField.status] = CKSchema.MemberStatus.removed as CKRecordValue
-        membership[CKSchema.StoreMemberField.updatedAt] = Date() as CKRecordValue
-        _ = try await service.save(record: membership)
+        let existingProfile = try? await resolveAnyProfile(userId: employeeId)
+        let fallbackRole = existingProfile?.role ?? .employee
+        let provider = existingProfile?.provider ?? "apple"
+        let existingEmail = existingProfile?.email
+        var profile = try await profileStore.canonicalProfileEnsuringSeed(
+            userId: employeeId,
+            role: fallbackRole,
+            provider: provider,
+            fallbackName: trimmedName,
+            fallbackEmail: existingEmail
+        )
+        profile.name = trimmedName
+        profile.email = existingEmail
+        profile.hourlyRateCents = hourlyRateCents
+        profile.expectedStartMinutesFromMidnight = expectedStartMinutesFromMidnight
+        profile.lastLoginAt = Date()
+
+        do {
+            _ = try await profileStore.upsertCanonicalProfile(profile, deletedAt: profile.isActive ? nil : Date())
+            await profileStore.upsertPublicProfileBestEffort(profile, deletedAt: profile.isActive ? nil : Date())
+        } catch {
+            guard isRecoverableManagerStoreError(error) else {
+                throw error
+            }
+            AppLog.warning("Employee profile update skipped for user=\(AppLog.redactIdentifier(employeeId)): \(AppLog.sanitize(error.localizedDescription))")
+        }
+
+        do {
+            let memberships = try await service.queryRecords(
+                recordType: CKSchema.RecordType.storeMember,
+                predicate: NSCompoundPredicate(andPredicateWithSubpredicates: [
+                    NSPredicate(format: "%K == %@", CKSchema.StoreMemberField.employeeUserId, employeeId),
+                    NSPredicate(format: "%K == %@", CKSchema.StoreMemberField.status, CKSchema.MemberStatus.active)
+                ])
+            )
+
+            var recordsToSave: [CKRecord] = []
+            for membership in memberships {
+                guard let storeId = membership.string(CKSchema.StoreMemberField.storeId),
+                      managedStoreIds.contains(storeId) else {
+                    continue
+                }
+
+                membership[CKSchema.StoreMemberField.employeeName] = trimmedName as CKRecordValue
+                membership[CKSchema.StoreMemberField.updatedAt] = Date() as CKRecordValue
+                recordsToSave.append(membership)
+            }
+
+            if !recordsToSave.isEmpty {
+                _ = try await service.modify(recordsToSave: recordsToSave, atomic: false)
+            }
+        } catch {
+            guard isRecoverableManagerStoreError(error) else {
+                throw error
+            }
+            AppLog.warning("Membership profile hints update skipped for user=\(AppLog.redactIdentifier(employeeId)): \(AppLog.sanitize(error.localizedDescription))")
+        }
+    }
+
+    func removeEmployeeFromStore(storeId: String, employeeId: String) async throws {
+        let currentUserId = try service.requireCurrentUserId()
+        setLocalEmployeeStoreMembership(employeeId: employeeId, storeId: storeId, isActive: false)
+        clearLocalStoreHistory(employeeId: employeeId, storeId: storeId)
+
+        if service.isCloudKitIdentityMismatchDetected {
+            return
+        }
+
+        do {
+            try await service.ensureCloudKitAvailable()
+        } catch {
+            guard isRecoverableManagerStoreError(error) else {
+                throw error
+            }
+            AppLog.warning(
+                "Remove employee from store continuing with local-only fallback store=\(storeId) employee=\(AppLog.redactIdentifier(employeeId)): \(AppLog.sanitize(error.localizedDescription))"
+            )
+            return
+        }
+
+        do {
+            try await assertStoreManagedByCurrentUser(storeId: storeId, expectedManagerId: currentUserId)
+
+            let membershipId = CloudKitService.membershipRecordID(storeId: storeId, employeeId: employeeId)
+            guard let membership = try await service.fetchRecord(with: membershipId) else {
+                await recomputeAssignedStoresBestEffort(for: employeeId, context: "removeEmployeeFromStore")
+                return
+            }
+
+            membership[CKSchema.StoreMemberField.status] = CKSchema.MemberStatus.removed as CKRecordValue
+            membership[CKSchema.StoreMemberField.updatedAt] = Date() as CKRecordValue
+            _ = try await service.save(record: membership)
+
+            try await clearCloudStoreHistory(managerId: currentUserId, employeeId: employeeId, storeId: storeId)
+        } catch {
+            guard isRecoverableManagerStoreError(error) else {
+                throw error
+            }
+            AppLog.warning("Remove employee from store recovered locally store=\(storeId) employee=\(AppLog.redactIdentifier(employeeId)): \(AppLog.sanitize(error.localizedDescription))")
+        }
 
         await recomputeAssignedStoresBestEffort(for: employeeId, context: "removeEmployeeFromStore")
     }
@@ -1268,6 +1573,14 @@ final class CloudKitEmployeeManagementRepository: EmployeeManagementRepositoryPr
 
     func setEmployeeActive(employeeId: String, isActive: Bool) async throws {
         try await service.ensureCloudKitAvailable()
+        setLocalEmployeeActiveState(employeeId: employeeId, isActive: isActive)
+        if !isActive {
+            setLocalEmployeeStoreMemberships(employeeId: employeeId, activeStoreIds: [])
+        }
+
+        if service.isCloudKitIdentityMismatchDetected {
+            return
+        }
 
         let existingProfile = try? await resolveAnyProfile(userId: employeeId)
         let fallbackName = existingProfile?.name ?? "Employee"
@@ -1297,27 +1610,169 @@ final class CloudKitEmployeeManagementRepository: EmployeeManagementRepositoryPr
             )
         }
 
-        var recordsToSave: [CKRecord] = []
-        if !isActive {
-            let membershipRecords = try await service.queryRecords(
-                recordType: CKSchema.RecordType.storeMember,
-                predicate: NSPredicate(format: "%K == %@", CKSchema.StoreMemberField.employeeUserId, employeeId)
-            )
+        do {
+            var recordsToSave: [CKRecord] = []
+            if !isActive {
+                let membershipRecords = try await service.queryRecords(
+                    recordType: CKSchema.RecordType.storeMember,
+                    predicate: NSPredicate(format: "%K == %@", CKSchema.StoreMemberField.employeeUserId, employeeId)
+                )
 
-            for membership in membershipRecords {
-                membership[CKSchema.StoreMemberField.status] = CKSchema.MemberStatus.removed as CKRecordValue
-                membership[CKSchema.StoreMemberField.updatedAt] = Date() as CKRecordValue
-                recordsToSave.append(membership)
+                for membership in membershipRecords {
+                    membership[CKSchema.StoreMemberField.status] = CKSchema.MemberStatus.removed as CKRecordValue
+                    membership[CKSchema.StoreMemberField.updatedAt] = Date() as CKRecordValue
+                    recordsToSave.append(membership)
+                }
             }
-        }
 
-        if !recordsToSave.isEmpty {
-            _ = try await service.modify(recordsToSave: recordsToSave)
+            if !recordsToSave.isEmpty {
+                _ = try await service.modify(recordsToSave: recordsToSave)
+            }
+        } catch {
+            guard isRecoverableManagerStoreError(error) else {
+                throw error
+            }
+            AppLog.warning("Set employee active recovered locally user=\(AppLog.redactIdentifier(employeeId)): \(AppLog.sanitize(error.localizedDescription))")
         }
 
         if isActive {
             await recomputeAssignedStoresBestEffort(for: employeeId, context: "setEmployeeActive")
         }
+    }
+
+    func fetchStoreActivityFeed(managerId: String, storeId: String, limit: Int) async throws -> [StoreActivityEvent] {
+        let currentUserId = try service.requireCurrentUserId()
+        guard currentUserId == managerId else {
+            throw CloudKitClientError.unauthorized
+        }
+
+        let stores = try await fetchManagerStores(managerId: managerId)
+        guard let store = stores.first(where: { $0.id == storeId }) else {
+            throw CloudKitClientError.missingRecord("Store not found.")
+        }
+
+        if service.isCloudKitIdentityMismatchDetected {
+            return Array(localStoreActivityFeed(store: store).prefix(limit))
+        }
+
+        try await service.ensureCloudKitAvailable()
+
+        var events: [StoreActivityEvent] = []
+
+        do {
+            let checkInRecords = try await service.queryRecords(
+                recordType: CKSchema.RecordType.checkInSession,
+                predicate: NSCompoundPredicate(andPredicateWithSubpredicates: [
+                    NSPredicate(format: "%K == %@", CKSchema.CheckInField.storeId, storeId),
+                    NSPredicate(format: "%K == %@", CKSchema.CheckInField.managerUserId, managerId)
+                ]),
+                sortDescriptors: [NSSortDescriptor(key: CKSchema.CheckInField.checkInAt, ascending: false)],
+                resultsLimit: max(limit * 3, 120)
+            )
+
+            for record in checkInRecords {
+                guard let sessionId = record.string(CKSchema.CheckInField.sessionId),
+                      let checkInAt = record.date(CKSchema.CheckInField.checkInAt) else {
+                    continue
+                }
+                let employeeId = record.string(CKSchema.CheckInField.employeeUserId)
+                let employeeName = record.string(CKSchema.CheckInField.employeeName)
+                let employeeEmail = record.string(CKSchema.CheckInField.employeeEmail)
+                events.append(
+                    StoreActivityEvent(
+                        id: "checkin_\(sessionId)",
+                        storeId: storeId,
+                        storeName: store.name,
+                        employeeId: employeeId,
+                        employeeName: employeeName,
+                        employeeEmail: employeeEmail,
+                        kind: .checkedIn,
+                        occurredAt: checkInAt,
+                        checkInId: sessionId
+                    )
+                )
+
+                if let checkOutAt = record.date(CKSchema.CheckInField.checkOutAt) {
+                    events.append(
+                        StoreActivityEvent(
+                            id: "checkout_\(sessionId)",
+                            storeId: storeId,
+                            storeName: store.name,
+                            employeeId: employeeId,
+                            employeeName: employeeName,
+                            employeeEmail: employeeEmail,
+                            kind: .checkedOut,
+                            occurredAt: checkOutAt,
+                            checkInId: sessionId
+                        )
+                    )
+                }
+            }
+        } catch {
+            guard isRecoverableManagerStoreError(error) else {
+                throw error
+            }
+            events.append(contentsOf: localStoreActivityFeed(store: store))
+        }
+
+        do {
+            let membershipRecords = try await service.queryRecords(
+                recordType: CKSchema.RecordType.storeMember,
+                predicate: NSPredicate(format: "%K == %@", CKSchema.StoreMemberField.storeId, storeId),
+                sortDescriptors: [NSSortDescriptor(key: CKSchema.StoreMemberField.updatedAt, ascending: false)],
+                resultsLimit: max(limit * 2, 80)
+            )
+
+            for record in membershipRecords {
+                guard let employeeId = record.string(CKSchema.StoreMemberField.employeeUserId), !employeeId.isEmpty else {
+                    continue
+                }
+                let employeeName = record.string(CKSchema.StoreMemberField.employeeName)
+                let employeeEmail = record.string(CKSchema.StoreMemberField.employeeEmail)
+                let status = record.string(CKSchema.StoreMemberField.status) ?? CKSchema.MemberStatus.active
+
+                if let joinedAt = record.date(CKSchema.StoreMemberField.joinedAt), status == CKSchema.MemberStatus.active {
+                    events.append(
+                        StoreActivityEvent(
+                            id: "joined_\(storeId)_\(employeeId)",
+                            storeId: storeId,
+                            storeName: store.name,
+                            employeeId: employeeId,
+                            employeeName: employeeName,
+                            employeeEmail: employeeEmail,
+                            kind: .employeeJoined,
+                            occurredAt: joinedAt,
+                            checkInId: nil
+                        )
+                    )
+                }
+
+                if status == CKSchema.MemberStatus.removed {
+                    let removedAt = record.date(CKSchema.StoreMemberField.updatedAt) ?? Date.distantPast
+                    events.append(
+                        StoreActivityEvent(
+                            id: "removed_\(storeId)_\(employeeId)_\(removedAt.timeIntervalSince1970)",
+                            storeId: storeId,
+                            storeName: store.name,
+                            employeeId: employeeId,
+                            employeeName: employeeName,
+                            employeeEmail: employeeEmail,
+                            kind: .employeeRemoved,
+                            occurredAt: removedAt,
+                            checkInId: nil
+                        )
+                    )
+                }
+            }
+        } catch {
+            guard isRecoverableManagerStoreError(error) else {
+                throw error
+            }
+            events.append(contentsOf: localMembershipActivityFeed(store: store))
+        }
+
+        let deduped = Dictionary(uniqueKeysWithValues: events.map { ($0.id, $0) }).values
+        return Array(deduped.sorted { $0.occurredAt > $1.occurredAt }.prefix(limit))
     }
 
     private func assertStoreManagedByCurrentUser(storeId: String, expectedManagerId: String) async throws {
@@ -1372,6 +1827,10 @@ final class CloudKitEmployeeManagementRepository: EmployeeManagementRepositoryPr
     }
 
     private func isRecoverableManagerStoreError(_ error: Error) -> Bool {
+        if shouldUseLocalStoreFallback(for: error) {
+            return true
+        }
+
         if let clientError = error as? CloudKitClientError,
            case .unauthorized = clientError {
             return true
@@ -1390,6 +1849,438 @@ final class CloudKitEmployeeManagementRepository: EmployeeManagementRepositoryPr
         return description.contains("record type") ||
             description.contains("schema") ||
             description.contains("unknown field")
+    }
+
+    private func shouldUseLocalStoreFallback(for error: Error) -> Bool {
+        if let clientError = error as? CloudKitClientError,
+           case .invalidData(let message) = clientError,
+           message.localizedCaseInsensitiveContains("invalid bundle id for container") {
+            return true
+        }
+
+        if let ckError = error as? CKError,
+           ckError.code == .permissionFailure,
+           ckError.localizedDescription.localizedCaseInsensitiveContains("invalid bundle id for container") {
+            return true
+        }
+
+        return error.localizedDescription.localizedCaseInsensitiveContains("invalid bundle id for container")
+    }
+
+    private struct LocalFallbackPayload: Codable {
+        var storesByManagerId: [String: [Store]] = [:]
+    }
+
+    private struct LocalEmployeeStoreLinksPayload: Codable {
+        var storeIdsByEmployeeId: [String: [String]] = [:]
+        var employeeNameById: [String: String]? = nil
+        var employeeEmailById: [String: String]? = nil
+        var employeeHourlyRateCentsById: [String: Int]? = nil
+        var employeeExpectedStartMinutesById: [String: Int]? = nil
+        var employeeIsActiveById: [String: Bool]? = nil
+    }
+
+    private struct LocalCheckInPayload: Codable {
+        var checkInsByEmployeeId: [String: [CheckIn]] = [:]
+    }
+
+    private struct LocalEmployeeIdentityHint {
+        var name: String?
+        var email: String?
+        var storeIds: Set<String>?
+    }
+
+    private func localFallbackStores(managerId: String) -> [Store] {
+        let payload = loadLocalFallbackPayload()
+        let stores = payload.storesByManagerId[managerId] ?? []
+        return stores
+            .filter(\.isActive)
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    private func loadLocalFallbackPayload() -> LocalFallbackPayload {
+        guard let data = UserDefaults.standard.data(forKey: Self.localFallbackStoresKey) else {
+            return LocalFallbackPayload()
+        }
+        do {
+            return try JSONDecoder().decode(LocalFallbackPayload.self, from: data)
+        } catch {
+            AppLog.warning("Employee management local fallback decode failed: \(AppLog.sanitize(error.localizedDescription))")
+            return LocalFallbackPayload()
+        }
+    }
+
+    private func localEmployeeStoreLinks(forManagedStoreIds managedStoreIds: Set<String>) -> [String: Set<String>] {
+        guard !managedStoreIds.isEmpty else { return [:] }
+        let payload = loadLocalEmployeeStoreLinksPayload()
+        var result: [String: Set<String>] = [:]
+        for (employeeId, storeIds) in payload.storeIdsByEmployeeId {
+            let active = Set(storeIds).intersection(managedStoreIds)
+            if !active.isEmpty {
+                result[employeeId] = active
+            }
+        }
+        return result
+    }
+
+    private func loadLocalEmployeeStoreLinksPayload() -> LocalEmployeeStoreLinksPayload {
+        guard let data = UserDefaults.standard.data(forKey: Self.localFallbackEmployeeLinksKey) else {
+            return LocalEmployeeStoreLinksPayload()
+        }
+        do {
+            return try JSONDecoder().decode(LocalEmployeeStoreLinksPayload.self, from: data)
+        } catch {
+            AppLog.warning("Employee link local fallback decode failed: \(AppLog.sanitize(error.localizedDescription))")
+            return LocalEmployeeStoreLinksPayload()
+        }
+    }
+
+    private func localIdentityHintFromLinks(employeeId: String) -> LocalEmployeeIdentityHint? {
+        let payload = loadLocalEmployeeStoreLinksPayload()
+        let name = payload.employeeNameById?[employeeId]
+        let email = payload.employeeEmailById?[employeeId]
+        guard name != nil || email != nil else {
+            return nil
+        }
+        return LocalEmployeeIdentityHint(name: name, email: email, storeIds: nil)
+    }
+
+    private func localHourlyRateCents(employeeId: String) -> Int? {
+        let payload = loadLocalEmployeeStoreLinksPayload()
+        return payload.employeeHourlyRateCentsById?[employeeId]
+    }
+
+    private func localExpectedStartMinutes(employeeId: String) -> Int? {
+        let payload = loadLocalEmployeeStoreLinksPayload()
+        return payload.employeeExpectedStartMinutesById?[employeeId]
+    }
+
+    private func localEmployeeIsActive(employeeId: String) -> Bool? {
+        let payload = loadLocalEmployeeStoreLinksPayload()
+        return payload.employeeIsActiveById?[employeeId]
+    }
+
+    private func setLocalEmployeeOverride(
+        employeeId: String,
+        name: String,
+        email: String?,
+        hourlyRateCents: Int?,
+        expectedStartMinutesFromMidnight: Int?
+    ) {
+        var payload = loadLocalEmployeeStoreLinksPayload()
+        var namesById = payload.employeeNameById ?? [:]
+        var emailsById = payload.employeeEmailById ?? [:]
+        var hourlyRatesById = payload.employeeHourlyRateCentsById ?? [:]
+        var expectedStartsById = payload.employeeExpectedStartMinutesById ?? [:]
+
+        namesById[employeeId] = name
+        if let email {
+            emailsById[employeeId] = email
+        } else {
+            emailsById.removeValue(forKey: employeeId)
+        }
+
+        if let hourlyRateCents {
+            hourlyRatesById[employeeId] = hourlyRateCents
+        } else {
+            hourlyRatesById.removeValue(forKey: employeeId)
+        }
+
+        if let expectedStartMinutesFromMidnight {
+            expectedStartsById[employeeId] = min(max(expectedStartMinutesFromMidnight, 0), 1_439)
+        } else {
+            expectedStartsById.removeValue(forKey: employeeId)
+        }
+
+        payload.employeeNameById = namesById
+        payload.employeeEmailById = emailsById
+        payload.employeeHourlyRateCentsById = hourlyRatesById
+        payload.employeeExpectedStartMinutesById = expectedStartsById
+
+        do {
+            let data = try JSONEncoder().encode(payload)
+            UserDefaults.standard.set(data, forKey: Self.localFallbackEmployeeLinksKey)
+        } catch {
+            AppLog.warning("Employee override local fallback encode failed: \(AppLog.sanitize(error.localizedDescription))")
+        }
+    }
+
+    private func setLocalEmployeeStoreMembership(employeeId: String, storeId: String, isActive: Bool) {
+        var payload = loadLocalEmployeeStoreLinksPayload()
+        var storeIdsByEmployee = payload.storeIdsByEmployeeId
+        var storeIds = Set(storeIdsByEmployee[employeeId] ?? [])
+        if isActive {
+            storeIds.insert(storeId)
+        } else {
+            storeIds.remove(storeId)
+        }
+        storeIdsByEmployee[employeeId] = Array(storeIds).sorted()
+        payload.storeIdsByEmployeeId = storeIdsByEmployee
+        saveLocalEmployeeStoreLinksPayload(payload)
+    }
+
+    private func setLocalEmployeeStoreMemberships(employeeId: String, activeStoreIds: [String]) {
+        var payload = loadLocalEmployeeStoreLinksPayload()
+        payload.storeIdsByEmployeeId[employeeId] = Array(Set(activeStoreIds)).sorted()
+        saveLocalEmployeeStoreLinksPayload(payload)
+    }
+
+    private func setLocalEmployeeActiveState(employeeId: String, isActive: Bool) {
+        var payload = loadLocalEmployeeStoreLinksPayload()
+        var map = payload.employeeIsActiveById ?? [:]
+        map[employeeId] = isActive
+        payload.employeeIsActiveById = map
+        saveLocalEmployeeStoreLinksPayload(payload)
+    }
+
+    private func saveLocalEmployeeStoreLinksPayload(_ payload: LocalEmployeeStoreLinksPayload) {
+        do {
+            let data = try JSONEncoder().encode(payload)
+            UserDefaults.standard.set(data, forKey: Self.localFallbackEmployeeLinksKey)
+        } catch {
+            AppLog.warning("Employee link local fallback encode failed: \(AppLog.sanitize(error.localizedDescription))")
+        }
+    }
+
+    private func localIdentityHintsFromCheckIns(forManagedStoreIds managedStoreIds: Set<String>) -> [String: LocalEmployeeIdentityHint] {
+        guard !managedStoreIds.isEmpty else { return [:] }
+        let payload = loadLocalCheckInPayload()
+        var hints: [String: LocalEmployeeIdentityHint] = [:]
+
+        for (employeeId, checkIns) in payload.checkInsByEmployeeId {
+            let relevant = checkIns.filter { managedStoreIds.contains($0.storeId) }
+            guard !relevant.isEmpty else { continue }
+            let existing = hints[employeeId]
+            let firstNamed = relevant.first { !$0.employeeName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            let firstEmail = relevant.first { ($0.employeeEmail?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false) }?.employeeEmail
+            let names = existing?.name ?? firstNamed?.employeeName
+            let email = existing?.email ?? firstEmail
+            let stores = Set(relevant.map(\.storeId)).union(existing?.storeIds ?? [])
+            hints[employeeId] = LocalEmployeeIdentityHint(name: names, email: email, storeIds: stores)
+        }
+
+        return hints
+    }
+
+    private func loadLocalCheckInPayload() -> LocalCheckInPayload {
+        guard let data = UserDefaults.standard.data(forKey: Self.localCheckInsKey) else {
+            return LocalCheckInPayload()
+        }
+        do {
+            return try JSONDecoder().decode(LocalCheckInPayload.self, from: data)
+        } catch {
+            AppLog.warning("Local check-in identity fallback decode failed: \(AppLog.sanitize(error.localizedDescription))")
+            return LocalCheckInPayload()
+        }
+    }
+
+    private func saveLocalCheckInPayload(_ payload: LocalCheckInPayload) {
+        do {
+            let data = try JSONEncoder().encode(payload)
+            UserDefaults.standard.set(data, forKey: Self.localCheckInsKey)
+        } catch {
+            AppLog.warning("Local check-in payload encode failed: \(AppLog.sanitize(error.localizedDescription))")
+        }
+    }
+
+    private func clearCloudStoreHistory(managerId: String, employeeId: String, storeId: String) async throws {
+        _ = managerId
+        let records = try await service.queryRecords(
+            recordType: CKSchema.RecordType.checkInSession,
+            predicate: NSCompoundPredicate(andPredicateWithSubpredicates: [
+                NSPredicate(format: "%K == %@", CKSchema.CheckInField.employeeUserId, employeeId),
+                NSPredicate(format: "%K == %@", CKSchema.CheckInField.storeId, storeId)
+            ])
+        )
+
+        let recordIDs = records.map(\.recordID)
+        guard !recordIDs.isEmpty else { return }
+        _ = try await service.modify(recordsToSave: [], recordIDsToDelete: recordIDs, atomic: false)
+    }
+
+    private func clearLocalStoreHistory(employeeId: String, storeId: String) {
+        var payload = loadLocalCheckInPayload()
+        var sessions = payload.checkInsByEmployeeId[employeeId] ?? []
+        let removed = sessions.filter { $0.storeId == storeId }
+        sessions.removeAll { $0.storeId == storeId }
+        payload.checkInsByEmployeeId[employeeId] = sessions
+        saveLocalCheckInPayload(payload)
+
+        for session in removed {
+            let checkInToken = "checkin_\(session.id).jpg"
+            let checkOutToken = "checkout_\(session.id).jpg"
+            try? FileManager.default.removeItem(at: localPhotoFileURL(token: checkInToken))
+            try? FileManager.default.removeItem(at: localPhotoFileURL(token: checkOutToken))
+        }
+    }
+
+    private func localPhotoFileURL(token: String) -> URL {
+        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent(Self.localPhotoDirectoryName, isDirectory: true)
+            .appendingPathComponent(token)
+    }
+
+    private func localStoreActivityFeed(store: Store) -> [StoreActivityEvent] {
+        let payload = loadLocalCheckInPayload()
+        var events: [StoreActivityEvent] = []
+        for sessions in payload.checkInsByEmployeeId.values {
+            for session in sessions where session.storeId == store.id {
+                events.append(
+                    StoreActivityEvent(
+                        id: "checkin_\(session.id)",
+                        storeId: store.id,
+                        storeName: store.name,
+                        employeeId: session.employeeId,
+                        employeeName: session.employeeName,
+                        employeeEmail: session.employeeEmail,
+                        kind: .checkedIn,
+                        occurredAt: session.checkInTime,
+                        checkInId: session.id
+                    )
+                )
+                if let checkOutTime = session.checkOutTime {
+                    events.append(
+                        StoreActivityEvent(
+                            id: "checkout_\(session.id)",
+                            storeId: store.id,
+                            storeName: store.name,
+                            employeeId: session.employeeId,
+                            employeeName: session.employeeName,
+                            employeeEmail: session.employeeEmail,
+                            kind: .checkedOut,
+                            occurredAt: checkOutTime,
+                            checkInId: session.id
+                        )
+                    )
+                }
+            }
+        }
+        return events.sorted { $0.occurredAt > $1.occurredAt }
+    }
+
+    private func localMembershipActivityFeed(store: Store) -> [StoreActivityEvent] {
+        let payload = loadLocalEmployeeStoreLinksPayload()
+        var events: [StoreActivityEvent] = []
+        let names = payload.employeeNameById ?? [:]
+        let emails = payload.employeeEmailById ?? [:]
+        for (employeeId, storeIds) in payload.storeIdsByEmployeeId where storeIds.contains(store.id) {
+            events.append(
+                StoreActivityEvent(
+                    id: "joined_\(store.id)_\(employeeId)",
+                    storeId: store.id,
+                    storeName: store.name,
+                    employeeId: employeeId,
+                    employeeName: names[employeeId],
+                    employeeEmail: emails[employeeId],
+                    kind: .employeeJoined,
+                    occurredAt: Date.distantPast,
+                    checkInId: nil
+                )
+            )
+        }
+        return events
+    }
+
+    private func localFallbackEmployeeName(employeeId: String) -> String {
+        let suffix = employeeId.suffix(4)
+        return "Employee \(suffix)"
+    }
+
+    private func normalizeEmail(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return nil
+        }
+
+        let parts = trimmed.split(separator: "@")
+        guard parts.count == 2, !parts[0].isEmpty, parts[1].contains(".") else {
+            return nil
+        }
+        return trimmed.lowercased()
+    }
+
+    private func preferredDisplayName(employeeId: String, candidates: [String?]) -> String {
+        let normalizedCandidates = candidates.compactMap(normalizedIdentityValue)
+        if let strongName = normalizedCandidates.first(where: { !isWeakDisplayName($0, employeeId: employeeId) }) {
+            return strongName
+        }
+        if let fallbackName = normalizedCandidates.first {
+            return fallbackName
+        }
+        return localFallbackEmployeeName(employeeId: employeeId)
+    }
+
+    private func preferredDisplayEmail(candidates: [String?]) -> String? {
+        candidates.compactMap(normalizedIdentityValue).first
+    }
+
+    private func normalizedIdentityValue(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private func isWeakDisplayName(_ value: String, employeeId: String) -> Bool {
+        let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lower = normalized.lowercased()
+
+        if lower == "storepass user" || lower == "employee" {
+            return true
+        }
+
+        if lower == localFallbackEmployeeName(employeeId: employeeId).lowercased() {
+            return true
+        }
+
+        if lower.hasPrefix("employee ") {
+            return true
+        }
+
+        return false
+    }
+
+    private func cloudIdentityHintsFromCheckIns(forManagedStoreIds managedStoreIds: Set<String>) async -> [String: LocalEmployeeIdentityHint] {
+        guard !managedStoreIds.isEmpty else { return [:] }
+
+        let predicate = NSPredicate(
+            format: "%K IN %@",
+            CKSchema.CheckInField.storeId,
+            Array(managedStoreIds)
+        )
+
+        let records: [CKRecord]
+        do {
+            records = try await service.queryRecords(
+                recordType: CKSchema.RecordType.checkInSession,
+                predicate: predicate,
+                sortDescriptors: [NSSortDescriptor(key: CKSchema.CheckInField.updatedAt, ascending: false)],
+                resultsLimit: 500
+            )
+        } catch {
+            guard isRecoverableManagerStoreError(error) else {
+                AppLog.warning("Cloud check-in identity hint fetch failed: \(AppLog.sanitize(error.localizedDescription))")
+                return [:]
+            }
+            AppLog.warning("Cloud check-in identity hint fetch recovered: \(AppLog.sanitize(error.localizedDescription))")
+            return [:]
+        }
+
+        var hints: [String: LocalEmployeeIdentityHint] = [:]
+        for record in records {
+            guard let employeeId = record.string(CKSchema.CheckInField.employeeUserId),
+                  let storeId = record.string(CKSchema.CheckInField.storeId),
+                  managedStoreIds.contains(storeId) else {
+                continue
+            }
+
+            let existing = hints[employeeId]
+            let name = existing?.name ?? record.string(CKSchema.CheckInField.employeeName)
+            let email = existing?.email ?? record.string(CKSchema.CheckInField.employeeEmail)
+            let storeIds = Set([storeId]).union(existing?.storeIds ?? [])
+            hints[employeeId] = LocalEmployeeIdentityHint(name: name, email: email, storeIds: storeIds)
+        }
+        return hints
     }
 
     private func recomputeAssignedStores(for employeeId: String) async throws {

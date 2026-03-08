@@ -19,6 +19,7 @@ final class AuthViewModel: ObservableObject {
     @Published var managerAccessMessage = "This account does not have manager access."
     @Published private(set) var isRoleResolutionLoading = false
     @Published private(set) var currentUser: AppUser?
+    @Published private(set) var isCloudKitDegradedMode = false
 
     @AppStorage("lastRequestedRole") private var lastRequestedRoleRaw: String = ""
 
@@ -192,9 +193,18 @@ final class AuthViewModel: ObservableObject {
             lastRequestedRoleRaw = UserRole.employee.rawValue
             requestedRole = .employee
 
-            if let profile = try await roleProfileRepository.fetchUserProfile(uid: result.identity.userId),
-               profile.role != .employee {
-                throw CloudKitClientError.invalidData("This account is not configured as an employee.")
+            do {
+                if let profile = try await roleProfileRepository.fetchUserProfile(uid: result.identity.userId),
+                   profile.role != .employee {
+                    throw CloudKitClientError.invalidData("This account is not configured as an employee.")
+                }
+            } catch {
+                guard shouldAllowDegradedMode(for: error) else {
+                    throw error
+                }
+                AppLog.warning(
+                    "Employee profile pre-check skipped due CloudKit identity mismatch for user=\(AppLog.redactIdentifier(result.identity.userId))"
+                )
             }
 
             try await resolveProfileAndRoute(identity: result.identity, requestedRole: .employee)
@@ -242,13 +252,27 @@ final class AuthViewModel: ObservableObject {
         AppLog.info(
             "Resolving CloudKit profile for user=\(AppLog.redactIdentifier(identity.userId)) requestedRole=\(requestedRole?.rawValue ?? "nil")"
         )
-        let status = try await roleProfileRepository.ensureUserProfile(
-            uid: identity.userId,
-            name: identity.fullName,
-            email: identity.email,
-            provider: identity.provider,
-            requestedRole: requestedRole
-        )
+        let status: RoleBootstrapStatus
+        do {
+            status = try await roleProfileRepository.ensureUserProfile(
+                uid: identity.userId,
+                name: identity.fullName,
+                email: identity.email,
+                provider: identity.provider,
+                requestedRole: requestedRole
+            )
+        } catch {
+            if shouldAllowDegradedMode(for: error),
+               let degradedUser = makeDegradedModeUser(identity: identity, requestedRole: requestedRole) {
+                AppLog.warning(
+                    "CloudKit identity rejected; entering degraded login mode for user=\(AppLog.redactIdentifier(identity.userId))"
+                )
+                signInNoticeMessage = "Signed in with local fallback mode. Cloud sync is unavailable until CloudKit container setup is fixed."
+                syncState(with: degradedUser, role: degradedUser.role, degradedMode: true)
+                return
+            }
+            throw error
+        }
 
         guard case .resolved(let profile) = status else {
             AppLog.warning("Profile resolution returned setupRequired for user=\(AppLog.redactIdentifier(identity.userId))")
@@ -278,13 +302,14 @@ final class AuthViewModel: ObservableObject {
         }
 
         AppLog.info("Profile resolved successfully for user=\(AppLog.redactIdentifier(profile.id)) role=\(profile.role.rawValue)")
-        syncState(with: toAppUser(profile), role: profile.role)
+        syncState(with: toAppUser(profile), role: profile.role, degradedMode: false)
     }
 
-    private func syncState(with user: AppUser, role: UserRole) {
+    private func syncState(with user: AppUser, role: UserRole, degradedMode: Bool) {
         currentUser = user
         authService.setCurrentUser(user)
         resolvedRole = role
+        isCloudKitDegradedMode = degradedMode
         authState = .signedIn(userId: user.id)
         showManagerAccessRequired = false
     }
@@ -295,8 +320,43 @@ final class AuthViewModel: ObservableObject {
         resolvedRole = nil
         currentUser = nil
         authService.setCurrentUser(nil)
+        isCloudKitDegradedMode = false
         showManagerAccessRequired = false
         signInNoticeMessage = nil
+    }
+
+    private func shouldAllowDegradedMode(for error: Error) -> Bool {
+        guard let cloudError = error as? CloudKitClientError,
+              case .invalidData(let message) = cloudError else {
+            return false
+        }
+        return message.localizedCaseInsensitiveContains("invalid bundle id for container")
+    }
+
+    private func makeDegradedModeUser(identity: AuthIdentity, requestedRole: UserRole?) -> AppUser? {
+        let role = requestedRole ?? .employee
+        let normalizedName = identity.fullName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let fallbackFromEmail = identity.email?
+            .split(separator: "@")
+            .first
+            .map(String.init)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let name = (normalizedName?.isEmpty == false ? normalizedName : nil)
+            ?? (fallbackFromEmail?.isEmpty == false ? fallbackFromEmail : nil)
+            ?? "StorePass User"
+
+        return AppUser(
+            id: identity.userId,
+            name: name,
+            email: identity.email,
+            role: role,
+            createdAt: Date(),
+            lastLoginAt: Date(),
+            provider: identity.provider,
+            assignedStoreIds: [],
+            isActive: true
+        )
     }
 
     private func toAppUser(_ profile: UserAccessProfile) -> AppUser {

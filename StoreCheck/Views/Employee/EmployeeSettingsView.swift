@@ -1,17 +1,17 @@
-import CloudKit
 import SwiftUI
 
 struct AccountSettingsView: View {
+    private enum FormField: Hashable {
+        case displayName
+    }
+
     @EnvironmentObject private var authViewModel: AuthViewModel
-    @EnvironmentObject private var appContainer: AppContainer
 
     @State private var editedName = ""
     @State private var isSavingName = false
     @State private var showDeleteConfirmation = false
     @State private var isDeletingAccount = false
-    @State private var cloudStatusMessage = "Checking iCloud status..."
-    @State private var diagnosticsMessage = ""
-    @State private var isRunningDiagnostics = false
+    @FocusState private var focusedField: FormField?
 
     var body: some View {
         NavigationStack {
@@ -22,15 +22,23 @@ struct AccountSettingsView: View {
                     VStack(spacing: DS.Spacing.m) {
                         profileCard
                         updateNameCard
-                        cloudStatusCard
                         accountActionsCard
                     }
                     .frame(maxWidth: DS.Metrics.maxReadableWidth)
                     .padding(.horizontal, DS.Spacing.m)
                     .padding(.vertical, DS.Spacing.m)
                 }
+                .scrollDismissesKeyboard(.interactively)
             }
             .navigationTitle("Settings")
+            .toolbar {
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("Done") {
+                        focusedField = nil
+                    }
+                }
+            }
             .alert("Delete account permanently?", isPresented: $showDeleteConfirmation) {
                 Button("Cancel", role: .cancel) {}
                 Button("Delete", role: .destructive) {
@@ -46,7 +54,6 @@ struct AccountSettingsView: View {
             }
             .task {
                 editedName = authViewModel.currentUser?.name ?? ""
-                await refreshCloudStatus()
             }
         }
     }
@@ -72,6 +79,8 @@ struct AccountSettingsView: View {
                 TextField("Display name", text: $editedName)
                     .textInputAutocapitalization(.words)
                     .autocorrectionDisabled()
+                    .submitLabel(.done)
+                    .focused($focusedField, equals: .displayName)
                     .padding(.horizontal, DS.Spacing.s)
                     .frame(height: DS.Metrics.rowHeight)
                     .background(DS.Colors.elevated.opacity(0.75), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
@@ -83,46 +92,6 @@ struct AccountSettingsView: View {
                 .disabled(isSavingName || editedName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-
-    private var cloudStatusCard: some View {
-        CardView {
-            VStack(alignment: .leading, spacing: DS.Spacing.s) {
-                ScreenHeader(title: "System Status", subtitle: "Required for app features", icon: "icloud")
-
-                Text(cloudStatusMessage)
-                    .font(DS.Typography.caption)
-                    .foregroundStyle(DS.Colors.textSecondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
-                #if DEBUG
-                Divider()
-
-                Text("CloudKit Diagnostics")
-                    .font(DS.Typography.headline)
-                    .foregroundStyle(DS.Colors.textPrimary)
-
-                Text("Container: \(appContainer.cloudKitService.container.containerIdentifier ?? "default")")
-                    .font(DS.Typography.caption)
-                    .foregroundStyle(DS.Colors.textSecondary)
-
-                Button(isRunningDiagnostics ? "Running diagnostics..." : "Run Integrity Check") {
-                    Task { await runDiagnostics() }
-                }
-                .buttonStyle(PrimaryButtonStyle())
-                .disabled(isRunningDiagnostics)
-                .accessibilityIdentifier("run_cloudkit_diagnostics_button")
-
-                if !diagnosticsMessage.isEmpty {
-                    Text(diagnosticsMessage)
-                        .font(.system(size: 12, weight: .regular, design: .monospaced))
-                        .foregroundStyle(DS.Colors.textSecondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .textSelection(.enabled)
-                }
-                #endif
-            }
         }
     }
 
@@ -149,6 +118,7 @@ struct AccountSettingsView: View {
     }
 
     private func saveName() async {
+        focusedField = nil
         isSavingName = true
         defer { isSavingName = false }
 
@@ -170,67 +140,6 @@ struct AccountSettingsView: View {
         }
     }
 
-    private func refreshCloudStatus() async {
-        do {
-            let status = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<CKAccountStatus, Error>) in
-                appContainer.cloudKitService.container.accountStatus { status, error in
-                    if let error {
-                        continuation.resume(throwing: error)
-                    } else {
-                        continuation.resume(returning: status)
-                    }
-                }
-            }
-
-            switch status {
-            case .available:
-                cloudStatusMessage = "iCloud connected"
-            case .noAccount:
-                cloudStatusMessage = "iCloud is signed out. Core app features are unavailable."
-            case .restricted:
-                cloudStatusMessage = "iCloud access is restricted on this device."
-            case .couldNotDetermine:
-                cloudStatusMessage = "Could not verify iCloud account status."
-            case .temporarilyUnavailable:
-                cloudStatusMessage = "iCloud is temporarily unavailable."
-            @unknown default:
-                cloudStatusMessage = "Unknown iCloud status."
-            }
-        } catch {
-            cloudStatusMessage = "Unable to check iCloud status right now."
-        }
-    }
-
-    private func runDiagnostics() async {
-        #if DEBUG
-        guard let user = authViewModel.currentUser else {
-            diagnosticsMessage = "No signed-in user."
-            return
-        }
-
-        isRunningDiagnostics = true
-        defer { isRunningDiagnostics = false }
-        let report = await appContainer.cloudKitSanityChecker.run(currentUserId: user.id)
-        diagnosticsMessage = report.renderedText
-        #endif
-    }
-
-    private func accountStatusText(_ status: CKAccountStatus) -> String {
-        switch status {
-        case .available:
-            return "available"
-        case .noAccount:
-            return "noAccount"
-        case .restricted:
-            return "restricted"
-        case .couldNotDetermine:
-            return "couldNotDetermine"
-        case .temporarilyUnavailable:
-            return "temporarilyUnavailable"
-        @unknown default:
-            return "unknown"
-        }
-    }
 }
 
 struct EmployeeSettingsView: View {

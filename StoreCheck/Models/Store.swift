@@ -15,6 +15,10 @@ struct Store: Codable, Identifiable, Hashable {
     var joinCode: String?
     var joinCodeCiphertext: String?
     var joinCodeLast4: String?
+    var timeZoneIdentifier: String = TimeZone.current.identifier
+    var qrCheckInEnabled: Bool = false
+    var qrCodeToken: String?
+    var longShiftWarningHours: Int = 10
 
     var resolvedJoinCode: String? {
         let trimmedJoinCode = joinCode?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -38,6 +42,10 @@ struct Store: Codable, Identifiable, Hashable {
     var coordinate: CLLocationCoordinate2D {
         CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
     }
+
+    var resolvedTimeZone: TimeZone {
+        TimeZone(identifier: timeZoneIdentifier) ?? .current
+    }
 }
 
 struct StoreMember: Codable, Identifiable, Hashable {
@@ -47,4 +55,51 @@ struct StoreMember: Codable, Identifiable, Hashable {
     let joinedAt: Date
     let isActive: Bool
     let addedBy: String
+}
+
+enum AttendanceMethod: String, Codable, CaseIterable {
+    case geofence
+    case qr
+}
+
+enum StoreActivityEventKind: String, Codable {
+    case checkedIn
+    case checkedOut
+    case employeeJoined
+    case employeeRemoved
+}
+
+struct StoreActivityEvent: Identifiable, Hashable, Codable {
+    let id: String
+    let storeId: String
+    let storeName: String
+    let employeeId: String?
+    let employeeName: String?
+    let employeeEmail: String?
+    let kind: StoreActivityEventKind
+    let occurredAt: Date
+    let checkInId: String?
+
+    var subtitle: String {
+        switch kind {
+        case .checkedIn:
+            return "Checked in"
+        case .checkedOut:
+            return "Checked out"
+        case .employeeJoined:
+            return "Joined store"
+        case .employeeRemoved:
+            return "Removed from store"
+        }
+    }
+}
+
+struct BroadcastMessage: Identifiable, Hashable, Codable {
+    let id: String
+    let storeId: String
+    let storeName: String
+    let managerUserId: String
+    let managerName: String
+    let message: String
+    let createdAt: Date
 }

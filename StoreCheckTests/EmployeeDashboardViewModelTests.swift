@@ -142,6 +142,73 @@ final class EmployeeDashboardViewModelTests: XCTestCase {
         XCTAssertEqual(checkInRepository.checkoutCallCount, 1)
         XCTAssertNil(viewModel.activeSession)
     }
+
+    func testCheckInUsesCachedLocationAfterTimeout() async {
+        let user = UserProfile(
+            id: "employee-3",
+            name: "Morgan",
+            email: "morgan@storepass.app",
+            role: .employee,
+            createdAt: Date(),
+            lastLoginAt: Date(),
+            provider: "manual.employee",
+            assignedStoreIds: ["store-3"],
+            isActive: true
+        )
+
+        let authService = MockDashboardAuthService(user: user)
+        let store = Store(
+            id: "store-3",
+            name: "East Side",
+            address: "12 Oak Ave",
+            latitude: 40.0,
+            longitude: -73.0,
+            radiusMeters: 200,
+            isActive: true,
+            managerId: "manager-3",
+            createdAt: Date(),
+            updatedAt: Date(),
+            joinCode: "QWER1234",
+            joinCodeCiphertext: "QWER1234",
+            joinCodeLast4: "1234"
+        )
+
+        let storeRepository = MockStoreRepository()
+        storeRepository.defaultStores = [store]
+        storeRepository.storesByID[store.id] = store
+
+        let checkInRepository = MockCheckInRepository()
+        let locationService = MockLocationService()
+        let checkInService = MockCheckInService()
+
+        let cached = CLLocation(
+            coordinate: CLLocationCoordinate2D(latitude: 40.0002, longitude: -73.0002),
+            altitude: 0,
+            horizontalAccuracy: 12,
+            verticalAccuracy: 12,
+            timestamp: Date()
+        )
+        locationService.currentLocation = cached
+        locationService.queuedErrors = [
+            NSError(domain: "StorePass", code: 5304, userInfo: [NSLocalizedDescriptionKey: "Location request timed out."]),
+            NSError(domain: "StorePass", code: 5304, userInfo: [NSLocalizedDescriptionKey: "Location request timed out."])
+        ]
+
+        let viewModel = EmployeeDashboardViewModel(
+            authService: authService,
+            storeRepository: storeRepository,
+            checkInService: checkInService,
+            checkInRepository: checkInRepository,
+            locationService: locationService,
+            verifyReadDelayNanoseconds: 0
+        )
+
+        await viewModel.load()
+        await viewModel.performAttendanceAction(.checkIn, photoData: Data([0x01]))
+
+        XCTAssertEqual(checkInRepository.createCheckInCallCount, 1)
+        XCTAssertNil(viewModel.errorMessage)
+    }
 }
 
 @MainActor
@@ -240,6 +307,39 @@ private final class MockStoreRepository: StoreRepositoryProtocol {
 
     func leaveStore(storeId: String) async throws {
         _ = storeId
+    }
+
+    func setStoreQRCheckInMode(storeId: String, isEnabled: Bool) async throws -> Store {
+        guard var store = storesByID[storeId] else {
+            throw CloudKitClientError.missingRecord("Store not found.")
+        }
+        store.qrCheckInEnabled = isEnabled
+        if isEnabled, (store.qrCodeToken?.isEmpty ?? true) {
+            store.qrCodeToken = "QRTOKEN1234567890"
+        }
+        storesByID[storeId] = store
+        return store
+    }
+
+    func rotateStoreQRCode(storeId: String) async throws -> String {
+        guard var store = storesByID[storeId] else {
+            throw CloudKitClientError.missingRecord("Store not found.")
+        }
+        store.qrCodeToken = "QRTOKEN1234567890"
+        store.qrCheckInEnabled = true
+        storesByID[storeId] = store
+        return "QRTOKEN1234567890"
+    }
+
+    func sendBroadcastMessage(storeId: String, message: String) async throws {
+        _ = storeId
+        _ = message
+    }
+
+    func fetchBroadcastMessages(storeId: String, limit: Int) async throws -> [BroadcastMessage] {
+        _ = storeId
+        _ = limit
+        return []
     }
 }
 
@@ -360,6 +460,17 @@ private final class MockCheckInRepository: CheckInRepositoryProtocol {
         _ = filter
         return sessions
     }
+
+    func fetchVerificationPhotoData(checkInId: String, storeId: String) async throws -> Data? {
+        _ = checkInId
+        _ = storeId
+        return nil
+    }
+
+    func fetchVerificationPhotoURL(photoPath: String) async throws -> URL {
+        _ = photoPath
+        throw CloudKitClientError.missingRecord("Photo proof is unavailable.")
+    }
 }
 
 private final class MockCheckInListenerToken: CheckInListenerToken {
@@ -387,12 +498,16 @@ private final class MockLocationService: LocationServiceProtocol {
     var isPreciseLocationEnabled: Bool = true
     var lastErrorMessage: String?
     var queuedLocations: [CLLocation] = []
+    var queuedErrors: [Error] = []
 
     func requestWhenInUseAuthorization() {}
     func requestLocation() {}
 
     func requestSingleAccurateLocation(timeoutSeconds: TimeInterval) async throws -> CLLocation {
         _ = timeoutSeconds
+        if !queuedErrors.isEmpty {
+            throw queuedErrors.removeFirst()
+        }
         if !queuedLocations.isEmpty {
             return queuedLocations.removeFirst()
         }

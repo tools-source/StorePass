@@ -19,6 +19,7 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
 
     private let manager = CLLocationManager()
     private var locationContinuation: CheckedContinuation<CLLocation, Error>?
+    private var timeoutWorkItem: DispatchWorkItem?
 
     var isPreciseLocationEnabled: Bool {
         manager.accuracyAuthorization == .fullAccuracy
@@ -49,38 +50,29 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
             throw NSError(domain: "StorePass", code: 5301, userInfo: [NSLocalizedDescriptionKey: "Location permission is required before checking in."])
         }
 
-        if let currentLocation, abs(currentLocation.timestamp.timeIntervalSinceNow) <= 5 {
+        if let currentLocation, abs(currentLocation.timestamp.timeIntervalSinceNow) <= 12 {
             return currentLocation
         }
 
-        return try await withThrowingTaskGroup(of: CLLocation.self) { group in
-            group.addTask { [weak self] in
-                try await withCheckedThrowingContinuation { continuation in
-                    guard let self else {
-                        continuation.resume(throwing: NSError(domain: "StorePass", code: 5302, userInfo: [NSLocalizedDescriptionKey: "Location service is unavailable."]))
-                        return
-                    }
-
-                    if let existing = self.locationContinuation {
-                        existing.resume(throwing: NSError(domain: "StorePass", code: 5303, userInfo: [NSLocalizedDescriptionKey: "Another location request is already in progress."]))
-                    }
-
-                    self.locationContinuation = continuation
-                    self.manager.requestLocation()
-                }
+        return try await withCheckedThrowingContinuation { continuation in
+            if let existing = locationContinuation {
+                existing.resume(throwing: NSError(domain: "StorePass", code: 5303, userInfo: [NSLocalizedDescriptionKey: "Another location request is already in progress."]))
             }
 
-            group.addTask {
-                let nanoseconds = UInt64(timeoutSeconds * 1_000_000_000)
-                try await Task.sleep(nanoseconds: nanoseconds)
-                throw NSError(domain: "StorePass", code: 5304, userInfo: [NSLocalizedDescriptionKey: "Location request timed out."])
-            }
+            timeoutWorkItem?.cancel()
+            timeoutWorkItem = nil
 
-            guard let first = try await group.next() else {
-                throw NSError(domain: "StorePass", code: 5305, userInfo: [NSLocalizedDescriptionKey: "Location could not be resolved."])
+            locationContinuation = continuation
+            manager.requestLocation()
+
+            let timeout = DispatchWorkItem { [weak self] in
+                guard let self, let pending = self.locationContinuation else { return }
+                pending.resume(throwing: NSError(domain: "StorePass", code: 5304, userInfo: [NSLocalizedDescriptionKey: "Location request timed out."]))
+                self.locationContinuation = nil
+                self.lastErrorMessage = "Location request timed out."
             }
-            group.cancelAll()
-            return first
+            timeoutWorkItem = timeout
+            DispatchQueue.main.asyncAfter(deadline: .now() + timeoutSeconds, execute: timeout)
         }
     }
 
@@ -99,6 +91,8 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         currentLocation = locations.last
         lastErrorMessage = nil
+        timeoutWorkItem?.cancel()
+        timeoutWorkItem = nil
         if let location = locations.last {
             locationContinuation?.resume(returning: location)
             locationContinuation = nil
@@ -106,6 +100,8 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
     }
 
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+        timeoutWorkItem?.cancel()
+        timeoutWorkItem = nil
         let nsError = error as NSError
         if nsError.domain == kCLErrorDomain {
             lastErrorMessage = "We could not get your GPS position. Move to open sky and try again."

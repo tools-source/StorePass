@@ -4,6 +4,30 @@ import XCTest
 
 @MainActor
 final class AuthViewModelTests: XCTestCase {
+    func testCloudKitInvalidBundleIDFallsBackToDegradedLoginMode() async {
+        let authService = MockAuthService()
+        authService.nextAppleResult = AppleSignInResult(
+            identity: AuthIdentity(userId: "manager-identity", fullName: "Jordan", email: "jordan@storepass.app", provider: "apple")
+        )
+
+        let roleRepository = MockRoleProfileRepository()
+        roleRepository.ensureHandler = { _, _, _, _, _ in
+            throw CloudKitClientError.invalidData(
+                "CloudKit rejected this app identity (Invalid bundle ID for container)."
+            )
+        }
+
+        let viewModel = AuthViewModel(authService: authService, roleProfileRepository: roleRepository)
+        await viewModel.signInWithApple(requestedRole: .manager)
+
+        XCTAssertTrue(viewModel.isCloudKitDegradedMode)
+        XCTAssertEqual(viewModel.currentUser?.id, "manager-identity")
+        XCTAssertEqual(viewModel.currentUser?.role, .manager)
+        XCTAssertEqual(authService.currentUser?.id, "manager-identity")
+        XCTAssertEqual(viewModel.authState, .signedIn(userId: "manager-identity"))
+        XCTAssertTrue(viewModel.signInNoticeMessage?.contains("local fallback mode") == true)
+    }
+
     func testManagerRequestDeniedForNonManagerProfile() async {
         let authService = MockAuthService()
         authService.nextAppleResult = AppleSignInResult(
@@ -87,6 +111,35 @@ final class AuthViewModelTests: XCTestCase {
             XCTFail("Expected signedOut state")
         }
     }
+
+    func testEmployeeEmailSignInCloudKitInvalidBundleIDFallsBackToDegradedLoginMode() async {
+        let authService = MockAuthService()
+        authService.nextEmailResult = EmployeeEmailSignInResult(
+            identity: AuthIdentity(userId: "employee-identity", fullName: "Riley", email: "riley@storepass.app", provider: "employee.email")
+        )
+
+        let roleRepository = MockRoleProfileRepository()
+        roleRepository.fetchUserProfileHandler = { _ in
+            throw CloudKitClientError.invalidData(
+                "CloudKit rejected this app identity (Invalid bundle ID for container)."
+            )
+        }
+        roleRepository.ensureHandler = { _, _, _, _, _ in
+            throw CloudKitClientError.invalidData(
+                "CloudKit rejected this app identity (Invalid bundle ID for container)."
+            )
+        }
+
+        let viewModel = AuthViewModel(authService: authService, roleProfileRepository: roleRepository)
+        await viewModel.signInEmployee(email: "riley@storepass.app", password: "password")
+
+        XCTAssertTrue(viewModel.isCloudKitDegradedMode)
+        XCTAssertEqual(viewModel.currentUser?.id, "employee-identity")
+        XCTAssertEqual(viewModel.currentUser?.role, .employee)
+        XCTAssertEqual(authService.currentUser?.id, "employee-identity")
+        XCTAssertEqual(viewModel.authState, .signedIn(userId: "employee-identity"))
+        XCTAssertTrue(viewModel.signInNoticeMessage?.contains("local fallback mode") == true)
+    }
 }
 
 @MainActor
@@ -165,6 +218,7 @@ private final class MockAuthService: AuthServiceProtocol {
 @MainActor
 private final class MockRoleProfileRepository: RoleProfileRepositoryProtocol {
     var ensureHandler: ((String, String?, String?, String, UserRole?) async throws -> RoleBootstrapStatus)?
+    var fetchUserProfileHandler: ((String) async throws -> UserAccessProfile?)?
     var softDeleteCalls: [(uid: String, role: UserRole)] = []
 
     func ensureUserProfile(
@@ -181,7 +235,9 @@ private final class MockRoleProfileRepository: RoleProfileRepositoryProtocol {
     }
 
     func fetchUserProfile(uid: String) async throws -> UserAccessProfile? {
-        _ = uid
+        if let fetchUserProfileHandler {
+            return try await fetchUserProfileHandler(uid)
+        }
         return nil
     }
 
